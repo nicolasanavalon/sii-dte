@@ -1,6 +1,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Registro de Compras DTE · Análisis</title>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <style>
   :root {
     --paper: #f6f7f3; --panel: #fefffb; --ink: #17211c; --ink-soft: #4a5751; --ink-faint: #7c887f;
@@ -36,10 +37,7 @@
   body { margin: 0; background: var(--paper); color: var(--ink); font-family: var(--sans); line-height: 1.45; -webkit-font-smoothing: antialiased; }
   h1, h2 { margin: 0; text-wrap: balance; }
 
-  header.top {
-    padding: 20px 28px 18px; border-bottom: 1px solid var(--line);
-    display: flex; align-items: baseline; justify-content: space-between; gap: 16px; flex-wrap: wrap; background: var(--panel);
-  }
+  header.top { padding: 20px 28px 18px; border-bottom: 1px solid var(--line); display: flex; align-items: baseline; justify-content: space-between; gap: 16px; flex-wrap: wrap; background: var(--panel); }
   .brand { display: flex; flex-direction: column; gap: 3px; }
   .brand .eyebrow { font-size: 11px; letter-spacing: .16em; text-transform: uppercase; color: var(--accent-ink); font-weight: 600; }
   .brand h1 { font-size: 22px; font-weight: 650; letter-spacing: -.01em; }
@@ -53,10 +51,8 @@
   .sii-hint { font-size: 11px; color: var(--ink-faint); text-align: right; max-width: 280px; line-height: 1.5; }
 
   main { padding: 22px 28px 60px; display: flex; flex-direction: column; gap: 22px; }
-
   .card { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow); }
 
-  /* --- Filtros arriba --- */
   .filterbar { padding: 16px 18px; display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 16px; align-items: end; }
   .fgroup { display: flex; flex-direction: column; gap: 7px; min-width: 0; }
   .fgroup > label.title { font-size: 11px; letter-spacing: .1em; text-transform: uppercase; color: var(--ink-faint); font-weight: 600; }
@@ -77,9 +73,8 @@
   .btn-reset { padding: 8px 12px; font: inherit; font-size: 12.5px; cursor: pointer; background: transparent; color: var(--ink-soft); border: 1px solid var(--line-strong); border-radius: 8px; white-space: nowrap; }
   .btn-reset:hover { border-color: var(--accent); color: var(--accent-ink); }
 
-  /* --- KPIs --- */
-  .kpis { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; }
-  @media (max-width: 720px) { .kpis { grid-template-columns: repeat(2, 1fr); } }
+  .kpis { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+  @media (max-width: 720px) { .kpis { grid-template-columns: 1fr; } }
   .kpi { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 15px 16px; box-shadow: var(--shadow); display: flex; flex-direction: column; gap: 6px; }
   .kpi .label { font-size: 11px; letter-spacing: .09em; text-transform: uppercase; color: var(--ink-faint); font-weight: 600; }
   .kpi .value { font-family: var(--mono); font-variant-numeric: tabular-nums; font-size: 24px; font-weight: 600; letter-spacing: -.02em; }
@@ -87,8 +82,9 @@
   .kpi .foot { font-size: 12px; color: var(--ink-faint); }
   .kpi.accent { border-color: color-mix(in srgb, var(--accent) 35%, var(--line)); }
   .kpi.accent .value { color: var(--accent-ink); }
+  .kpi.warn { border-color: color-mix(in srgb, var(--amber) 35%, var(--line)); }
+  .kpi.warn .value { color: var(--amber); }
 
-  /* --- Tabla --- */
   .tablewrap { overflow: hidden; }
   .tablebar { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 14px 18px; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
   .tablebar h2 { font-size: 14px; letter-spacing: .02em; color: var(--ink); font-weight: 650; }
@@ -119,6 +115,7 @@
   .cell-input { padding: 6px 8px; font: inherit; font-size: 12.5px; background: var(--paper); border: 1px solid var(--line-strong); border-radius: 6px; color: var(--ink); }
   .cell-input.num { width: 58px; text-align: right; font-variant-numeric: tabular-nums; }
   .cell-input.txt { width: 130px; text-align: left; }
+  .eb-ok { display:inline-block; padding:2px 9px; border-radius:20px; background:var(--accent-soft); color:var(--accent-ink); font-weight:600; font-size:11.5px; }
 </style>
 
 <header class="top">
@@ -141,10 +138,10 @@
   <div class="viewtabs">
     <button data-view="facturas" aria-selected="true">Facturas</button>
     <button data-view="proveedores" aria-selected="false">Proveedores · días de pago</button>
+    <button data-view="transferencias" aria-selected="false">Transferencias</button>
   </div>
 
   <div id="viewFacturas">
-  <!-- FILTROS ARRIBA -->
   <section class="card filterbar">
     <div class="fgroup" style="grid-column: 1 / -1;">
       <label class="title">Período tributario</label>
@@ -153,6 +150,14 @@
     <div class="fgroup">
       <label class="title">Tipo de documento</label>
       <div class="chips" id="chipDoc"></div>
+    </div>
+    <div class="fgroup">
+      <label class="title">Estado Banco</label>
+      <div class="seg" id="segBanco">
+        <button data-b="all" aria-pressed="true">Todas</button>
+        <button data-b="aceptada">Aceptada</button>
+        <button data-b="pendiente">Pendiente</button>
+      </div>
     </div>
     <div class="fgroup">
       <label class="title">Proveedor</label>
@@ -171,10 +176,8 @@
     </div>
   </section>
 
-  <!-- KPIs -->
   <section class="kpis" id="kpis"></section>
 
-  <!-- TABLA ABAJO -->
   <section class="card tablewrap">
     <div class="tablebar">
       <div>
@@ -206,9 +209,8 @@
   </section>
 
   <p class="note">
-    <b>Notas.</b> <b>Fecha compra</b> = fecha del documento (no la de recepción). <b>Costo total c/IVA</b> = monto total del documento.
-    Las <b>Notas de Crédito</b> se muestran en rojo; en las tarjetas de arriba se restan del total.
-    Datos del Registro de Compra del SII, actualizados automáticamente.
+    <b>Notas.</b> <b>Fecha compra</b> = fecha del documento. <b>Estado Banco</b> se marca <b>"Aceptada"</b> automáticamente cuando existe una transferencia
+    aceptada que calza por <b>RUT + N° de factura</b>; en blanco si aún no hay pago. <b>Estado</b> lo escribes tú. Las Notas de Crédito van en rojo.
   </p>
   </div><!-- /viewFacturas -->
 
@@ -243,8 +245,44 @@
       </div>
     </section>
     <p class="note">
-      Ordenados de mayor a menor compra. <b>Días de pago</b> y <b>Crédito máx.</b> los editas tú y se guardan <b>en la nube</b> (Google Sheets),
-      visibles desde cualquier dispositivo. Verás "Guardando… / Guardado ✓" al editar. <b>Exportar config</b> descarga un respaldo.
+      Ordenados de mayor a menor compra. <b>Días de pago</b> y <b>Crédito máx.</b> se guardan <b>en la nube</b>, visibles desde cualquier dispositivo.
+    </p>
+  </div>
+
+  <div id="viewTransferencias" hidden>
+    <section class="card tablewrap">
+      <div class="tablebar">
+        <div>
+          <h2>Transferencias bancarias</h2>
+          <span class="rowcount" id="transfcount"></span>
+          <span class="rowcount" id="transfStatus" style="margin-left:10px; font-weight:600;"></span>
+        </div>
+        <div style="display:flex; gap:8px; flex-wrap:wrap;">
+          <button class="btn" id="btnImportTransf">↑ Importar transferencias (Excel)</button>
+          <input type="file" id="fileTransf" accept=".xls,.xlsx" hidden>
+        </div>
+      </div>
+      <div class="scroll">
+        <table>
+          <thead>
+            <tr>
+              <th>Fecha</th>
+              <th>RUT</th>
+              <th>Proveedor</th>
+              <th class="n">N° Factura</th>
+              <th class="n">Monto</th>
+              <th>Estado</th>
+              <th>Cargado el</th>
+            </tr>
+          </thead>
+          <tbody id="transfBody"></tbody>
+        </table>
+        <div class="empty" id="transfEmpty" hidden>Aún no cargas transferencias. Usa "Importar transferencias (Excel)".</div>
+      </div>
+    </section>
+    <p class="note">
+      Sube el Excel de <b>"Transferencias Ingresadas"</b> del banco. Se <b>acumulan</b> (no se pisan): puedes subir un mes cada vez.
+      El cruce con facturas usa <b>RUT + N° de factura (Mensaje)</b> y solo las <b>Aceptadas</b>. Se guardan en la nube con su fecha/hora de carga.
     </p>
   </div>
 </main>
@@ -253,8 +291,9 @@
 const RAW = /*__DATA__*/{};
 const ULTIMA_ACTUALIZACION = "__ULTIMA_ACTUALIZACION__";
 const SII_URL = "https://github.com/nicolasanavalon/sii-dte/actions/workflows/update.yml";
+const API_URL = "https://script.google.com/macros/s/AKfycby2RiC-sLbkTEiUyivIfxvWLNZLCBUcpuO_IL5aGB9mMzp1vrelUsKsNskkj5OmBt2N/exec";
+const API_OK = API_URL.indexOf("__API_") !== 0;
 
-const DOC_NAMES = { "33": "Factura", "34": "Exenta", "61": "N. Crédito" };
 const MES_ABR = { "01":"Ene","02":"Feb","03":"Mar","04":"Abr","05":"May","06":"Jun","07":"Jul","08":"Ago","09":"Sep","10":"Oct","11":"Nov","12":"Dic" };
 const MES_NOM = { "01":"Enero","02":"Febrero","03":"Marzo","04":"Abril","05":"Mayo","06":"Junio","07":"Julio","08":"Agosto","09":"Septiembre","10":"Octubre","11":"Noviembre","12":"Diciembre" };
 function periodLabel(p){ return (MES_ABR[p.slice(4,6)]||p.slice(4,6)) + " " + p.slice(0,4); }
@@ -264,22 +303,13 @@ function parseCSV(text, periodo) {
   const rows = [];
   for (let i = 1; i < lines.length; i++) {
     const c = lines[i].split(";");
-    if (!c[0] || !c[0].trim()) continue; // ignora líneas de "otros impuestos"
-    const fdoc = (c[6]||"").trim();       // Fecha Docto = dd/mm/yyyy
+    if (!c[0] || !c[0].trim()) continue;
+    const fdoc = (c[6]||"").trim();
     const md = fdoc.match(/(\d{2})\/(\d{2})\/(\d{4})/);
     rows.push({
-      periodo,
-      tipoDoc: (c[1]||"").trim(),
-      rut: (c[3]||"").trim(),
-      razon: (c[4]||"").trim(),
-      folio: (c[5]||"").trim(),
-      fechaDocto: fdoc,
-      anio: md ? md[3] : "",
-      mesNum: md ? md[2] : "",
-      iso: md ? md[3]+"-"+md[2]+"-"+md[1] : "",
-      neto: +(c[10]||0),
-      iva: +(c[11]||0),
-      total: +(c[14]||0),
+      periodo, tipoDoc: (c[1]||"").trim(), rut: (c[3]||"").trim(), razon: (c[4]||"").trim(), folio: (c[5]||"").trim(),
+      fechaDocto: fdoc, anio: md ? md[3] : "", mesNum: md ? md[2] : "", iso: md ? md[3]+"-"+md[2]+"-"+md[1] : "",
+      neto: +(c[10]||0), iva: +(c[11]||0), total: +(c[14]||0),
     });
   }
   return rows;
@@ -288,17 +318,55 @@ let DATA = [];
 for (const pt of Object.keys(RAW)) DATA = DATA.concat(parseCSV(RAW[pt], pt));
 
 function fmt(n){ return (n<0?"-":"") + Math.abs(Math.round(n)).toLocaleString("es-CL"); }
+function fmtMiles(s){ const d = String(s).replace(/\D/g, ""); return d ? Number(d).toLocaleString("es-CL") : ""; }
+function soloDigitos(s){ return String(s).replace(/\D/g, ""); }
 function esc(s){ return String(s).replace(/[&<>"]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 function signed(r){ return r.tipoDoc === "61" ? -1 : 1; }
+function normRut(s){ return String(s||"").replace(/\./g,"").replace(/\s/g,"").toUpperCase(); }
+function addDias(iso, dias){
+  if (!iso) return "";
+  const d = new Date(iso + "T00:00:00"); if (isNaN(d)) return "";
+  d.setDate(d.getDate() + (parseInt(dias,10) || 0));
+  return String(d.getDate()).padStart(2,"0") + "/" + String(d.getMonth()+1).padStart(2,"0") + "/" + d.getFullYear();
+}
+function parseFecha(s){ const m=String(s).match(/(\d{2})\/(\d{2})\/(\d{4})/); return m ? new Date(+m[3],+m[2]-1,+m[1]).getTime() : 0; }
+function facId(r){ return r.rut + "|" + r.folio; }
+function diasEfectivos(r){
+  const f = FAC[facId(r)] || {};
+  if (f.dias!=null && f.dias!=="") return parseInt(f.dias,10) || 0;
+  const c = CFG[r.rut] || {};
+  if (c.dias!=null && c.dias!=="") return parseInt(c.dias,10) || 0;
+  return 0;
+}
 
-// Por defecto: solo Facturas (33) y Exentas (34); las Notas de Crédito quedan fuera.
+// ===== Nube (Google Sheets) =====
+let CFG = {};      // proveedor RUT -> { dias, credito }
+let FAC = {};      // factura RUT|folio -> { dias, estado }
+let TRANSF = {};   // numTx -> { fecha, rut, folio, nombre, monto, estado, hora, cargadoEn }
+let TRANSF_IDX = new Set();
+let cfgLoaded = false;
+
+function buildTransfIdx(){
+  TRANSF_IDX = new Set();
+  Object.keys(TRANSF).forEach(k=>{
+    const t = TRANSF[k];
+    if (String(t.estado||"").toLowerCase() === "aceptada" && t.folio && t.folio !== "-") {
+      TRANSF_IDX.add(normRut(t.rut) + "|" + String(t.folio).trim());
+    }
+  });
+}
+function estadoBanco(r){ return TRANSF_IDX.has(normRut(r.rut) + "|" + String(r.folio).trim()) ? "Aceptada" : ""; }
+
+// ===== Estado / filtros =====
 const DOCS_DEFAULT = ["33","34"];
-const state = { periodo:"all", docs:new Set(DOCS_DEFAULT), q:"", desde:"", hasta:"", sortK:"iso", sortDir:-1 };
+const state = { periodo:"all", docs:new Set(DOCS_DEFAULT), banco:"all", q:"", desde:"", hasta:"", sortK:"iso", sortDir:-1 };
 
 function filtered() {
   return DATA.filter(r => {
     if (state.periodo !== "all" && r.periodo !== state.periodo) return false;
     if (!state.docs.has(r.tipoDoc)) return false;
+    if (state.banco === "aceptada" && estadoBanco(r) !== "Aceptada") return false;
+    if (state.banco === "pendiente" && estadoBanco(r) === "Aceptada") return false;
     if (state.q) { const q = state.q.toLowerCase(); if (!(r.razon.toLowerCase().includes(q) || r.rut.toLowerCase().includes(q))) return false; }
     if (state.desde && r.iso && r.iso < state.desde) return false;
     if (state.hasta && r.iso && r.iso > state.hasta) return false;
@@ -309,14 +377,11 @@ function filtered() {
 function renderKPIs(rows) {
   const n = rows.length;
   const total = rows.reduce((s,r)=> s + signed(r)*r.total, 0);
-  const neto = rows.reduce((s,r)=> s + signed(r)*r.neto, 0);
-  const iva = rows.reduce((s,r)=> s + signed(r)*r.iva, 0);
-  const provs = new Set(rows.map(r=>r.rut)).size;
+  const credito = rows.reduce((s,r)=> s + (estadoBanco(r)==="Aceptada" ? 0 : signed(r)*r.total), 0);
   document.getElementById("kpis").innerHTML = `
-    <div class="kpi"><span class="label">Facturas</span><span class="value">${n.toLocaleString("es-CL")}</span><span class="foot">${provs} proveedores</span></div>
+    <div class="kpi"><span class="label">Cantidad de Facturas</span><span class="value">${n.toLocaleString("es-CL")}</span><span class="foot">${new Set(rows.map(r=>r.rut)).size} proveedores</span></div>
     <div class="kpi accent"><span class="label">Costo total c/IVA</span><span class="value"><span class="cur">$</span>${fmt(total)}</span><span class="foot">neto de notas de crédito</span></div>
-    <div class="kpi"><span class="label">Monto Neto</span><span class="value"><span class="cur">$</span>${fmt(neto)}</span><span class="foot">sin IVA</span></div>
-    <div class="kpi"><span class="label">IVA Recuperable</span><span class="value"><span class="cur">$</span>${fmt(iva)}</span><span class="foot">crédito fiscal</span></div>`;
+    <div class="kpi warn"><span class="label">Costo total c/IVA crédito</span><span class="value"><span class="cur">$</span>${fmt(credito)}</span><span class="foot">pendiente (sin transferencia aceptada)</span></div>`;
 }
 
 function renderTable(rows) {
@@ -333,6 +398,7 @@ function renderTable(rows) {
     const f = FAC[id] || {};
     const dias = diasEfectivos(r);
     const fpago = addDias(r.iso, dias);
+    const eb = estadoBanco(r);
     return `
     <tr class="${r.tipoDoc==='61'?'nc':''}">
       <td class="n mono">${esc(r.anio)}</td>
@@ -344,7 +410,7 @@ function renderTable(rows) {
       <td class="n"><input class="cell-input num fac-dias" type="number" min="0" data-id="${esc(id)}" value="${dias}"></td>
       <td class="mono fac-fpago" data-id="${esc(id)}">${fpago}</td>
       <td><input class="cell-input txt fac-estado" type="text" data-id="${esc(id)}" value="${esc(f.estado||'')}"></td>
-      <td><input class="cell-input txt fac-banco" type="text" data-id="${esc(id)}" value="${esc(f.estadoBanco||'')}"></td>
+      <td>${eb==="Aceptada" ? '<span class="eb-ok">Aceptada</span>' : ''}</td>
     </tr>`; }).join("");
 
   document.querySelectorAll("#tbody .fac-dias").forEach(inp=> inp.addEventListener("change", e=>{
@@ -359,9 +425,6 @@ function renderTable(rows) {
   document.querySelectorAll("#tbody .fac-estado").forEach(inp=> inp.addEventListener("change", e=>{
     const id=e.target.dataset.id, v=e.target.value; if(!FAC[id]) FAC[id]={}; if(v==="") delete FAC[id].estado; else FAC[id].estado=v; saveFactura(id);
   }));
-  document.querySelectorAll("#tbody .fac-banco").forEach(inp=> inp.addEventListener("change", e=>{
-    const id=e.target.dataset.id, v=e.target.value; if(!FAC[id]) FAC[id]={}; if(v==="") delete FAC[id].estadoBanco; else FAC[id].estadoBanco=v; saveFactura(id);
-  }));
 
   document.querySelectorAll("#viewFacturas thead th").forEach(th => {
     th.querySelector(".arrow")?.remove();
@@ -371,7 +434,7 @@ function renderTable(rows) {
 
 function render(){ const rows = filtered(); renderKPIs(rows); renderTable(rows); }
 
-// Filtros dinámicos
+// ===== Filtros dinámicos =====
 (function(){
   const periods = Object.keys(RAW).sort();
   document.getElementById("segPeriodo").innerHTML = '<button data-p="all" aria-pressed="true">Todos</button>' +
@@ -393,6 +456,11 @@ document.getElementById("segPeriodo").addEventListener("click", e=>{
   document.querySelectorAll("#segPeriodo button").forEach(x=>x.setAttribute("aria-pressed", x===b));
   state.periodo=b.dataset.p; render();
 });
+document.getElementById("segBanco").addEventListener("click", e=>{
+  const b=e.target.closest("button"); if(!b) return;
+  document.querySelectorAll("#segBanco button").forEach(x=>x.setAttribute("aria-pressed", x===b));
+  state.banco=b.dataset.b; render();
+});
 document.getElementById("qProv").addEventListener("input", e=>{ state.q=e.target.value; render(); });
 document.getElementById("fDesde").addEventListener("change", e=>{ state.desde=e.target.value; render(); });
 document.getElementById("fHasta").addEventListener("change", e=>{ state.hasta=e.target.value; render(); });
@@ -400,53 +468,36 @@ document.querySelectorAll("#viewFacturas thead th").forEach(th=> th.addEventList
   const k=th.dataset.k; if(!k) return; if(state.sortK===k) state.sortDir*=-1; else { state.sortK=k; state.sortDir=(k==="razon"||k==="mesNum")?1:-1; } render();
 }));
 document.getElementById("btnReset").addEventListener("click", ()=>{
-  state.periodo="all"; state.docs=new Set(DOCS_DEFAULT); state.q=""; state.desde=""; state.hasta="";
+  state.periodo="all"; state.docs=new Set(DOCS_DEFAULT); state.banco="all"; state.q=""; state.desde=""; state.hasta="";
   document.querySelectorAll("#segPeriodo button").forEach(x=>x.setAttribute("aria-pressed", x.dataset.p==="all"));
+  document.querySelectorAll("#segBanco button").forEach(x=>x.setAttribute("aria-pressed", x.dataset.b==="all"));
   document.querySelectorAll("#chipDoc input").forEach(i=> i.checked = state.docs.has(i.dataset.doc));
   document.getElementById("qProv").value=""; document.getElementById("fDesde").value=""; document.getElementById("fHasta").value="";
   render();
 });
 document.getElementById("btnExport").addEventListener("click", ()=>{
   const rows = filtered();
-  const head = ["Anio","Mes","N Factura","Proveedor","Costo total c/IVA","Fecha compra"];
-  const lines = [head.join(";")].concat(rows.map(r=> [r.anio, MES_NOM[r.mesNum]||"", r.folio, r.razon, signed(r)*r.total, r.fechaDocto].join(";")));
+  const head = ["Anio","Mes","N Factura","Proveedor","Costo total c/IVA","Fecha compra","Dias de pago","Fecha de pago","Estado","Estado Banco"];
+  const lines = [head.join(";")].concat(rows.map(r=>{
+    const id=facId(r), f=FAC[id]||{}, dias=diasEfectivos(r);
+    return [r.anio, MES_NOM[r.mesNum]||"", r.folio, r.razon, signed(r)*r.total, r.fechaDocto, dias, addDias(r.iso,dias), f.estado||"", estadoBanco(r)].join(";");
+  }));
   const blob = new Blob(["﻿"+lines.join("\n")], {type:"text/csv;charset=utf-8"});
   const a = document.createElement("a"); a.href=URL.createObjectURL(blob); a.download="facturas_compra.csv"; a.click();
 });
 document.getElementById("btnSII").addEventListener("click", ()=>{ window.open(SII_URL, "_blank", "noopener"); });
 document.getElementById("lastupd").textContent = ULTIMA_ACTUALIZACION;
 
-// ===== Módulo Proveedores (días de pago y crédito) — guardado en la nube (Google Sheets) =====
-const API_URL = "https://script.google.com/macros/s/AKfycby2RiC-sLbkTEiUyivIfxvWLNZLCBUcpuO_IL5aGB9mMzp1vrelUsKsNskkj5OmBt2N/exec"; // URL del Web App de Google Apps Script
-const API_OK = API_URL.indexOf("__API_") !== 0;
-let CFG = {};   // config por proveedor (RUT): { dias, credito }
-let FAC = {};   // config por factura (RUT|folio): { dias, estado, estadoBanco }
-let cfgLoaded = false;
-
-// Miles con puntos: "9000000" -> "9.000.000"
-function fmtMiles(s){ const d = String(s).replace(/\D/g, ""); return d ? Number(d).toLocaleString("es-CL") : ""; }
-function soloDigitos(s){ return String(s).replace(/\D/g, ""); }
-// Suma días a una fecha ISO (yyyy-mm-dd) y devuelve dd/mm/yyyy
-function addDias(iso, dias){
-  if (!iso) return "";
-  const d = new Date(iso + "T00:00:00");
-  if (isNaN(d)) return "";
-  d.setDate(d.getDate() + (parseInt(dias,10) || 0));
-  const dd = String(d.getDate()).padStart(2,"0"), mm = String(d.getMonth()+1).padStart(2,"0");
-  return dd + "/" + mm + "/" + d.getFullYear();
-}
-function facId(r){ return r.rut + "|" + r.folio; }
-function diasEfectivos(r){
-  const f = FAC[facId(r)] || {};
-  if (f.dias!=null && f.dias!=="") return parseInt(f.dias,10) || 0;
-  const c = CFG[r.rut] || {};
-  if (c.dias!=null && c.dias!=="") return parseInt(c.dias,10) || 0;
-  return 0;
-}
-
 function setProvStatus(t, err){ const el=document.getElementById("provStatus"); if(!el) return; el.textContent=t; el.style.color = err ? "var(--crit)" : "var(--accent-ink)"; if(t && !err) setTimeout(()=>{ if(el.textContent===t) el.textContent=""; }, 2000); }
+function setTransfStatus(t, err){ const el=document.getElementById("transfStatus"); if(!el) return; el.textContent=t; el.style.color = err ? "var(--crit)" : "var(--accent-ink)"; if(t && !err) setTimeout(()=>{ if(el.textContent===t) el.textContent=""; }, 2500); }
+function toast(msg, err){
+  let t = document.getElementById("__toast");
+  if (!t){ t = document.createElement("div"); t.id="__toast"; t.style.cssText="position:fixed;bottom:18px;right:18px;padding:9px 14px;border-radius:8px;font-weight:600;font-size:13px;color:#fff;box-shadow:var(--shadow);z-index:50;opacity:0;transition:opacity .15s;"; document.body.appendChild(t); }
+  t.textContent = msg; t.style.background = err ? "var(--crit)" : "var(--accent)"; t.style.opacity="1";
+  clearTimeout(t.__h); t.__h = setTimeout(()=>{ t.style.opacity="0"; }, 1600);
+}
 
-// Lectura vía JSONP (evita el problema de CORS de Apps Script al leer desde el navegador)
+// Lectura vía JSONP (evita CORS de Apps Script)
 function loadCfgRemote(){
   return new Promise((resolve)=>{
     if (!API_OK) { setProvStatus("Guardado en la nube no configurado", true); return resolve(); }
@@ -454,11 +505,11 @@ function loadCfgRemote(){
     let done = false;
     const s = document.createElement("script");
     function cleanup(){ try { delete window[cb]; } catch(e){ window[cb] = undefined; } if (s.parentNode) s.parentNode.removeChild(s); }
-    window[cb] = (data)=>{ done = true; data = data || {}; if (data.prov || data.fac) { CFG = data.prov || {}; FAC = data.fac || {}; } else { CFG = data; FAC = {}; } cfgLoaded = true; cleanup(); resolve(); };
+    window[cb] = (data)=>{ done = true; data = data || {}; CFG = data.prov || {}; FAC = data.fac || {}; TRANSF = data.transf || {}; buildTransfIdx(); cfgLoaded = true; cleanup(); resolve(); };
     s.src = API_URL + "?callback=" + cb + "&ts=" + Date.now();
     s.onerror = ()=>{ if(!done){ cleanup(); setProvStatus("No se pudo cargar desde la nube", true); resolve(); } };
     document.body.appendChild(s);
-    setTimeout(()=>{ if(!done){ cleanup(); setProvStatus("No se pudo cargar desde la nube", true); resolve(); } }, 8000);
+    setTimeout(()=>{ if(!done){ cleanup(); setProvStatus("No se pudo cargar desde la nube", true); resolve(); } }, 10000);
   });
 }
 
@@ -467,48 +518,37 @@ async function saveRow(rut, razon){
   const c = CFG[rut] || {};
   setProvStatus("Guardando…");
   try {
-    await fetch(API_URL, {
-      method: "POST",
-      headers: { "Content-Type": "text/plain;charset=utf-8" },
-      body: JSON.stringify({ tipo:"prov", rut, razon, dias: c.dias!=null?c.dias:"", credito: c.credito!=null?c.credito:"" })
-    });
+    await fetch(API_URL, { method:"POST", headers:{ "Content-Type":"text/plain;charset=utf-8" },
+      body: JSON.stringify({ tipo:"prov", rut, razon, dias: c.dias!=null?c.dias:"", credito: c.credito!=null?c.credito:"" }) });
     setProvStatus("Guardado ✓");
   } catch(e){ setProvStatus("Error al guardar", true); }
 }
-
-function toast(msg, err){
-  let t = document.getElementById("__toast");
-  if (!t){ t = document.createElement("div"); t.id="__toast"; t.style.cssText="position:fixed;bottom:18px;right:18px;padding:9px 14px;border-radius:8px;font-weight:600;font-size:13px;color:#fff;box-shadow:var(--shadow);z-index:50;opacity:0;transition:opacity .15s;"; document.body.appendChild(t); }
-  t.textContent = msg; t.style.background = err ? "var(--crit)" : "var(--accent)"; t.style.opacity="1";
-  clearTimeout(t.__h); t.__h = setTimeout(()=>{ t.style.opacity="0"; }, 1600);
-}
-
 async function saveFactura(id){
   if (!API_OK) return;
   const f = FAC[id] || {};
   toast("Guardando…");
   try {
-    await fetch(API_URL, {
-      method: "POST",
-      headers: { "Content-Type": "text/plain;charset=utf-8" },
-      body: JSON.stringify({ tipo:"factura", id, dias: f.dias!=null?f.dias:"", estado: f.estado!=null?f.estado:"", estadoBanco: f.estadoBanco!=null?f.estadoBanco:"" })
-    });
+    await fetch(API_URL, { method:"POST", headers:{ "Content-Type":"text/plain;charset=utf-8" },
+      body: JSON.stringify({ tipo:"factura", id, dias: f.dias!=null?f.dias:"", estado: f.estado!=null?f.estado:"", estadoBanco:"" }) });
     toast("Guardado ✓");
   } catch(e){ toast("Error al guardar", true); }
 }
+async function saveTransfBatch(items){
+  if (!API_OK) return;
+  await fetch(API_URL, { method:"POST", headers:{ "Content-Type":"text/plain;charset=utf-8" },
+    body: JSON.stringify({ tipo:"transfer_batch", items }) });
+}
 
+// ===== Proveedores =====
 function aggProveedores(){
   const m = new Map();
   DATA.forEach(r=>{
     const k = r.rut || r.razon;
     if (!m.has(k)) m.set(k, { rut:r.rut, razon:r.razon, nfac:0, total:0 });
-    const o = m.get(k);
-    o.nfac++; o.total += signed(r)*r.total;
-    if (!o.razon && r.razon) o.razon = r.razon;
+    const o = m.get(k); o.nfac++; o.total += signed(r)*r.total; if (!o.razon && r.razon) o.razon = r.razon;
   });
   return [...m.values()].sort((a,b)=> b.total - a.total);
 }
-
 function renderProv(){
   const arr = aggProveedores();
   document.getElementById("provcount").textContent = arr.length + " proveedores · orden por total comprado";
@@ -527,8 +567,7 @@ function renderProv(){
     if (inp.dataset.f === "credito") inp.addEventListener("input", e=>{ e.target.value = fmtMiles(e.target.value); });
     inp.addEventListener("change", e=>{
       const rut=e.target.dataset.rut, razon=e.target.dataset.razon, f=e.target.dataset.f;
-      let v = e.target.value.trim();
-      if (f==="credito") v = soloDigitos(v);
+      let v = e.target.value.trim(); if (f==="credito") v = soloDigitos(v);
       if (!CFG[rut]) CFG[rut] = {};
       if (v==="") delete CFG[rut][f]; else CFG[rut][f] = v;
       saveRow(rut, razon);
@@ -536,14 +575,81 @@ function renderProv(){
   });
 }
 
+// ===== Transferencias =====
+function renderTransf(){
+  const arr = Object.keys(TRANSF).map(k=>TRANSF[k]).sort((a,b)=> parseFecha(b.fecha)-parseFecha(a.fecha));
+  document.getElementById("transfcount").textContent = arr.length + " transferencias cargadas";
+  document.getElementById("transfEmpty").hidden = arr.length>0;
+  document.getElementById("transfBody").innerHTML = arr.map(t=>`
+    <tr>
+      <td class="mono">${esc(t.fecha)}</td>
+      <td class="mono" style="color:var(--ink-faint)">${esc(t.rut)}</td>
+      <td class="name" title="${esc(t.nombre)}">${esc(t.nombre)}</td>
+      <td class="n mono">${esc(t.folio)}</td>
+      <td class="n">$${fmt(+String(t.monto).replace(/\D/g,'')||0)}</td>
+      <td>${String(t.estado).toLowerCase()==='aceptada' ? '<span class="eb-ok">Aceptada</span>' : esc(t.estado)}</td>
+      <td class="mono" style="color:var(--ink-faint)">${esc(t.cargadoEn||'')}</td>
+    </tr>`).join("");
+}
+
+async function importarTransferencias(file){
+  if (typeof XLSX === "undefined"){ setTransfStatus("No cargó el lector de Excel (revisa tu conexión)", true); return; }
+  setTransfStatus("Leyendo archivo…");
+  try {
+    const buf = await file.arrayBuffer();
+    const wb = XLSX.read(buf, { type:"array" });
+    const ws = wb.Sheets[wb.SheetNames[0]];
+    // El Excel del banco declara mal su rango (ej. A1:Q12); lo recalculamos con las celdas reales.
+    let maxR=0, maxC=0;
+    Object.keys(ws).forEach(k=>{ if(k[0]==="!") return; const m=k.match(/^([A-Z]+)(\d+)$/); if(!m) return; const c=XLSX.utils.decode_col(m[1]), rr=+m[2]; if(rr>maxR)maxR=rr; if(c>maxC)maxC=c; });
+    if (maxR>0) ws['!ref'] = XLSX.utils.encode_range({ s:{r:0,c:0}, e:{r:maxR-1,c:maxC} });
+    const rows = XLSX.utils.sheet_to_json(ws, { header:1, defval:"", raw:false });
+    let h = -1, col = {};
+    for (let i=0;i<rows.length;i++){
+      const r = rows[i].map(x=> String(x).trim());
+      if (r.indexOf("Monto")>-1 && r.indexOf("Estado")>-1 && r.indexOf("Rut")>-1){ h=i; r.forEach((name,idx)=>{ if(name) col[name]=idx; }); break; }
+    }
+    if (h<0){ setTransfStatus("No reconocí el formato del banco", true); return; }
+    const items = [];
+    for (let i=h+1;i<rows.length;i++){
+      const r = rows[i];
+      const numTx = String(r[col["Número Transacción"]]||"").replace(/\D/g,"");
+      if (!numTx) continue;
+      const mensaje = String(r[col["Mensaje"]]||"").trim();
+      const asunto = String(r[col["Asunto"]]||"").trim();
+      const folio = (mensaje && mensaje!=="-") ? mensaje : ((asunto && asunto!=="-") ? asunto : "");
+      items.push({
+        numTx,
+        fecha: String(r[col["Fecha"]]||"").trim(),
+        rut: String(r[col["Rut"]]||"").trim(),
+        folio,
+        nombre: String(r[col["Nombre Empresa"]]||"").trim(),
+        monto: String(r[col["Monto"]]||"").replace(/\D/g,""),
+        estado: String(r[col["Estado"]]||"").trim(),
+        hora: String(r[col["Hora de ingreso"]]||"").trim()
+      });
+    }
+    if (!items.length){ setTransfStatus("No encontré transferencias en el archivo", true); return; }
+    setTransfStatus("Guardando "+items.length+" transferencias…");
+    await saveTransfBatch(items);
+    await loadCfgRemote();
+    renderTransf(); render();
+    setTransfStatus(items.length+" transferencias procesadas ✓");
+  } catch(err){ setTransfStatus("Error al leer el archivo", true); }
+}
+
+// ===== Cambio de vista =====
 document.querySelectorAll(".viewtabs button").forEach(b=> b.addEventListener("click", async ()=>{
   const v = b.dataset.view;
   document.querySelectorAll(".viewtabs button").forEach(x=> x.setAttribute("aria-selected", x===b));
   document.getElementById("viewFacturas").hidden = v!=="facturas";
   document.getElementById("viewProveedores").hidden = v!=="proveedores";
+  document.getElementById("viewTransferencias").hidden = v!=="transferencias";
   if (v==="proveedores") { renderProv(); setProvStatus("Cargando…"); await loadCfgRemote(); renderProv(); if (cfgLoaded) setProvStatus(""); }
+  if (v==="transferencias") { renderTransf(); setTransfStatus("Cargando…"); await loadCfgRemote(); renderTransf(); if (cfgLoaded) setTransfStatus(""); }
 }));
 
+// Config proveedores: exportar/importar respaldo
 document.getElementById("btnExportCfg").addEventListener("click", ()=>{
   const blob = new Blob([JSON.stringify(CFG, null, 2)], {type:"application/json"});
   const a = document.createElement("a"); a.href=URL.createObjectURL(blob); a.download="proveedores_config.json"; a.click();
@@ -553,8 +659,7 @@ document.getElementById("fileCfg").addEventListener("change", e=>{
   const f = e.target.files[0]; if (!f) return;
   const rd = new FileReader();
   rd.onload = async ()=>{
-    try {
-      const imp = JSON.parse(rd.result) || {};
+    try { const imp = JSON.parse(rd.result) || {};
       for (const rut of Object.keys(imp)) { CFG[rut] = Object.assign(CFG[rut]||{}, imp[rut]); await saveRow(rut, (imp[rut]&&imp[rut].razon)||""); }
       renderProv();
     } catch(err){ alert("Archivo de configuración inválido."); }
@@ -562,6 +667,10 @@ document.getElementById("fileCfg").addEventListener("change", e=>{
   rd.readAsText(f);
 });
 
+// Importar transferencias
+document.getElementById("btnImportTransf").addEventListener("click", ()=> document.getElementById("fileTransf").click());
+document.getElementById("fileTransf").addEventListener("change", e=>{ const f=e.target.files[0]; if(f) importarTransferencias(f); e.target.value=""; });
+
 render();
-if (API_OK) loadCfgRemote().then(render);
+if (API_OK) loadCfgRemote().then(()=>{ buildTransfIdx(); render(); });
 </script>
