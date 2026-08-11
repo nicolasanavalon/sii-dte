@@ -116,6 +116,8 @@
   .cell-input.num { width: 58px; text-align: right; font-variant-numeric: tabular-nums; }
   .cell-input.txt { width: 130px; text-align: left; }
   .eb-ok { display:inline-block; padding:2px 9px; border-radius:20px; background:var(--accent-soft); color:var(--accent-ink); font-weight:600; font-size:11.5px; }
+  .verfac { display:inline-block; padding:3px 10px; border-radius:6px; border:1px solid var(--accent); color:var(--accent-ink); text-decoration:none; font-size:12px; font-weight:600; }
+  .verfac:hover { background:var(--accent); color:#fff; }
 </style>
 
 <header class="top">
@@ -200,6 +202,7 @@
             <th>Fecha de pago</th>
             <th>Estado</th>
             <th>Estado Banco</th>
+            <th>Factura</th>
           </tr>
         </thead>
         <tbody id="tbody"></tbody>
@@ -289,6 +292,7 @@
 
 <script>
 const RAW = /*__DATA__*/{};
+const IMG = /*__IMG__*/{};   // folio -> [webUrl de OneDrive, ...]
 const ULTIMA_ACTUALIZACION = "__ULTIMA_ACTUALIZACION__";
 const SII_URL = "https://github.com/nicolasanavalon/sii-dte/actions/workflows/update.yml";
 const API_URL = "https://script.google.com/macros/s/AKfycby2RiC-sLbkTEiUyivIfxvWLNZLCBUcpuO_IL5aGB9mMzp1vrelUsKsNskkj5OmBt2N/exec";
@@ -413,6 +417,7 @@ function renderTable(rows) {
       <td class="mono fac-fpago" data-id="${esc(id)}">${fpago}</td>
       <td><input class="cell-input txt fac-estado" type="text" data-id="${esc(id)}" value="${esc(f.estado||'')}"></td>
       <td>${eb==="Aceptada" ? '<span class="eb-ok">Aceptada</span>' : ''}</td>
+      <td>${(IMG[r.folio]||[]).map((u,i)=>`<a class="verfac" href="${esc(u)}" target="_blank" rel="noopener">Ver${(IMG[r.folio]||[]).length>1?' '+(i+1):''}</a>`).join(' ')}</td>
     </tr>`; }).join("");
 
   document.querySelectorAll("#tbody .fac-dias").forEach(inp=> inp.addEventListener("change", e=>{
