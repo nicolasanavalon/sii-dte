@@ -330,6 +330,8 @@ function addDias(iso, dias){
   return String(d.getDate()).padStart(2,"0") + "/" + String(d.getMonth()+1).padStart(2,"0") + "/" + d.getFullYear();
 }
 function parseFecha(s){ const m=String(s).match(/(\d{2})\/(\d{2})\/(\d{4})/); return m ? new Date(+m[3],+m[2]-1,+m[1]).getTime() : 0; }
+function normFecha(s){ if(!s) return ""; s=String(s); const m=s.match(/(\d{2})\/(\d{2})\/(\d{4})/); if(m) return m[1]+"/"+m[2]+"/"+m[3]; const d=new Date(s); if(!isNaN(d)) return String(d.getDate()).padStart(2,"0")+"/"+String(d.getMonth()+1).padStart(2,"0")+"/"+d.getFullYear(); return s; }
+function normDateTime(s){ if(!s) return ""; s=String(s); const m=s.match(/(\d{2})\/(\d{2})\/(\d{4})(?:[ ,]+(\d{1,2}:\d{2}))?/); if(m) return m[1]+"/"+m[2]+"/"+m[3]+(m[4]?" "+m[4]:""); const d=new Date(s); if(!isNaN(d)) return String(d.getDate()).padStart(2,"0")+"/"+String(d.getMonth()+1).padStart(2,"0")+"/"+d.getFullYear()+" "+String(d.getHours()).padStart(2,"0")+":"+String(d.getMinutes()).padStart(2,"0"); return s; }
 function facId(r){ return r.rut + "|" + r.folio; }
 function diasEfectivos(r){
   const f = FAC[facId(r)] || {};
@@ -582,13 +584,13 @@ function renderTransf(){
   document.getElementById("transfEmpty").hidden = arr.length>0;
   document.getElementById("transfBody").innerHTML = arr.map(t=>`
     <tr>
-      <td class="mono">${esc(t.fecha)}</td>
+      <td class="mono">${esc(normFecha(t.fecha))}</td>
       <td class="mono" style="color:var(--ink-faint)">${esc(t.rut)}</td>
       <td class="name" title="${esc(t.nombre)}">${esc(t.nombre)}</td>
       <td class="n mono">${esc(t.folio)}</td>
       <td class="n">$${fmt(+String(t.monto).replace(/\D/g,'')||0)}</td>
       <td>${String(t.estado).toLowerCase()==='aceptada' ? '<span class="eb-ok">Aceptada</span>' : esc(t.estado)}</td>
-      <td class="mono" style="color:var(--ink-faint)">${esc(t.cargadoEn||'')}</td>
+      <td class="mono" style="color:var(--ink-faint)">${esc(normDateTime(t.cargadoEn||''))}</td>
     </tr>`).join("");
 }
 
@@ -630,11 +632,17 @@ async function importarTransferencias(file){
       });
     }
     if (!items.length){ setTransfStatus("No encontré transferencias en el archivo", true); return; }
-    setTransfStatus("Guardando "+items.length+" transferencias…");
-    await saveTransfBatch(items);
-    await loadCfgRemote();
-    renderTransf(); render();
-    setTransfStatus(items.length+" transferencias procesadas ✓");
+    // 1) Reflejar de inmediato en la web (sin esperar al servidor)
+    const now = new Date();
+    const cargado = String(now.getDate()).padStart(2,"0")+"/"+String(now.getMonth()+1).padStart(2,"0")+"/"+now.getFullYear()+" "+String(now.getHours()).padStart(2,"0")+":"+String(now.getMinutes()).padStart(2,"0");
+    let nuevos = 0;
+    items.forEach(t=>{ if(!TRANSF[t.numTx]){ TRANSF[t.numTx] = Object.assign({}, t, {cargadoEn: cargado}); nuevos++; } else { TRANSF[t.numTx].estado = t.estado; } });
+    buildTransfIdx(); renderTransf(); render();
+    // 2) Guardar en la nube en segundo plano
+    setTransfStatus("Guardando en la nube… ("+items.length+")");
+    saveTransfBatch(items)
+      .then(()=> setTransfStatus(items.length+" procesadas · "+nuevos+" nuevas ✓"))
+      .catch(()=> setTransfStatus("Se mostró, pero el guardado en la nube falló. Reintenta la carga.", true));
   } catch(err){ setTransfStatus("Error al leer el archivo", true); }
 }
 
