@@ -54,6 +54,7 @@
   .card { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow); }
 
   .filterbar { padding: 16px 18px; display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 16px; align-items: end; }
+  .filterbar[hidden] { display: none; }
   .fgroup { display: flex; flex-direction: column; gap: 7px; min-width: 0; }
   .fgroup > label.title { font-size: 11px; letter-spacing: .1em; text-transform: uppercase; color: var(--ink-faint); font-weight: 600; }
   .seg { display: flex; background: var(--paper); border: 1px solid var(--line-strong); border-radius: 8px; padding: 3px; gap: 3px; flex-wrap: wrap; }
@@ -66,7 +67,7 @@
   .chip.d33 .dot { background: var(--accent); } .chip.d34 .dot { background: var(--amber); } .chip.d61 .dot { background: var(--crit); }
   .chip input:not(:checked) ~ span { opacity: .4; }
   .chip:has(input:checked) { border-color: var(--accent); background: var(--accent-soft); }
-  input[type="text"], input[type="date"], input[type="number"] { width: 100%; padding: 8px 10px; font: inherit; font-size: 13px; background: var(--paper); border: 1px solid var(--line-strong); border-radius: 8px; color: var(--ink); }
+  input[type="text"], input[type="date"], input[type="number"], select { width: 100%; padding: 8px 10px; font: inherit; font-size: 13px; background: var(--paper); border: 1px solid var(--line-strong); border-radius: 8px; color: var(--ink); }
   input:focus-visible, .seg button:focus-visible, button:focus-visible, th:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   .range-row { display: flex; gap: 8px; }
   .range-row > input { flex: 1; min-width: 0; }
@@ -118,6 +119,21 @@
   .eb-ok { display:inline-block; padding:2px 9px; border-radius:20px; background:var(--accent-soft); color:var(--accent-ink); font-weight:600; font-size:11.5px; }
   .verfac { display:inline-block; padding:3px 10px; border-radius:6px; border:1px solid var(--accent); color:var(--accent-ink); text-decoration:none; font-size:12px; font-weight:600; }
   .verfac:hover { background:var(--accent); color:#fff; }
+  .updates { font-size: 11px; color: var(--ink-faint); margin-top: 5px; line-height: 1.5; }
+  .updates b { color: var(--ink-soft); font-weight: 600; }
+  .toolbar { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .btn-toggle { padding: 9px 14px; border: 1px solid var(--line-strong); background: var(--panel); color: var(--ink-soft); border-radius: 8px; font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; }
+  .btn-toggle[aria-expanded="true"] { border-color: var(--accent); color: var(--accent-ink); }
+  .scroll { max-height: 72vh; }
+  @media (max-width: 720px) {
+    header.top { padding: 14px 16px 12px; }
+    .brand h1 { font-size: 19px; }
+    .brand .eyebrow { font-size: 10px; }
+    main { padding: 14px 14px 48px; gap: 14px; }
+    .btn-sii { padding: 8px 12px; font-size: 12.5px; }
+    .viewtabs button { padding: 8px 12px; font-size: 12.5px; }
+    tbody td, thead th { padding: 9px 11px; }
+  }
 </style>
 
 <header class="top">
@@ -125,14 +141,7 @@
     <span class="eyebrow">Registro de Compras · SII</span>
     <h1>Análisis de DTE recibidos</h1>
     <span class="sub">RUT __RUT__ · <span id="periodlabel">—</span></span>
-  </div>
-  <div class="top-actions">
-    <button class="btn-sii" id="btnSII" title="Ir a GitHub para actualizar los datos ahora">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></svg>
-      Actualizar datos ahora
-    </button>
-    <div class="lastupd">Última actualización: <b id="lastupd"></b></div>
-    <div class="sii-hint">Te lleva a GitHub. Pulsa "Run workflow" y en ~2 min la web se actualiza sola. (También se actualiza a diario a las 07:00.)</div>
+    <div class="updates">DTE <b id="updDte">—</b> · Facturas <b id="updFac">—</b> · Banco <b id="updBanco">—</b></div>
   </div>
 </header>
 
@@ -144,10 +153,22 @@
   </div>
 
   <div id="viewFacturas">
-  <section class="card filterbar">
+  <div class="toolbar">
+    <button class="btn-toggle" id="btnFiltros" aria-expanded="false" aria-controls="filterbar">☰ Filtros</button>
+    <button class="btn-sii" id="btnSII" title="Ir a GitHub para actualizar los datos ahora">⟳ Actualizar datos</button>
+  </div>
+  <section class="card filterbar" id="filterbar" hidden>
     <div class="fgroup" style="grid-column: 1 / -1;">
       <label class="title">Período tributario</label>
       <div class="seg" id="segPeriodo"></div>
+    </div>
+    <div class="fgroup">
+      <label class="title">Año</label>
+      <select id="fAnio"></select>
+    </div>
+    <div class="fgroup">
+      <label class="title">Mes</label>
+      <select id="fMes"></select>
     </div>
     <div class="fgroup">
       <label class="title">Tipo de documento</label>
@@ -192,8 +213,6 @@
       <table>
         <thead>
           <tr>
-            <th data-k="anio" class="n">Año</th>
-            <th data-k="mesNum">Mes</th>
             <th data-k="folio" class="n">N° Factura</th>
             <th data-k="razon">Proveedor</th>
             <th data-k="total" class="n">Costo total c/IVA</th>
@@ -365,11 +384,13 @@ function estadoBanco(r){ return TRANSF_IDX.has(normRut(r.rut) + "|" + String(r.f
 
 // ===== Estado / filtros =====
 const DOCS_DEFAULT = ["33","34"];
-const state = { periodo:"all", docs:new Set(DOCS_DEFAULT), banco:"all", q:"", desde:"", hasta:"", sortK:"iso", sortDir:-1 };
+const state = { periodo:"all", anio:"all", mes:"all", docs:new Set(DOCS_DEFAULT), banco:"all", q:"", desde:"", hasta:"", sortK:"iso", sortDir:-1 };
 
 function filtered() {
   return DATA.filter(r => {
     if (state.periodo !== "all" && r.periodo !== state.periodo) return false;
+    if (state.anio !== "all" && r.anio !== state.anio) return false;
+    if (state.mes !== "all" && r.mesNum !== state.mes) return false;
     if (!state.docs.has(r.tipoDoc)) return false;
     if (state.banco === "aceptada" && estadoBanco(r) !== "Aceptada") return false;
     if (state.banco === "pendiente" && estadoBanco(r) === "Aceptada") return false;
@@ -407,8 +428,6 @@ function renderTable(rows) {
     const eb = estadoBanco(r);
     return `
     <tr class="${r.tipoDoc==='61'?'nc':''}">
-      <td class="n mono">${esc(r.anio)}</td>
-      <td>${esc(MES_NOM[r.mesNum]||"")}</td>
       <td class="n mono">${esc(r.folio)}${r.tipoDoc==='61'?' <span style="font-size:10px">(NC)</span>':''}</td>
       <td class="name" title="${esc(r.razon)}">${esc(r.razon)}</td>
       <td class="n">$${fmt(signed(r)*r.total)}</td>
@@ -449,6 +468,11 @@ function render(){ const rows = filtered(); renderKPIs(rows); renderTable(rows);
   const lbl = document.getElementById("periodlabel");
   if (periods.length) lbl.textContent = periods.length>1 ? periodLabel(periods[0])+" – "+periodLabel(periods[periods.length-1]) : periodLabel(periods[0]);
 
+  const anios=[...new Set(DATA.map(r=>r.anio).filter(Boolean))].sort();
+  document.getElementById("fAnio").innerHTML='<option value="all">Todos</option>'+anios.map(a=>`<option value="${a}">${a}</option>`).join("");
+  const meses=[...new Set(DATA.map(r=>r.mesNum).filter(Boolean))].sort();
+  document.getElementById("fMes").innerHTML='<option value="all">Todos</option>'+meses.map(m=>`<option value="${m}">${MES_NOM[m]||m}</option>`).join("");
+
   const counts = {}; DATA.forEach(r=> counts[r.tipoDoc]=(counts[r.tipoDoc]||0)+1);
   const labels = { "33":"Factura", "34":"Exenta", "61":"Nota de Crédito" };
   document.getElementById("chipDoc").innerHTML = Object.keys(labels).filter(k=>counts[k]).map(k=>`
@@ -468,6 +492,12 @@ document.getElementById("segBanco").addEventListener("click", e=>{
   document.querySelectorAll("#segBanco button").forEach(x=>x.setAttribute("aria-pressed", x===b));
   state.banco=b.dataset.b; render();
 });
+document.getElementById("fAnio").addEventListener("change", e=>{ state.anio=e.target.value; render(); });
+document.getElementById("fMes").addEventListener("change", e=>{ state.mes=e.target.value; render(); });
+document.getElementById("btnFiltros").addEventListener("click", ()=>{
+  const fb=document.getElementById("filterbar"), b=document.getElementById("btnFiltros");
+  const show=fb.hidden; fb.hidden=!show; b.setAttribute("aria-expanded", show?"true":"false");
+});
 document.getElementById("qProv").addEventListener("input", e=>{ state.q=e.target.value; render(); });
 document.getElementById("fDesde").addEventListener("change", e=>{ state.desde=e.target.value; render(); });
 document.getElementById("fHasta").addEventListener("change", e=>{ state.hasta=e.target.value; render(); });
@@ -475,10 +505,11 @@ document.querySelectorAll("#viewFacturas thead th").forEach(th=> th.addEventList
   const k=th.dataset.k; if(!k) return; if(state.sortK===k) state.sortDir*=-1; else { state.sortK=k; state.sortDir=(k==="razon"||k==="mesNum")?1:-1; } render();
 }));
 document.getElementById("btnReset").addEventListener("click", ()=>{
-  state.periodo="all"; state.docs=new Set(DOCS_DEFAULT); state.banco="all"; state.q=""; state.desde=""; state.hasta="";
+  state.periodo="all"; state.anio="all"; state.mes="all"; state.docs=new Set(DOCS_DEFAULT); state.banco="all"; state.q=""; state.desde=""; state.hasta="";
   document.querySelectorAll("#segPeriodo button").forEach(x=>x.setAttribute("aria-pressed", x.dataset.p==="all"));
   document.querySelectorAll("#segBanco button").forEach(x=>x.setAttribute("aria-pressed", x.dataset.b==="all"));
   document.querySelectorAll("#chipDoc input").forEach(i=> i.checked = state.docs.has(i.dataset.doc));
+  document.getElementById("fAnio").value="all"; document.getElementById("fMes").value="all";
   document.getElementById("qProv").value=""; document.getElementById("fDesde").value=""; document.getElementById("fHasta").value="";
   render();
 });
@@ -493,7 +524,17 @@ document.getElementById("btnExport").addEventListener("click", ()=>{
   const a = document.createElement("a"); a.href=URL.createObjectURL(blob); a.download="facturas_compra.csv"; a.click();
 });
 document.getElementById("btnSII").addEventListener("click", ()=>{ window.open(SII_URL, "_blank", "noopener"); });
-document.getElementById("lastupd").textContent = ULTIMA_ACTUALIZACION;
+document.getElementById("updDte").textContent = ULTIMA_ACTUALIZACION;
+document.getElementById("updFac").textContent = ULTIMA_ACTUALIZACION;
+function actualizarBancoStamp(){
+  let best=0, bestStr="—";
+  Object.keys(TRANSF).forEach(k=>{
+    const s=normDateTime(TRANSF[k].cargadoEn||"");
+    const m=s.match(/(\d{2})\/(\d{2})\/(\d{4})(?:\s+(\d{2}):(\d{2}))?/);
+    if(m){ const t=new Date(+m[3],+m[2]-1,+m[1],+(m[4]||0),+(m[5]||0)).getTime(); if(t>best){ best=t; bestStr=s; } }
+  });
+  document.getElementById("updBanco").textContent = bestStr;
+}
 
 function setProvStatus(t, err){ const el=document.getElementById("provStatus"); if(!el) return; el.textContent=t; el.style.color = err ? "var(--crit)" : "var(--accent-ink)"; if(t && !err) setTimeout(()=>{ if(el.textContent===t) el.textContent=""; }, 2000); }
 function setTransfStatus(t, err){ const el=document.getElementById("transfStatus"); if(!el) return; el.textContent=t; el.style.color = err ? "var(--crit)" : "var(--accent-ink)"; if(t && !err) setTimeout(()=>{ if(el.textContent===t) el.textContent=""; }, 2500); }
@@ -642,7 +683,7 @@ async function importarTransferencias(file){
     const cargado = String(now.getDate()).padStart(2,"0")+"/"+String(now.getMonth()+1).padStart(2,"0")+"/"+now.getFullYear()+" "+String(now.getHours()).padStart(2,"0")+":"+String(now.getMinutes()).padStart(2,"0");
     let nuevos = 0;
     items.forEach(t=>{ if(!TRANSF[t.numTx]){ TRANSF[t.numTx] = Object.assign({}, t, {cargadoEn: cargado}); nuevos++; } else { TRANSF[t.numTx].estado = t.estado; } });
-    buildTransfIdx(); renderTransf(); render();
+    buildTransfIdx(); actualizarBancoStamp(); renderTransf(); render();
     // 2) Guardar en la nube en segundo plano
     setTransfStatus("Guardando en la nube… ("+items.length+")");
     saveTransfBatch(items)
@@ -685,5 +726,5 @@ document.getElementById("btnImportTransf").addEventListener("click", ()=> docume
 document.getElementById("fileTransf").addEventListener("change", e=>{ const f=e.target.files[0]; if(f) importarTransferencias(f); e.target.value=""; });
 
 render();
-if (API_OK) loadCfgRemote().then(()=>{ buildTransfIdx(); render(); });
+if (API_OK) loadCfgRemote().then(()=>{ buildTransfIdx(); actualizarBancoStamp(); render(); });
 </script>
