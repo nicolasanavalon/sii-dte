@@ -12,27 +12,12 @@
     --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
     --sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   }
-  @media (prefers-color-scheme: dark) {
-    :root {
-      --paper: #10150f; --panel: #182019; --ink: #e9ede6; --ink-soft: #a7b1a6; --ink-faint: #748074;
-      --line: #27301f; --line-strong: #38432f; --accent: #4bc4a3; --accent-soft: #143028; --accent-ink: #7bd8bd;
-      --amber: #d8a24f; --amber-soft: #2e2413; --crit: #e2765c; --crit-soft: #331a13;
-      --shadow: 0 1px 2px rgba(0,0,0,.3), 0 8px 24px rgba(0,0,0,.35);
-    }
-  }
   :root[data-theme="light"] {
     --paper: #f6f7f3; --panel: #fefffb; --ink: #17211c; --ink-soft: #4a5751; --ink-faint: #7c887f;
     --line: #e2e6dd; --line-strong: #cdd3c7; --accent: #0f7a63; --accent-soft: #e2efe9; --accent-ink: #0b5647;
     --amber: #b5751f; --amber-soft: #f4e9d4; --crit: #b8452f; --crit-soft: #f5ddd5;
     --shadow: 0 1px 2px rgba(23,33,28,.05), 0 8px 24px rgba(23,33,28,.06);
   }
-  :root[data-theme="dark"] {
-    --paper: #10150f; --panel: #182019; --ink: #e9ede6; --ink-soft: #a7b1a6; --ink-faint: #748074;
-    --line: #27301f; --line-strong: #38432f; --accent: #4bc4a3; --accent-soft: #143028; --accent-ink: #7bd8bd;
-    --amber: #d8a24f; --amber-soft: #2e2413; --crit: #e2765c; --crit-soft: #331a13;
-    --shadow: 0 1px 2px rgba(0,0,0,.3), 0 8px 24px rgba(0,0,0,.35);
-  }
-
   * { box-sizing: border-box; }
   body { margin: 0; background: var(--paper); color: var(--ink); font-family: var(--sans); line-height: 1.45; -webkit-font-smoothing: antialiased; }
   h1, h2 { margin: 0; text-wrap: balance; }
@@ -158,45 +143,15 @@
     <button class="btn-sii" id="btnSII" title="Ir a GitHub para actualizar los datos ahora">⟳ Actualizar datos</button>
   </div>
   <section class="card filterbar" id="filterbar" hidden>
-    <div class="fgroup" style="grid-column: 1 / -1;">
-      <label class="title">Período tributario</label>
-      <div class="seg" id="segPeriodo"></div>
-    </div>
-    <div class="fgroup">
-      <label class="title">Año</label>
-      <select id="fAnio"></select>
-    </div>
-    <div class="fgroup">
-      <label class="title">Mes</label>
-      <select id="fMes"></select>
-    </div>
-    <div class="fgroup">
-      <label class="title">Tipo de documento</label>
-      <div class="chips" id="chipDoc"></div>
-    </div>
-    <div class="fgroup">
-      <label class="title">Estado Banco</label>
-      <div class="seg" id="segBanco">
-        <button data-b="all" aria-pressed="true">Todas</button>
-        <button data-b="aceptada">Aceptada</button>
-        <button data-b="pendiente">Pendiente</button>
-      </div>
-    </div>
-    <div class="fgroup">
-      <label class="title">Proveedor</label>
-      <input type="text" id="qProv" placeholder="Nombre o RUT…" autocomplete="off">
-    </div>
-    <div class="fgroup">
-      <label class="title">Fecha compra (documento)</label>
-      <div class="range-row">
-        <input type="date" id="fDesde" aria-label="Desde">
-        <input type="date" id="fHasta" aria-label="Hasta">
-      </div>
-    </div>
-    <div class="fgroup">
-      <label class="title">&nbsp;</label>
-      <button class="btn-reset" id="btnReset">Limpiar filtros</button>
-    </div>
+    <div class="fgroup" style="grid-column: 1 / -1;"><label class="title">Período tributario</label><div class="chips" id="fPeriodo"></div></div>
+    <div class="fgroup"><label class="title">Año</label><div class="chips" id="fAnio"></div></div>
+    <div class="fgroup"><label class="title">Mes</label><div class="chips" id="fMes"></div></div>
+    <div class="fgroup"><label class="title">Tipo de documento</label><div class="chips" id="chipDoc"></div></div>
+    <div class="fgroup"><label class="title">Estado Banco</label><div class="chips" id="fBanco"></div></div>
+    <div class="fgroup" style="grid-column: 1 / -1;"><label class="title">Estado</label><div class="chips" id="fEstado"></div></div>
+    <div class="fgroup"><label class="title">Proveedor</label><input type="text" id="qProv" placeholder="Nombre o RUT…" autocomplete="off"></div>
+    <div class="fgroup"><label class="title">Fecha compra (documento)</label><div class="range-row"><input type="date" id="fDesde" aria-label="Desde"><input type="date" id="fHasta" aria-label="Hasta"></div></div>
+    <div class="fgroup"><label class="title">&nbsp;</label><button class="btn-reset" id="btnReset">Limpiar filtros</button></div>
   </section>
 
   <section class="kpis" id="kpis"></section>
@@ -384,21 +339,28 @@ function estadoBanco(r){ return TRANSF_IDX.has(normRut(r.rut) + "|" + String(r.f
 
 // ===== Estado / filtros =====
 const DOCS_DEFAULT = ["33","34"];
-const state = { periodo:"all", anio:"all", mes:"all", docs:new Set(DOCS_DEFAULT), banco:"all", q:"", desde:"", hasta:"", sortK:"iso", sortDir:-1 };
+// Todos los filtros son de selección múltiple (conjuntos). Vacío = sin filtrar (muestra todo).
+const state = { periodos:new Set(), anios:new Set(), meses:new Set(), docs:new Set(DOCS_DEFAULT), bancos:new Set(), estados:new Set(), q:"", desde:"", hasta:"", sortK:"iso", sortDir:-1 };
 
 function filtered() {
   return DATA.filter(r => {
-    if (state.periodo !== "all" && r.periodo !== state.periodo) return false;
-    if (state.anio !== "all" && r.anio !== state.anio) return false;
-    if (state.mes !== "all" && r.mesNum !== state.mes) return false;
-    if (!state.docs.has(r.tipoDoc)) return false;
-    if (state.banco === "aceptada" && estadoBanco(r) !== "Aceptada") return false;
-    if (state.banco === "pendiente" && estadoBanco(r) === "Aceptada") return false;
+    if (state.periodos.size && !state.periodos.has(r.periodo)) return false;
+    if (state.anios.size && !state.anios.has(r.anio)) return false;
+    if (state.meses.size && !state.meses.has(r.mesNum)) return false;
+    if (state.docs.size && !state.docs.has(r.tipoDoc)) return false;
+    if (state.bancos.size) { const eb = estadoBanco(r)==="Aceptada" ? "aceptada" : "pendiente"; if (!state.bancos.has(eb)) return false; }
+    if (state.estados.size) { const es = (FAC[facId(r)]||{}).estado || "__vacio__"; if (!state.estados.has(es)) return false; }
     if (state.q) { const q = state.q.toLowerCase(); if (!(r.razon.toLowerCase().includes(q) || r.rut.toLowerCase().includes(q))) return false; }
     if (state.desde && r.iso && r.iso < state.desde) return false;
     if (state.hasta && r.iso && r.iso > state.hasta) return false;
     return true;
   });
+}
+
+function chipGroup(containerId, items, selSet){
+  const el = document.getElementById(containerId);
+  el.innerHTML = items.map(it=>`<label class="chip"><input type="checkbox" value="${esc(it.val)}" ${selSet.has(it.val)?'checked':''}><span>${esc(it.label)}${it.count!=null?' ('+it.count+')':''}</span></label>`).join("");
+  el.querySelectorAll("input").forEach(inp=> inp.addEventListener("change", e=>{ const v=e.target.value; e.target.checked?selSet.add(v):selSet.delete(v); render(); }));
 }
 
 function renderKPIs(rows) {
@@ -460,40 +422,25 @@ function renderTable(rows) {
 
 function render(){ const rows = filtered(); renderKPIs(rows); renderTable(rows); }
 
-// ===== Filtros dinámicos =====
+// ===== Filtros dinámicos (todos de selección múltiple) =====
 (function(){
   const periods = Object.keys(RAW).sort();
-  document.getElementById("segPeriodo").innerHTML = '<button data-p="all" aria-pressed="true">Todos</button>' +
-    periods.map(p=>`<button data-p="${p}">${periodLabel(p)}</button>`).join("");
+  chipGroup("fPeriodo", periods.map(p=>({val:p,label:periodLabel(p)})), state.periodos);
   const lbl = document.getElementById("periodlabel");
   if (periods.length) lbl.textContent = periods.length>1 ? periodLabel(periods[0])+" – "+periodLabel(periods[periods.length-1]) : periodLabel(periods[0]);
 
   const anios=[...new Set(DATA.map(r=>r.anio).filter(Boolean))].sort();
-  document.getElementById("fAnio").innerHTML='<option value="all">Todos</option>'+anios.map(a=>`<option value="${a}">${a}</option>`).join("");
+  chipGroup("fAnio", anios.map(a=>({val:a,label:a})), state.anios);
   const meses=[...new Set(DATA.map(r=>r.mesNum).filter(Boolean))].sort();
-  document.getElementById("fMes").innerHTML='<option value="all">Todos</option>'+meses.map(m=>`<option value="${m}">${MES_NOM[m]||m}</option>`).join("");
+  chipGroup("fMes", meses.map(m=>({val:m,label:MES_NOM[m]||m})), state.meses);
 
-  const counts = {}; DATA.forEach(r=> counts[r.tipoDoc]=(counts[r.tipoDoc]||0)+1);
-  const labels = { "33":"Factura", "34":"Exenta", "61":"Nota de Crédito" };
-  document.getElementById("chipDoc").innerHTML = Object.keys(labels).filter(k=>counts[k]).map(k=>`
-    <label class="chip d${k}"><input type="checkbox" data-doc="${k}" ${state.docs.has(k)?'checked':''}><span class="dot"></span><span>${labels[k]} (${counts[k]})</span></label>`).join("");
-  document.querySelectorAll("#chipDoc input").forEach(inp=> inp.addEventListener("change", e=>{
-    const k=e.target.dataset.doc; e.target.checked?state.docs.add(k):state.docs.delete(k); render();
-  }));
+  const counts={}; DATA.forEach(r=> counts[r.tipoDoc]=(counts[r.tipoDoc]||0)+1);
+  const docLabels={"33":"Factura","34":"Exenta","61":"Nota de Crédito"};
+  chipGroup("chipDoc", Object.keys(docLabels).filter(k=>counts[k]).map(k=>({val:k,label:docLabels[k],count:counts[k]})), state.docs);
+
+  chipGroup("fBanco", [{val:"aceptada",label:"Aceptada"},{val:"pendiente",label:"Pendiente"}], state.bancos);
+  chipGroup("fEstado", [{val:"Pagada",label:"Pagada"},{val:"NC, Revisar",label:"NC, Revisar"},{val:"Revisada, pagar",label:"Revisada, pagar"},{val:"__vacio__",label:"Sin estado"}], state.estados);
 })();
-
-document.getElementById("segPeriodo").addEventListener("click", e=>{
-  const b=e.target.closest("button"); if(!b) return;
-  document.querySelectorAll("#segPeriodo button").forEach(x=>x.setAttribute("aria-pressed", x===b));
-  state.periodo=b.dataset.p; render();
-});
-document.getElementById("segBanco").addEventListener("click", e=>{
-  const b=e.target.closest("button"); if(!b) return;
-  document.querySelectorAll("#segBanco button").forEach(x=>x.setAttribute("aria-pressed", x===b));
-  state.banco=b.dataset.b; render();
-});
-document.getElementById("fAnio").addEventListener("change", e=>{ state.anio=e.target.value; render(); });
-document.getElementById("fMes").addEventListener("change", e=>{ state.mes=e.target.value; render(); });
 document.getElementById("btnFiltros").addEventListener("click", ()=>{
   const fb=document.getElementById("filterbar"), b=document.getElementById("btnFiltros");
   const show=fb.hidden; fb.hidden=!show; b.setAttribute("aria-expanded", show?"true":"false");
@@ -505,11 +452,10 @@ document.querySelectorAll("#viewFacturas thead th").forEach(th=> th.addEventList
   const k=th.dataset.k; if(!k) return; if(state.sortK===k) state.sortDir*=-1; else { state.sortK=k; state.sortDir=(k==="razon"||k==="mesNum")?1:-1; } render();
 }));
 document.getElementById("btnReset").addEventListener("click", ()=>{
-  state.periodo="all"; state.anio="all"; state.mes="all"; state.docs=new Set(DOCS_DEFAULT); state.banco="all"; state.q=""; state.desde=""; state.hasta="";
-  document.querySelectorAll("#segPeriodo button").forEach(x=>x.setAttribute("aria-pressed", x.dataset.p==="all"));
-  document.querySelectorAll("#segBanco button").forEach(x=>x.setAttribute("aria-pressed", x.dataset.b==="all"));
-  document.querySelectorAll("#chipDoc input").forEach(i=> i.checked = state.docs.has(i.dataset.doc));
-  document.getElementById("fAnio").value="all"; document.getElementById("fMes").value="all";
+  state.periodos.clear(); state.anios.clear(); state.meses.clear(); state.bancos.clear(); state.estados.clear();
+  state.docs = new Set(DOCS_DEFAULT); state.q=""; state.desde=""; state.hasta="";
+  document.querySelectorAll("#fPeriodo input, #fAnio input, #fMes input, #fBanco input, #fEstado input").forEach(i=> i.checked=false);
+  document.querySelectorAll("#chipDoc input").forEach(i=> i.checked = state.docs.has(i.value));
   document.getElementById("qProv").value=""; document.getElementById("fDesde").value=""; document.getElementById("fHasta").value="";
   render();
 });
