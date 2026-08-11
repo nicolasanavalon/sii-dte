@@ -434,7 +434,7 @@ function renderTable(rows) {
       <td class="mono">${esc(r.fechaDocto)}</td>
       <td class="n"><input class="cell-input num fac-dias" type="number" min="0" data-id="${esc(id)}" value="${dias}"></td>
       <td class="mono fac-fpago" data-id="${esc(id)}">${fpago}</td>
-      <td><input class="cell-input txt fac-estado" type="text" data-id="${esc(id)}" value="${esc(f.estado||'')}"></td>
+      <td>${(()=>{ const opts=["","Pagada","NC, Revisar","Revisada, pagar"]; const cur=f.estado||""; if(cur && !opts.includes(cur)) opts.push(cur); return '<select class="cell-input txt fac-estado" data-id="'+esc(id)+'">'+opts.map(o=>'<option value="'+esc(o)+'"'+(o===cur?' selected':'')+'>'+(o||'—')+'</option>').join('')+'</select>'; })()}</td>
       <td>${eb==="Aceptada" ? '<span class="eb-ok">Aceptada</span>' : ''}</td>
       <td>${(IMG[r.folio]||[]).map((u,i)=>`<a class="verfac" href="${esc(u)}" target="_blank" rel="noopener">Ver${(IMG[r.folio]||[]).length>1?' '+(i+1):''}</a>`).join(' ')}</td>
     </tr>`; }).join("");
