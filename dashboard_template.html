@@ -56,6 +56,7 @@
 
   .card { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow); }
 
+  /* --- Filtros arriba --- */
   .filterbar { padding: 16px 18px; display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 16px; align-items: end; }
   .fgroup { display: flex; flex-direction: column; gap: 7px; min-width: 0; }
   .fgroup > label.title { font-size: 11px; letter-spacing: .1em; text-transform: uppercase; color: var(--ink-faint); font-weight: 600; }
@@ -76,6 +77,7 @@
   .btn-reset { padding: 8px 12px; font: inherit; font-size: 12.5px; cursor: pointer; background: transparent; color: var(--ink-soft); border: 1px solid var(--line-strong); border-radius: 8px; white-space: nowrap; }
   .btn-reset:hover { border-color: var(--accent); color: var(--accent-ink); }
 
+  /* --- KPIs --- */
   .kpis { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; }
   @media (max-width: 720px) { .kpis { grid-template-columns: repeat(2, 1fr); } }
   .kpi { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 15px 16px; box-shadow: var(--shadow); display: flex; flex-direction: column; gap: 6px; }
@@ -86,6 +88,7 @@
   .kpi.accent { border-color: color-mix(in srgb, var(--accent) 35%, var(--line)); }
   .kpi.accent .value { color: var(--accent-ink); }
 
+  /* --- Tabla --- */
   .tablewrap { overflow: hidden; }
   .tablebar { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 14px 18px; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
   .tablebar h2 { font-size: 14px; letter-spacing: .02em; color: var(--ink); font-weight: 650; }
@@ -98,4 +101,246 @@
   thead th.n { text-align: right; }
   thead th .arrow { color: var(--accent); margin-left: 3px; }
   tbody td { padding: 10px 16px; border-bottom: 1px solid var(--line); white-space: nowrap; }
-  tbody td.n { text-align: right; font-family: var(--mono); font-va
+  tbody td.n { text-align: right; font-family: var(--mono); font-variant-numeric: tabular-nums; }
+  tbody td.name { white-space: normal; min-width: 220px; max-width: 360px; }
+  tbody td.mono { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+  tbody tr:hover td { background: color-mix(in srgb, var(--accent-soft) 55%, transparent); }
+  tbody tr.nc td { color: var(--crit); }
+  .empty { padding: 48px; text-align: center; color: var(--ink-faint); font-size: 14px; }
+  .note { font-size: 12px; color: var(--ink-faint); background: var(--panel); border: 1px dashed var(--line-strong); border-radius: var(--radius); padding: 13px 16px; line-height: 1.6; }
+  .note b { color: var(--ink-soft); }
+</style>
+
+<header class="top">
+  <div class="brand">
+    <span class="eyebrow">Registro de Compras · SII</span>
+    <h1>Análisis de DTE recibidos</h1>
+    <span class="sub">RUT __RUT__ · <span id="periodlabel">—</span></span>
+  </div>
+  <div class="top-actions">
+    <button class="btn-sii" id="btnSII" title="Ir a GitHub para actualizar los datos ahora">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></svg>
+      Actualizar datos ahora
+    </button>
+    <div class="lastupd">Última actualización: <b id="lastupd"></b></div>
+    <div class="sii-hint">Te lleva a GitHub. Pulsa "Run workflow" y en ~2 min la web se actualiza sola. (También se actualiza a diario a las 07:00.)</div>
+  </div>
+</header>
+
+<main>
+  <!-- FILTROS ARRIBA -->
+  <section class="card filterbar">
+    <div class="fgroup" style="grid-column: 1 / -1;">
+      <label class="title">Período tributario</label>
+      <div class="seg" id="segPeriodo"></div>
+    </div>
+    <div class="fgroup">
+      <label class="title">Tipo de documento</label>
+      <div class="chips" id="chipDoc"></div>
+    </div>
+    <div class="fgroup">
+      <label class="title">Proveedor</label>
+      <input type="text" id="qProv" placeholder="Nombre o RUT…" autocomplete="off">
+    </div>
+    <div class="fgroup">
+      <label class="title">Fecha compra (documento)</label>
+      <div class="range-row">
+        <input type="date" id="fDesde" aria-label="Desde">
+        <input type="date" id="fHasta" aria-label="Hasta">
+      </div>
+    </div>
+    <div class="fgroup">
+      <label class="title">Costo total c/IVA ($)</label>
+      <div class="range-row">
+        <input type="number" id="mMin" placeholder="Mín" min="0">
+        <input type="number" id="mMax" placeholder="Máx" min="0">
+      </div>
+    </div>
+    <div class="fgroup">
+      <label class="title">&nbsp;</label>
+      <button class="btn-reset" id="btnReset">Limpiar filtros</button>
+    </div>
+  </section>
+
+  <!-- KPIs -->
+  <section class="kpis" id="kpis"></section>
+
+  <!-- TABLA ABAJO -->
+  <section class="card tablewrap">
+    <div class="tablebar">
+      <div>
+        <h2>Facturas de compra</h2>
+        <span class="rowcount" id="rowcount"></span>
+      </div>
+      <button class="btn" id="btnExport">↓ Exportar CSV</button>
+    </div>
+    <div class="scroll">
+      <table>
+        <thead>
+          <tr>
+            <th data-k="anio" class="n">Año</th>
+            <th data-k="mesNum">Mes</th>
+            <th data-k="folio" class="n">N° Factura</th>
+            <th data-k="razon">Proveedor</th>
+            <th data-k="total" class="n">Costo total c/IVA</th>
+            <th data-k="iso">Fecha compra</th>
+          </tr>
+        </thead>
+        <tbody id="tbody"></tbody>
+      </table>
+      <div class="empty" id="emptyMsg" hidden>Sin facturas que coincidan con los filtros.</div>
+    </div>
+  </section>
+
+  <p class="note">
+    <b>Notas.</b> <b>Fecha compra</b> = fecha del documento (no la de recepción). <b>Costo total c/IVA</b> = monto total del documento.
+    Las <b>Notas de Crédito</b> se muestran en rojo; en las tarjetas de arriba se restan del total.
+    Datos del Registro de Compra del SII, actualizados automáticamente.
+  </p>
+</main>
+
+<script>
+const RAW = /*__DATA__*/{};
+const ULTIMA_ACTUALIZACION = "__ULTIMA_ACTUALIZACION__";
+const SII_URL = "https://github.com/nicolasanavalon/sii-dte/actions/workflows/update.yml";
+
+const DOC_NAMES = { "33": "Factura", "34": "Exenta", "61": "N. Crédito" };
+const MES_ABR = { "01":"Ene","02":"Feb","03":"Mar","04":"Abr","05":"May","06":"Jun","07":"Jul","08":"Ago","09":"Sep","10":"Oct","11":"Nov","12":"Dic" };
+const MES_NOM = { "01":"Enero","02":"Febrero","03":"Marzo","04":"Abril","05":"Mayo","06":"Junio","07":"Julio","08":"Agosto","09":"Septiembre","10":"Octubre","11":"Noviembre","12":"Diciembre" };
+function periodLabel(p){ return (MES_ABR[p.slice(4,6)]||p.slice(4,6)) + " " + p.slice(0,4); }
+
+function parseCSV(text, periodo) {
+  const lines = text.split("\n").filter(l => l.trim().length);
+  const rows = [];
+  for (let i = 1; i < lines.length; i++) {
+    const c = lines[i].split(";");
+    if (!c[0] || !c[0].trim()) continue; // ignora líneas de "otros impuestos"
+    const fdoc = (c[6]||"").trim();       // Fecha Docto = dd/mm/yyyy
+    const md = fdoc.match(/(\d{2})\/(\d{2})\/(\d{4})/);
+    rows.push({
+      periodo,
+      tipoDoc: (c[1]||"").trim(),
+      rut: (c[3]||"").trim(),
+      razon: (c[4]||"").trim(),
+      folio: (c[5]||"").trim(),
+      fechaDocto: fdoc,
+      anio: md ? md[3] : "",
+      mesNum: md ? md[2] : "",
+      iso: md ? md[3]+"-"+md[2]+"-"+md[1] : "",
+      neto: +(c[10]||0),
+      iva: +(c[11]||0),
+      total: +(c[14]||0),
+    });
+  }
+  return rows;
+}
+let DATA = [];
+for (const pt of Object.keys(RAW)) DATA = DATA.concat(parseCSV(RAW[pt], pt));
+
+function fmt(n){ return (n<0?"-":"") + Math.abs(Math.round(n)).toLocaleString("es-CL"); }
+function esc(s){ return String(s).replace(/[&<>"]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+function signed(r){ return r.tipoDoc === "61" ? -1 : 1; }
+
+const state = { periodo:"all", docs:new Set(["33","34","61"]), q:"", desde:"", hasta:"", min:null, max:null, sortK:"iso", sortDir:-1 };
+
+function filtered() {
+  return DATA.filter(r => {
+    if (state.periodo !== "all" && r.periodo !== state.periodo) return false;
+    if (!state.docs.has(r.tipoDoc)) return false;
+    if (state.q) { const q = state.q.toLowerCase(); if (!(r.razon.toLowerCase().includes(q) || r.rut.toLowerCase().includes(q))) return false; }
+    if (state.desde && r.iso && r.iso < state.desde) return false;
+    if (state.hasta && r.iso && r.iso > state.hasta) return false;
+    if (state.min != null && r.total < state.min) return false;
+    if (state.max != null && r.total > state.max) return false;
+    return true;
+  });
+}
+
+function renderKPIs(rows) {
+  const n = rows.length;
+  const total = rows.reduce((s,r)=> s + signed(r)*r.total, 0);
+  const neto = rows.reduce((s,r)=> s + signed(r)*r.neto, 0);
+  const iva = rows.reduce((s,r)=> s + signed(r)*r.iva, 0);
+  const provs = new Set(rows.map(r=>r.rut)).size;
+  document.getElementById("kpis").innerHTML = `
+    <div class="kpi"><span class="label">Facturas</span><span class="value">${n.toLocaleString("es-CL")}</span><span class="foot">${provs} proveedores</span></div>
+    <div class="kpi accent"><span class="label">Costo total c/IVA</span><span class="value"><span class="cur">$</span>${fmt(total)}</span><span class="foot">neto de notas de crédito</span></div>
+    <div class="kpi"><span class="label">Monto Neto</span><span class="value"><span class="cur">$</span>${fmt(neto)}</span><span class="foot">sin IVA</span></div>
+    <div class="kpi"><span class="label">IVA Recuperable</span><span class="value"><span class="cur">$</span>${fmt(iva)}</span><span class="foot">crédito fiscal</span></div>`;
+}
+
+function renderTable(rows) {
+  const sorted = [...rows].sort((a,b) => {
+    let av=a[state.sortK], bv=b[state.sortK];
+    if (state.sortK==="total"||state.sortK==="folio"||state.sortK==="anio") { av=+av||0; bv=+bv||0; return (av-bv)*state.sortDir; }
+    return String(av).localeCompare(String(bv), "es")*state.sortDir;
+  });
+  const tb = document.getElementById("tbody");
+  document.getElementById("emptyMsg").hidden = sorted.length>0;
+  document.getElementById("rowcount").textContent = rows.length + " de " + DATA.length + " facturas";
+  tb.innerHTML = sorted.map(r => `
+    <tr class="${r.tipoDoc==='61'?'nc':''}">
+      <td class="n mono">${esc(r.anio)}</td>
+      <td>${esc(MES_NOM[r.mesNum]||"")}</td>
+      <td class="n mono">${esc(r.folio)}${r.tipoDoc==='61'?' <span style="font-size:10px">(NC)</span>':''}</td>
+      <td class="name">${esc(r.razon)}</td>
+      <td class="n">$${fmt(signed(r)*r.total)}</td>
+      <td class="mono">${esc(r.fechaDocto)}</td>
+    </tr>`).join("");
+  document.querySelectorAll("thead th").forEach(th => {
+    th.querySelector(".arrow")?.remove();
+    if (th.dataset.k===state.sortK) { const s=document.createElement("span"); s.className="arrow"; s.textContent=state.sortDir>0?"↑":"↓"; th.appendChild(s); }
+  });
+}
+
+function render(){ const rows = filtered(); renderKPIs(rows); renderTable(rows); }
+
+// Filtros dinámicos
+(function(){
+  const periods = Object.keys(RAW).sort();
+  document.getElementById("segPeriodo").innerHTML = '<button data-p="all" aria-pressed="true">Todos</button>' +
+    periods.map(p=>`<button data-p="${p}">${periodLabel(p)}</button>`).join("");
+  const lbl = document.getElementById("periodlabel");
+  if (periods.length) lbl.textContent = periods.length>1 ? periodLabel(periods[0])+" – "+periodLabel(periods[periods.length-1]) : periodLabel(periods[0]);
+
+  const counts = {}; DATA.forEach(r=> counts[r.tipoDoc]=(counts[r.tipoDoc]||0)+1);
+  const labels = { "33":"Factura", "34":"Exenta", "61":"Nota de Crédito" };
+  document.getElementById("chipDoc").innerHTML = Object.keys(labels).filter(k=>counts[k]).map(k=>`
+    <label class="chip d${k}"><input type="checkbox" data-doc="${k}" checked><span class="dot"></span><span>${labels[k]} (${counts[k]})</span></label>`).join("");
+  document.querySelectorAll("#chipDoc input").forEach(inp=> inp.addEventListener("change", e=>{
+    const k=e.target.dataset.doc; e.target.checked?state.docs.add(k):state.docs.delete(k); render();
+  }));
+})();
+
+document.getElementById("segPeriodo").addEventListener("click", e=>{
+  const b=e.target.closest("button"); if(!b) return;
+  document.querySelectorAll("#segPeriodo button").forEach(x=>x.setAttribute("aria-pressed", x===b));
+  state.periodo=b.dataset.p; render();
+});
+document.getElementById("qProv").addEventListener("input", e=>{ state.q=e.target.value; render(); });
+document.getElementById("fDesde").addEventListener("change", e=>{ state.desde=e.target.value; render(); });
+document.getElementById("fHasta").addEventListener("change", e=>{ state.hasta=e.target.value; render(); });
+document.getElementById("mMin").addEventListener("input", e=>{ state.min=e.target.value===""?null:+e.target.value; render(); });
+document.getElementById("mMax").addEventListener("input", e=>{ state.max=e.target.value===""?null:+e.target.value; render(); });
+document.querySelectorAll("thead th").forEach(th=> th.addEventListener("click", ()=>{
+  const k=th.dataset.k; if(state.sortK===k) state.sortDir*=-1; else { state.sortK=k; state.sortDir=(k==="razon"||k==="mesNum")?1:-1; } render();
+}));
+document.getElementById("btnReset").addEventListener("click", ()=>{
+  state.periodo="all"; state.docs=new Set(["33","34","61"]); state.q=""; state.desde=""; state.hasta=""; state.min=null; state.max=null;
+  document.querySelectorAll("#segPeriodo button").forEach(x=>x.setAttribute("aria-pressed", x.dataset.p==="all"));
+  document.querySelectorAll("#chipDoc input").forEach(i=>i.checked=true);
+  document.getElementById("qProv").value=""; document.getElementById("fDesde").value=""; document.getElementById("fHasta").value="";
+  document.getElementById("mMin").value=""; document.getElementById("mMax").value=""; render();
+});
+document.getElementById("btnExport").addEventListener("click", ()=>{
+  const rows = filtered();
+  const head = ["Anio","Mes","N Factura","Proveedor","Costo total c/IVA","Fecha compra"];
+  const lines = [head.join(";")].concat(rows.map(r=> [r.anio, MES_NOM[r.mesNum]||"", r.folio, r.razon, signed(r)*r.total, r.fechaDocto].join(";")));
+  const blob = new Blob(["﻿"+lines.join("\n")], {type:"text/csv;charset=utf-8"});
+  const a = document.createElement("a"); a.href=URL.createObjectURL(blob); a.download="facturas_compra.csv"; a.click();
+});
+document.getElementById("btnSII").addEventListener("click", ()=>{ window.open(SII_URL, "_blank", "noopener"); });
+document.getElementById("lastupd").textContent = ULTIMA_ACTUALIZACION;
+
+render();
+</script>
