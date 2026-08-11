@@ -224,11 +224,11 @@
   <div class="top-actions">
     <button class="btn-sii" id="btnSII" title="Abre el portal oficial del SII para iniciar sesión">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></svg>
-      Conectar / Actualizar en SII
+      Actualizar datos ahora
     </button>
     <div class="lastupd">Última actualización: <b id="lastupd"></b></div>
     <div class="top-meta" id="topmeta"></div>
-    <div class="sii-hint">Se abre el portal oficial del SII. Inicia sesión y luego pídele a Claude que actualice los datos.</div>
+    <div class="sii-hint">STe lleva a GitHub. Pulsa "Run workflow" y en ~2 min la web se actualiza sola. (También se actualiza a diario a las 07:00.)</div>
   </div>
 </header>
 
@@ -323,7 +323,7 @@ const RAW = /*__DATA__*/{};
 
 // Fecha/hora de la última descarga de datos desde el SII (se actualiza al refrescar).
 const ULTIMA_ACTUALIZACION = "__ULTIMA_ACTUALIZACION__";
-const SII_URL = "https://www4.sii.cl/consdcvinternetui/";
+const SII_URL = "https://github.com/nicolasanavalon/sii-dte/actions/workflows/update.yml";
 
 // ---- Parse ----
 const DOC_NAMES = { "33": "Factura", "34": "Exenta", "61": "N. Crédito" };
