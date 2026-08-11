@@ -34,6 +34,7 @@ jobs:
           SII_RUT: ${{ secrets.SII_RUT }}
           SII_CLAVE: ${{ secrets.SII_CLAVE }}
           SII_MESES: "2"
+          MS_REFRESH_TOKEN: ${{ secrets.MS_REFRESH_TOKEN }}
         run: python fetch_sii.py
 
       - name: Guardar datos actualizados en el repo
