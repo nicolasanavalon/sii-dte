@@ -113,8 +113,12 @@
   .viewtabs { display: flex; gap: 8px; flex-wrap: wrap; }
   .viewtabs button { padding: 9px 16px; border: 1px solid var(--line-strong); background: var(--panel); color: var(--ink-soft); border-radius: 8px; font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; }
   .viewtabs button[aria-selected="true"] { background: var(--accent); color: #fff; border-color: var(--accent); }
-  .prov-input { width: 100px; padding: 6px 8px; font: inherit; font-size: 13px; background: var(--paper); border: 1px solid var(--line-strong); border-radius: 6px; color: var(--ink); text-align: right; font-variant-numeric: tabular-nums; }
-  .prov-input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .prov-input { width: 110px; padding: 6px 8px; font: inherit; font-size: 13px; background: var(--paper); border: 1px solid var(--line-strong); border-radius: 6px; color: var(--ink); text-align: right; font-variant-numeric: tabular-nums; }
+  .prov-input:focus-visible, .cell-input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  #viewFacturas td.name { max-width: 118px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .cell-input { padding: 6px 8px; font: inherit; font-size: 12.5px; background: var(--paper); border: 1px solid var(--line-strong); border-radius: 6px; color: var(--ink); }
+  .cell-input.num { width: 58px; text-align: right; font-variant-numeric: tabular-nums; }
+  .cell-input.txt { width: 130px; text-align: left; }
 </style>
 
 <header class="top">
@@ -189,6 +193,10 @@
             <th data-k="razon">Proveedor</th>
             <th data-k="total" class="n">Costo total c/IVA</th>
             <th data-k="iso">Fecha compra</th>
+            <th class="n">Días de pago</th>
+            <th>Fecha de pago</th>
+            <th>Estado</th>
+            <th>Estado Banco</th>
           </tr>
         </thead>
         <tbody id="tbody"></tbody>
@@ -235,8 +243,8 @@
       </div>
     </section>
     <p class="note">
-      Ordenados de mayor a menor compra. <b>Días de pago</b> y <b>Crédito máx.</b> los editas tú y se guardan en <b>este navegador</b>
-      (persisten aunque los datos se actualicen a diario). Usa <b>Exportar config</b> para respaldarlos o llevarlos a otro dispositivo/navegador con <b>Importar config</b>.
+      Ordenados de mayor a menor compra. <b>Días de pago</b> y <b>Crédito máx.</b> los editas tú y se guardan <b>en la nube</b> (Google Sheets),
+      visibles desde cualquier dispositivo. Verás "Guardando… / Guardado ✓" al editar. <b>Exportar config</b> descarga un respaldo.
     </p>
   </div>
 </main>
@@ -320,18 +328,44 @@ function renderTable(rows) {
   const tb = document.getElementById("tbody");
   document.getElementById("emptyMsg").hidden = sorted.length>0;
   document.getElementById("rowcount").textContent = rows.length + " de " + DATA.length + " facturas";
-  tb.innerHTML = sorted.map(r => `
+  tb.innerHTML = sorted.map(r => {
+    const id = facId(r);
+    const f = FAC[id] || {};
+    const dias = diasEfectivos(r);
+    const fpago = addDias(r.iso, dias);
+    return `
     <tr class="${r.tipoDoc==='61'?'nc':''}">
       <td class="n mono">${esc(r.anio)}</td>
       <td>${esc(MES_NOM[r.mesNum]||"")}</td>
       <td class="n mono">${esc(r.folio)}${r.tipoDoc==='61'?' <span style="font-size:10px">(NC)</span>':''}</td>
-      <td class="name">${esc(r.razon)}</td>
+      <td class="name" title="${esc(r.razon)}">${esc(r.razon)}</td>
       <td class="n">$${fmt(signed(r)*r.total)}</td>
       <td class="mono">${esc(r.fechaDocto)}</td>
-    </tr>`).join("");
-  document.querySelectorAll("thead th").forEach(th => {
+      <td class="n"><input class="cell-input num fac-dias" type="number" min="0" data-id="${esc(id)}" value="${dias}"></td>
+      <td class="mono fac-fpago" data-id="${esc(id)}">${fpago}</td>
+      <td><input class="cell-input txt fac-estado" type="text" data-id="${esc(id)}" value="${esc(f.estado||'')}"></td>
+      <td><input class="cell-input txt fac-banco" type="text" data-id="${esc(id)}" value="${esc(f.estadoBanco||'')}"></td>
+    </tr>`; }).join("");
+
+  document.querySelectorAll("#tbody .fac-dias").forEach(inp=> inp.addEventListener("change", e=>{
+    const id=e.target.dataset.id, v=e.target.value.trim();
+    if(!FAC[id]) FAC[id]={};
+    if(v==="") delete FAC[id].dias; else FAC[id].dias=v;
+    const r = DATA.find(x=> facId(x)===id);
+    const cell = document.querySelector('.fac-fpago[data-id="'+CSS.escape(id)+'"]');
+    if (cell && r) cell.textContent = addDias(r.iso, diasEfectivos(r));
+    saveFactura(id);
+  }));
+  document.querySelectorAll("#tbody .fac-estado").forEach(inp=> inp.addEventListener("change", e=>{
+    const id=e.target.dataset.id, v=e.target.value; if(!FAC[id]) FAC[id]={}; if(v==="") delete FAC[id].estado; else FAC[id].estado=v; saveFactura(id);
+  }));
+  document.querySelectorAll("#tbody .fac-banco").forEach(inp=> inp.addEventListener("change", e=>{
+    const id=e.target.dataset.id, v=e.target.value; if(!FAC[id]) FAC[id]={}; if(v==="") delete FAC[id].estadoBanco; else FAC[id].estadoBanco=v; saveFactura(id);
+  }));
+
+  document.querySelectorAll("#viewFacturas thead th").forEach(th => {
     th.querySelector(".arrow")?.remove();
-    if (th.dataset.k===state.sortK) { const s=document.createElement("span"); s.className="arrow"; s.textContent=state.sortDir>0?"↑":"↓"; th.appendChild(s); }
+    if (th.dataset.k && th.dataset.k===state.sortK) { const s=document.createElement("span"); s.className="arrow"; s.textContent=state.sortDir>0?"↑":"↓"; th.appendChild(s); }
   });
 }
 
@@ -363,7 +397,7 @@ document.getElementById("qProv").addEventListener("input", e=>{ state.q=e.target
 document.getElementById("fDesde").addEventListener("change", e=>{ state.desde=e.target.value; render(); });
 document.getElementById("fHasta").addEventListener("change", e=>{ state.hasta=e.target.value; render(); });
 document.querySelectorAll("#viewFacturas thead th").forEach(th=> th.addEventListener("click", ()=>{
-  const k=th.dataset.k; if(state.sortK===k) state.sortDir*=-1; else { state.sortK=k; state.sortDir=(k==="razon"||k==="mesNum")?1:-1; } render();
+  const k=th.dataset.k; if(!k) return; if(state.sortK===k) state.sortDir*=-1; else { state.sortK=k; state.sortDir=(k==="razon"||k==="mesNum")?1:-1; } render();
 }));
 document.getElementById("btnReset").addEventListener("click", ()=>{
   state.periodo="all"; state.docs=new Set(DOCS_DEFAULT); state.q=""; state.desde=""; state.hasta="";
@@ -385,18 +419,47 @@ document.getElementById("lastupd").textContent = ULTIMA_ACTUALIZACION;
 // ===== Módulo Proveedores (días de pago y crédito) — guardado en la nube (Google Sheets) =====
 const API_URL = "https://script.google.com/macros/s/AKfycby2RiC-sLbkTEiUyivIfxvWLNZLCBUcpuO_IL5aGB9mMzp1vrelUsKsNskkj5OmBt2N/exec"; // URL del Web App de Google Apps Script
 const API_OK = API_URL.indexOf("__API_") !== 0;
-let CFG = {};
+let CFG = {};   // config por proveedor (RUT): { dias, credito }
+let FAC = {};   // config por factura (RUT|folio): { dias, estado, estadoBanco }
 let cfgLoaded = false;
+
+// Miles con puntos: "9000000" -> "9.000.000"
+function fmtMiles(s){ const d = String(s).replace(/\D/g, ""); return d ? Number(d).toLocaleString("es-CL") : ""; }
+function soloDigitos(s){ return String(s).replace(/\D/g, ""); }
+// Suma días a una fecha ISO (yyyy-mm-dd) y devuelve dd/mm/yyyy
+function addDias(iso, dias){
+  if (!iso) return "";
+  const d = new Date(iso + "T00:00:00");
+  if (isNaN(d)) return "";
+  d.setDate(d.getDate() + (parseInt(dias,10) || 0));
+  const dd = String(d.getDate()).padStart(2,"0"), mm = String(d.getMonth()+1).padStart(2,"0");
+  return dd + "/" + mm + "/" + d.getFullYear();
+}
+function facId(r){ return r.rut + "|" + r.folio; }
+function diasEfectivos(r){
+  const f = FAC[facId(r)] || {};
+  if (f.dias!=null && f.dias!=="") return parseInt(f.dias,10) || 0;
+  const c = CFG[r.rut] || {};
+  if (c.dias!=null && c.dias!=="") return parseInt(c.dias,10) || 0;
+  return 0;
+}
 
 function setProvStatus(t, err){ const el=document.getElementById("provStatus"); if(!el) return; el.textContent=t; el.style.color = err ? "var(--crit)" : "var(--accent-ink)"; if(t && !err) setTimeout(()=>{ if(el.textContent===t) el.textContent=""; }, 2000); }
 
-async function loadCfgRemote(){
-  if (!API_OK) { setProvStatus("Guardado en la nube no configurado", true); return; }
-  try {
-    const r = await fetch(API_URL, { cache: "no-store" });
-    CFG = (await r.json()) || {};
-    cfgLoaded = true;
-  } catch(e){ setProvStatus("No se pudo cargar desde la nube", true); }
+// Lectura vía JSONP (evita el problema de CORS de Apps Script al leer desde el navegador)
+function loadCfgRemote(){
+  return new Promise((resolve)=>{
+    if (!API_OK) { setProvStatus("Guardado en la nube no configurado", true); return resolve(); }
+    const cb = "__cfg_cb_" + Date.now();
+    let done = false;
+    const s = document.createElement("script");
+    function cleanup(){ try { delete window[cb]; } catch(e){ window[cb] = undefined; } if (s.parentNode) s.parentNode.removeChild(s); }
+    window[cb] = (data)=>{ done = true; data = data || {}; if (data.prov || data.fac) { CFG = data.prov || {}; FAC = data.fac || {}; } else { CFG = data; FAC = {}; } cfgLoaded = true; cleanup(); resolve(); };
+    s.src = API_URL + "?callback=" + cb + "&ts=" + Date.now();
+    s.onerror = ()=>{ if(!done){ cleanup(); setProvStatus("No se pudo cargar desde la nube", true); resolve(); } };
+    document.body.appendChild(s);
+    setTimeout(()=>{ if(!done){ cleanup(); setProvStatus("No se pudo cargar desde la nube", true); resolve(); } }, 8000);
+  });
 }
 
 async function saveRow(rut, razon){
@@ -407,10 +470,31 @@ async function saveRow(rut, razon){
     await fetch(API_URL, {
       method: "POST",
       headers: { "Content-Type": "text/plain;charset=utf-8" },
-      body: JSON.stringify({ rut, razon, dias: c.dias!=null?c.dias:"", credito: c.credito!=null?c.credito:"" })
+      body: JSON.stringify({ tipo:"prov", rut, razon, dias: c.dias!=null?c.dias:"", credito: c.credito!=null?c.credito:"" })
     });
     setProvStatus("Guardado ✓");
   } catch(e){ setProvStatus("Error al guardar", true); }
+}
+
+function toast(msg, err){
+  let t = document.getElementById("__toast");
+  if (!t){ t = document.createElement("div"); t.id="__toast"; t.style.cssText="position:fixed;bottom:18px;right:18px;padding:9px 14px;border-radius:8px;font-weight:600;font-size:13px;color:#fff;box-shadow:var(--shadow);z-index:50;opacity:0;transition:opacity .15s;"; document.body.appendChild(t); }
+  t.textContent = msg; t.style.background = err ? "var(--crit)" : "var(--accent)"; t.style.opacity="1";
+  clearTimeout(t.__h); t.__h = setTimeout(()=>{ t.style.opacity="0"; }, 1600);
+}
+
+async function saveFactura(id){
+  if (!API_OK) return;
+  const f = FAC[id] || {};
+  toast("Guardando…");
+  try {
+    await fetch(API_URL, {
+      method: "POST",
+      headers: { "Content-Type": "text/plain;charset=utf-8" },
+      body: JSON.stringify({ tipo:"factura", id, dias: f.dias!=null?f.dias:"", estado: f.estado!=null?f.estado:"", estadoBanco: f.estadoBanco!=null?f.estadoBanco:"" })
+    });
+    toast("Guardado ✓");
+  } catch(e){ toast("Error al guardar", true); }
 }
 
 function aggProveedores(){
@@ -436,15 +520,20 @@ function renderProv(){
       <td class="n">${o.nfac}</td>
       <td class="n">$${fmt(o.total)}</td>
       <td class="n"><input class="prov-input" type="number" min="0" step="1" data-rut="${esc(o.rut)}" data-razon="${esc(o.razon)}" data-f="dias" value="${c.dias!=null?esc(c.dias):''}" placeholder="—"></td>
-      <td class="n"><input class="prov-input" type="number" min="0" step="1000" data-rut="${esc(o.rut)}" data-razon="${esc(o.razon)}" data-f="credito" value="${c.credito!=null?esc(c.credito):''}" placeholder="—"></td>
+      <td class="n"><input class="prov-input" type="text" inputmode="numeric" data-rut="${esc(o.rut)}" data-razon="${esc(o.razon)}" data-f="credito" value="${c.credito!=null&&c.credito!==''?esc(fmtMiles(c.credito)):''}" placeholder="—"></td>
     </tr>`;
   }).join("");
-  document.querySelectorAll("#provBody .prov-input").forEach(inp=> inp.addEventListener("change", e=>{
-    const rut=e.target.dataset.rut, razon=e.target.dataset.razon, f=e.target.dataset.f, v=e.target.value.trim();
-    if (!CFG[rut]) CFG[rut] = {};
-    if (v==="") delete CFG[rut][f]; else CFG[rut][f] = v;
-    saveRow(rut, razon);
-  }));
+  document.querySelectorAll("#provBody .prov-input").forEach(inp=>{
+    if (inp.dataset.f === "credito") inp.addEventListener("input", e=>{ e.target.value = fmtMiles(e.target.value); });
+    inp.addEventListener("change", e=>{
+      const rut=e.target.dataset.rut, razon=e.target.dataset.razon, f=e.target.dataset.f;
+      let v = e.target.value.trim();
+      if (f==="credito") v = soloDigitos(v);
+      if (!CFG[rut]) CFG[rut] = {};
+      if (v==="") delete CFG[rut][f]; else CFG[rut][f] = v;
+      saveRow(rut, razon);
+    });
+  });
 }
 
 document.querySelectorAll(".viewtabs button").forEach(b=> b.addEventListener("click", async ()=>{
@@ -474,4 +563,5 @@ document.getElementById("fileCfg").addEventListener("change", e=>{
 });
 
 render();
+if (API_OK) loadCfgRemote().then(render);
 </script>
