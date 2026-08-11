@@ -109,6 +109,12 @@
   .empty { padding: 48px; text-align: center; color: var(--ink-faint); font-size: 14px; }
   .note { font-size: 12px; color: var(--ink-faint); background: var(--panel); border: 1px dashed var(--line-strong); border-radius: var(--radius); padding: 13px 16px; line-height: 1.6; }
   .note b { color: var(--ink-soft); }
+
+  .viewtabs { display: flex; gap: 8px; flex-wrap: wrap; }
+  .viewtabs button { padding: 9px 16px; border: 1px solid var(--line-strong); background: var(--panel); color: var(--ink-soft); border-radius: 8px; font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; }
+  .viewtabs button[aria-selected="true"] { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .prov-input { width: 100px; padding: 6px 8px; font: inherit; font-size: 13px; background: var(--paper); border: 1px solid var(--line-strong); border-radius: 6px; color: var(--ink); text-align: right; font-variant-numeric: tabular-nums; }
+  .prov-input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 </style>
 
 <header class="top">
@@ -128,6 +134,12 @@
 </header>
 
 <main>
+  <div class="viewtabs">
+    <button data-view="facturas" aria-selected="true">Facturas</button>
+    <button data-view="proveedores" aria-selected="false">Proveedores · días de pago</button>
+  </div>
+
+  <div id="viewFacturas">
   <!-- FILTROS ARRIBA -->
   <section class="card filterbar">
     <div class="fgroup" style="grid-column: 1 / -1;">
@@ -147,13 +159,6 @@
       <div class="range-row">
         <input type="date" id="fDesde" aria-label="Desde">
         <input type="date" id="fHasta" aria-label="Hasta">
-      </div>
-    </div>
-    <div class="fgroup">
-      <label class="title">Costo total c/IVA ($)</label>
-      <div class="range-row">
-        <input type="number" id="mMin" placeholder="Mín" min="0">
-        <input type="number" id="mMax" placeholder="Máx" min="0">
       </div>
     </div>
     <div class="fgroup">
@@ -197,6 +202,43 @@
     Las <b>Notas de Crédito</b> se muestran en rojo; en las tarjetas de arriba se restan del total.
     Datos del Registro de Compra del SII, actualizados automáticamente.
   </p>
+  </div><!-- /viewFacturas -->
+
+  <div id="viewProveedores" hidden>
+    <section class="card tablewrap">
+      <div class="tablebar">
+        <div>
+          <h2>Proveedores · días de pago y crédito</h2>
+          <span class="rowcount" id="provcount"></span>
+          <span class="rowcount" id="provStatus" style="margin-left:10px; font-weight:600;"></span>
+        </div>
+        <div style="display:flex; gap:8px; flex-wrap:wrap;">
+          <button class="btn-reset" id="btnExportCfg">Exportar config</button>
+          <button class="btn-reset" id="btnImportCfg">Importar config</button>
+          <input type="file" id="fileCfg" accept="application/json" hidden>
+        </div>
+      </div>
+      <div class="scroll">
+        <table>
+          <thead>
+            <tr>
+              <th>Proveedor</th>
+              <th>RUT</th>
+              <th class="n">N° facturas</th>
+              <th class="n">Total comprado</th>
+              <th class="n">Días de pago</th>
+              <th class="n">Crédito máx. $</th>
+            </tr>
+          </thead>
+          <tbody id="provBody"></tbody>
+        </table>
+      </div>
+    </section>
+    <p class="note">
+      Ordenados de mayor a menor compra. <b>Días de pago</b> y <b>Crédito máx.</b> los editas tú y se guardan en <b>este navegador</b>
+      (persisten aunque los datos se actualicen a diario). Usa <b>Exportar config</b> para respaldarlos o llevarlos a otro dispositivo/navegador con <b>Importar config</b>.
+    </p>
+  </div>
 </main>
 
 <script>
@@ -241,7 +283,9 @@ function fmt(n){ return (n<0?"-":"") + Math.abs(Math.round(n)).toLocaleString("e
 function esc(s){ return String(s).replace(/[&<>"]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 function signed(r){ return r.tipoDoc === "61" ? -1 : 1; }
 
-const state = { periodo:"all", docs:new Set(["33","34","61"]), q:"", desde:"", hasta:"", min:null, max:null, sortK:"iso", sortDir:-1 };
+// Por defecto: solo Facturas (33) y Exentas (34); las Notas de Crédito quedan fuera.
+const DOCS_DEFAULT = ["33","34"];
+const state = { periodo:"all", docs:new Set(DOCS_DEFAULT), q:"", desde:"", hasta:"", sortK:"iso", sortDir:-1 };
 
 function filtered() {
   return DATA.filter(r => {
@@ -250,8 +294,6 @@ function filtered() {
     if (state.q) { const q = state.q.toLowerCase(); if (!(r.razon.toLowerCase().includes(q) || r.rut.toLowerCase().includes(q))) return false; }
     if (state.desde && r.iso && r.iso < state.desde) return false;
     if (state.hasta && r.iso && r.iso > state.hasta) return false;
-    if (state.min != null && r.total < state.min) return false;
-    if (state.max != null && r.total > state.max) return false;
     return true;
   });
 }
@@ -306,7 +348,7 @@ function render(){ const rows = filtered(); renderKPIs(rows); renderTable(rows);
   const counts = {}; DATA.forEach(r=> counts[r.tipoDoc]=(counts[r.tipoDoc]||0)+1);
   const labels = { "33":"Factura", "34":"Exenta", "61":"Nota de Crédito" };
   document.getElementById("chipDoc").innerHTML = Object.keys(labels).filter(k=>counts[k]).map(k=>`
-    <label class="chip d${k}"><input type="checkbox" data-doc="${k}" checked><span class="dot"></span><span>${labels[k]} (${counts[k]})</span></label>`).join("");
+    <label class="chip d${k}"><input type="checkbox" data-doc="${k}" ${state.docs.has(k)?'checked':''}><span class="dot"></span><span>${labels[k]} (${counts[k]})</span></label>`).join("");
   document.querySelectorAll("#chipDoc input").forEach(inp=> inp.addEventListener("change", e=>{
     const k=e.target.dataset.doc; e.target.checked?state.docs.add(k):state.docs.delete(k); render();
   }));
@@ -320,17 +362,15 @@ document.getElementById("segPeriodo").addEventListener("click", e=>{
 document.getElementById("qProv").addEventListener("input", e=>{ state.q=e.target.value; render(); });
 document.getElementById("fDesde").addEventListener("change", e=>{ state.desde=e.target.value; render(); });
 document.getElementById("fHasta").addEventListener("change", e=>{ state.hasta=e.target.value; render(); });
-document.getElementById("mMin").addEventListener("input", e=>{ state.min=e.target.value===""?null:+e.target.value; render(); });
-document.getElementById("mMax").addEventListener("input", e=>{ state.max=e.target.value===""?null:+e.target.value; render(); });
-document.querySelectorAll("thead th").forEach(th=> th.addEventListener("click", ()=>{
+document.querySelectorAll("#viewFacturas thead th").forEach(th=> th.addEventListener("click", ()=>{
   const k=th.dataset.k; if(state.sortK===k) state.sortDir*=-1; else { state.sortK=k; state.sortDir=(k==="razon"||k==="mesNum")?1:-1; } render();
 }));
 document.getElementById("btnReset").addEventListener("click", ()=>{
-  state.periodo="all"; state.docs=new Set(["33","34","61"]); state.q=""; state.desde=""; state.hasta=""; state.min=null; state.max=null;
+  state.periodo="all"; state.docs=new Set(DOCS_DEFAULT); state.q=""; state.desde=""; state.hasta="";
   document.querySelectorAll("#segPeriodo button").forEach(x=>x.setAttribute("aria-pressed", x.dataset.p==="all"));
-  document.querySelectorAll("#chipDoc input").forEach(i=>i.checked=true);
+  document.querySelectorAll("#chipDoc input").forEach(i=> i.checked = state.docs.has(i.dataset.doc));
   document.getElementById("qProv").value=""; document.getElementById("fDesde").value=""; document.getElementById("fHasta").value="";
-  document.getElementById("mMin").value=""; document.getElementById("mMax").value=""; render();
+  render();
 });
 document.getElementById("btnExport").addEventListener("click", ()=>{
   const rows = filtered();
@@ -341,6 +381,97 @@ document.getElementById("btnExport").addEventListener("click", ()=>{
 });
 document.getElementById("btnSII").addEventListener("click", ()=>{ window.open(SII_URL, "_blank", "noopener"); });
 document.getElementById("lastupd").textContent = ULTIMA_ACTUALIZACION;
+
+// ===== Módulo Proveedores (días de pago y crédito) — guardado en la nube (Google Sheets) =====
+const API_URL = "https://script.google.com/macros/s/AKfycby2RiC-sLbkTEiUyivIfxvWLNZLCBUcpuO_IL5aGB9mMzp1vrelUsKsNskkj5OmBt2N/exec"; // URL del Web App de Google Apps Script
+const API_OK = API_URL.indexOf("__API_") !== 0;
+let CFG = {};
+let cfgLoaded = false;
+
+function setProvStatus(t, err){ const el=document.getElementById("provStatus"); if(!el) return; el.textContent=t; el.style.color = err ? "var(--crit)" : "var(--accent-ink)"; if(t && !err) setTimeout(()=>{ if(el.textContent===t) el.textContent=""; }, 2000); }
+
+async function loadCfgRemote(){
+  if (!API_OK) { setProvStatus("Guardado en la nube no configurado", true); return; }
+  try {
+    const r = await fetch(API_URL, { cache: "no-store" });
+    CFG = (await r.json()) || {};
+    cfgLoaded = true;
+  } catch(e){ setProvStatus("No se pudo cargar desde la nube", true); }
+}
+
+async function saveRow(rut, razon){
+  if (!API_OK) return;
+  const c = CFG[rut] || {};
+  setProvStatus("Guardando…");
+  try {
+    await fetch(API_URL, {
+      method: "POST",
+      headers: { "Content-Type": "text/plain;charset=utf-8" },
+      body: JSON.stringify({ rut, razon, dias: c.dias!=null?c.dias:"", credito: c.credito!=null?c.credito:"" })
+    });
+    setProvStatus("Guardado ✓");
+  } catch(e){ setProvStatus("Error al guardar", true); }
+}
+
+function aggProveedores(){
+  const m = new Map();
+  DATA.forEach(r=>{
+    const k = r.rut || r.razon;
+    if (!m.has(k)) m.set(k, { rut:r.rut, razon:r.razon, nfac:0, total:0 });
+    const o = m.get(k);
+    o.nfac++; o.total += signed(r)*r.total;
+    if (!o.razon && r.razon) o.razon = r.razon;
+  });
+  return [...m.values()].sort((a,b)=> b.total - a.total);
+}
+
+function renderProv(){
+  const arr = aggProveedores();
+  document.getElementById("provcount").textContent = arr.length + " proveedores · orden por total comprado";
+  document.getElementById("provBody").innerHTML = arr.map(o=>{
+    const c = CFG[o.rut] || {};
+    return `<tr>
+      <td class="name">${esc(o.razon)}</td>
+      <td class="mono" style="color:var(--ink-faint)">${esc(o.rut)}</td>
+      <td class="n">${o.nfac}</td>
+      <td class="n">$${fmt(o.total)}</td>
+      <td class="n"><input class="prov-input" type="number" min="0" step="1" data-rut="${esc(o.rut)}" data-razon="${esc(o.razon)}" data-f="dias" value="${c.dias!=null?esc(c.dias):''}" placeholder="—"></td>
+      <td class="n"><input class="prov-input" type="number" min="0" step="1000" data-rut="${esc(o.rut)}" data-razon="${esc(o.razon)}" data-f="credito" value="${c.credito!=null?esc(c.credito):''}" placeholder="—"></td>
+    </tr>`;
+  }).join("");
+  document.querySelectorAll("#provBody .prov-input").forEach(inp=> inp.addEventListener("change", e=>{
+    const rut=e.target.dataset.rut, razon=e.target.dataset.razon, f=e.target.dataset.f, v=e.target.value.trim();
+    if (!CFG[rut]) CFG[rut] = {};
+    if (v==="") delete CFG[rut][f]; else CFG[rut][f] = v;
+    saveRow(rut, razon);
+  }));
+}
+
+document.querySelectorAll(".viewtabs button").forEach(b=> b.addEventListener("click", async ()=>{
+  const v = b.dataset.view;
+  document.querySelectorAll(".viewtabs button").forEach(x=> x.setAttribute("aria-selected", x===b));
+  document.getElementById("viewFacturas").hidden = v!=="facturas";
+  document.getElementById("viewProveedores").hidden = v!=="proveedores";
+  if (v==="proveedores") { renderProv(); setProvStatus("Cargando…"); await loadCfgRemote(); renderProv(); if (cfgLoaded) setProvStatus(""); }
+}));
+
+document.getElementById("btnExportCfg").addEventListener("click", ()=>{
+  const blob = new Blob([JSON.stringify(CFG, null, 2)], {type:"application/json"});
+  const a = document.createElement("a"); a.href=URL.createObjectURL(blob); a.download="proveedores_config.json"; a.click();
+});
+document.getElementById("btnImportCfg").addEventListener("click", ()=> document.getElementById("fileCfg").click());
+document.getElementById("fileCfg").addEventListener("change", e=>{
+  const f = e.target.files[0]; if (!f) return;
+  const rd = new FileReader();
+  rd.onload = async ()=>{
+    try {
+      const imp = JSON.parse(rd.result) || {};
+      for (const rut of Object.keys(imp)) { CFG[rut] = Object.assign(CFG[rut]||{}, imp[rut]); await saveRow(rut, (imp[rut]&&imp[rut].razon)||""); }
+      renderProv();
+    } catch(err){ alert("Archivo de configuración inválido."); }
+  };
+  rd.readAsText(f);
+});
 
 render();
 </script>
