@@ -1,7 +1,5 @@
 #!/usr/bin/env python3
-"""
-Descarga el Registro de Compra (DTE) desde el SII y regenera el dashboard (index.html).
-"""
+"""Descarga el Registro de Compra (DTE) desde el SII y regenera el dashboard (index.html)."""
 import os
 import re
 import sys
@@ -19,7 +17,6 @@ DATA_DIR = "data"
 
 
 def periodos(n):
-    """Devuelve los últimos n períodos tributarios como 'YYYYMM', del más nuevo al más antiguo."""
     hoy = datetime.datetime.now(TZ).date()
     y, m, out = hoy.year, hoy.month, []
     for _ in range(n):
@@ -43,8 +40,6 @@ MESES_LABEL = {
 
 
 def descargar_del_sii(rut_full, clave, periodos_lista):
-    """Loguea en el SII y baja el detalle de compras de cada período manejando la página
-    igual que un humano: seleccionar mes/año -> Consultar -> Descargar Detalles."""
     import re as _re
     from playwright.sync_api import sync_playwright, TimeoutError as PWTimeout
 
@@ -70,7 +65,6 @@ def descargar_del_sii(rut_full, clave, periodos_lista):
         if "consdcvinternetui" not in page.url:
             page.goto(BASE_URL, wait_until="networkidle")
 
-        # Autenticación OK = aparece el boton "Consultar"
         consultar = page.get_by_role("button", name=_re.compile(r"^\s*consultar\s*$", _re.I))
         try:
             consultar.first.wait_for(timeout=25000)
@@ -84,7 +78,6 @@ def descargar_del_sii(rut_full, clave, periodos_lista):
         selects = page.locator("select")
         for pt in periodos_lista:
             mes, anio = pt[4:6], pt[:4]
-            # Comboboxes: 0 = empresa/RUT, 1 = mes, 2 = anio
             try:
                 selects.nth(1).select_option(value=mes)
             except Exception:
@@ -94,14 +87,15 @@ def descargar_del_sii(rut_full, clave, periodos_lista):
             except Exception:
                 selects.nth(2).select_option(label=anio)
 
-            page.get_by_role("button", name=_re.compile(r"^\s*consultar\s*$", _re.I)).first.click()
+            # Consultar el periodo (dispara getResumen) y esperar a que cargue
             try:
-                page.wait_for_response(lambda r: "getResumen" in r.url, timeout=30000)
+                with page.expect_response(lambda r: "getResumen" in r.url, timeout=30000):
+                    page.get_by_role("button", name=_re.compile(r"^\s*consultar\s*$", _re.I)).first.click()
             except PWTimeout:
-                pass
-            page.wait_for_timeout(1500)
+                page.get_by_role("button", name=_re.compile(r"^\s*consultar\s*$", _re.I)).first.click()
+            page.wait_for_timeout(2500)
 
-            # Captura la respuesta JSON al presionar "Descargar Detalles"
+            # Capturar la respuesta JSON al presionar "Descargar Detalles"
             try:
                 with page.expect_response(lambda r: "getDetalleCompraExport" in r.url, timeout=30000) as ri:
                     page.get_by_role("button", name=_re.compile("descargar detalles", _re.I)).first.click()
@@ -155,8 +149,7 @@ def construir_html(data, rut_display):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--build-only", action="store_true",
-                    help="Solo reconstruye index.html desde los CSV en data/ (no toca el SII)")
+    ap.add_argument("--build-only", action="store_true")
     args = ap.parse_args()
 
     rut_full = os.environ.get("SII_RUT", "").strip()
