@@ -1,0 +1,547 @@
+<title>Registro de Compras DTE · Análisis</title>
+<style>
+  :root {
+    --paper: #f6f7f3;
+    --panel: #fefffb;
+    --ink: #17211c;
+    --ink-soft: #4a5751;
+    --ink-faint: #7c887f;
+    --line: #e2e6dd;
+    --line-strong: #cdd3c7;
+    --accent: #0f7a63;
+    --accent-soft: #e2efe9;
+    --accent-ink: #0b5647;
+    --amber: #b5751f;
+    --amber-soft: #f4e9d4;
+    --crit: #b8452f;
+    --crit-soft: #f5ddd5;
+    --shadow: 0 1px 2px rgba(23,33,28,.05), 0 8px 24px rgba(23,33,28,.06);
+    --radius: 10px;
+    --mono: ui-monospace, "SF Mono", "JetBrains Mono", "Cascadia Code", Menlo, Consolas, monospace;
+    --sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --paper: #10150f;
+      --panel: #182019;
+      --ink: #e9ede6;
+      --ink-soft: #a7b1a6;
+      --ink-faint: #748074;
+      --line: #27301f;
+      --line-strong: #38432f;
+      --accent: #4bc4a3;
+      --accent-soft: #143028;
+      --accent-ink: #7bd8bd;
+      --amber: #d8a24f;
+      --amber-soft: #2e2413;
+      --crit: #e2765c;
+      --crit-soft: #331a13;
+      --shadow: 0 1px 2px rgba(0,0,0,.3), 0 8px 24px rgba(0,0,0,.35);
+    }
+  }
+  :root[data-theme="light"] {
+    --paper: #f6f7f3; --panel: #fefffb; --ink: #17211c; --ink-soft: #4a5751; --ink-faint: #7c887f;
+    --line: #e2e6dd; --line-strong: #cdd3c7; --accent: #0f7a63; --accent-soft: #e2efe9; --accent-ink: #0b5647;
+    --amber: #b5751f; --amber-soft: #f4e9d4; --crit: #b8452f; --crit-soft: #f5ddd5;
+    --shadow: 0 1px 2px rgba(23,33,28,.05), 0 8px 24px rgba(23,33,28,.06);
+  }
+  :root[data-theme="dark"] {
+    --paper: #10150f; --panel: #182019; --ink: #e9ede6; --ink-soft: #a7b1a6; --ink-faint: #748074;
+    --line: #27301f; --line-strong: #38432f; --accent: #4bc4a3; --accent-soft: #143028; --accent-ink: #7bd8bd;
+    --amber: #d8a24f; --amber-soft: #2e2413; --crit: #e2765c; --crit-soft: #331a13;
+    --shadow: 0 1px 2px rgba(0,0,0,.3), 0 8px 24px rgba(0,0,0,.35);
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--paper); color: var(--ink);
+    font-family: var(--sans); line-height: 1.45;
+    -webkit-font-smoothing: antialiased;
+  }
+  h1, h2, h3 { margin: 0; text-wrap: balance; }
+  .num { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+
+  header.top {
+    padding: 22px 28px 18px; border-bottom: 1px solid var(--line);
+    display: flex; align-items: baseline; justify-content: space-between; gap: 16px; flex-wrap: wrap;
+    background: var(--panel);
+  }
+  .brand { display: flex; flex-direction: column; gap: 3px; }
+  .brand .eyebrow {
+    font-size: 11px; letter-spacing: .16em; text-transform: uppercase;
+    color: var(--accent-ink); font-weight: 600;
+  }
+  .brand h1 { font-size: 22px; font-weight: 650; letter-spacing: -.01em; }
+  .brand .sub { font-size: 13px; color: var(--ink-faint); }
+  .top-meta { font-size: 12px; color: var(--ink-faint); text-align: right; line-height: 1.6; }
+  .top-meta b { color: var(--ink-soft); font-weight: 600; }
+  .top-actions { display: flex; flex-direction: column; align-items: flex-end; gap: 8px; }
+  .btn-sii {
+    display: inline-flex; align-items: center; gap: 8px; cursor: pointer;
+    padding: 9px 15px; font: inherit; font-size: 13px; font-weight: 600; border-radius: 8px;
+    background: var(--accent); color: #fff; border: 0; box-shadow: var(--shadow);
+  }
+  .btn-sii:hover { background: var(--accent-ink); }
+  .btn-sii svg { width: 15px; height: 15px; }
+  .lastupd { font-size: 12px; color: var(--ink-faint); text-align: right; }
+  .lastupd b { color: var(--ink-soft); font-weight: 600; font-variant-numeric: tabular-nums; }
+  .sii-hint { font-size: 11px; color: var(--ink-faint); text-align: right; max-width: 260px; line-height: 1.5; }
+
+  .layout { display: grid; grid-template-columns: 268px 1fr; align-items: start; }
+  @media (max-width: 860px) { .layout { grid-template-columns: 1fr; } }
+
+  aside.filters {
+    position: sticky; top: 0; align-self: start;
+    height: 100vh; overflow-y: auto;
+    padding: 22px 20px; border-right: 1px solid var(--line);
+    background: var(--panel); display: flex; flex-direction: column; gap: 22px;
+  }
+  @media (max-width: 860px) { aside.filters { position: static; height: auto; border-right: none; border-bottom: 1px solid var(--line); } }
+
+  .fgroup { display: flex; flex-direction: column; gap: 9px; }
+  .fgroup > label.title {
+    font-size: 11px; letter-spacing: .12em; text-transform: uppercase;
+    color: var(--ink-faint); font-weight: 600;
+  }
+  .seg { display: flex; background: var(--paper); border: 1px solid var(--line-strong); border-radius: 8px; padding: 3px; gap: 3px; }
+  .seg button {
+    flex: 1; border: 0; background: transparent; color: var(--ink-soft);
+    font: inherit; font-size: 13px; padding: 6px 4px; border-radius: 6px; cursor: pointer;
+  }
+  .seg button[aria-pressed="true"] { background: var(--accent); color: #fff; font-weight: 600; }
+  :root[data-theme="dark"] .seg button[aria-pressed="true"], @media (prefers-color-scheme: dark) { }
+
+  .chips { display: flex; flex-direction: column; gap: 7px; }
+  .chip {
+    display: flex; align-items: center; gap: 9px; cursor: pointer; font-size: 13px;
+    color: var(--ink-soft); user-select: none;
+  }
+  .chip input { display: none; }
+  .chip .box {
+    width: 16px; height: 16px; border-radius: 5px; border: 1.5px solid var(--line-strong);
+    display: grid; place-items: center; flex: none; transition: all .12s;
+  }
+  .chip .box::after { content: ""; width: 8px; height: 8px; border-radius: 2px; background: transparent; }
+  .chip input:checked + .box { border-color: var(--accent); background: var(--accent); }
+  .chip input:checked + .box::after { background: #fff; }
+  .chip .tag { margin-left: auto; font-family: var(--mono); font-size: 11px; color: var(--ink-faint); }
+
+  input[type="text"], input[type="date"], input[type="number"] {
+    width: 100%; padding: 8px 10px; font: inherit; font-size: 13px;
+    background: var(--paper); border: 1px solid var(--line-strong); border-radius: 8px; color: var(--ink);
+  }
+  input:focus-visible, .seg button:focus-visible, .chip input:focus-visible + .box, button:focus-visible {
+    outline: 2px solid var(--accent); outline-offset: 2px;
+  }
+  .range-row { display: flex; gap: 8px; }
+  .range-row > div { flex: 1; display: flex; flex-direction: column; gap: 4px; }
+  .range-row small { font-size: 10.5px; color: var(--ink-faint); letter-spacing: .04em; }
+
+  .btn-reset {
+    margin-top: auto; padding: 9px; font: inherit; font-size: 13px; cursor: pointer;
+    background: transparent; color: var(--ink-soft); border: 1px solid var(--line-strong); border-radius: 8px;
+  }
+  .btn-reset:hover { border-color: var(--accent); color: var(--accent-ink); }
+
+  main { padding: 24px 28px 60px; min-width: 0; display: flex; flex-direction: column; gap: 26px; }
+
+  .kpis { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; }
+  @media (max-width: 720px) { .kpis { grid-template-columns: repeat(2, 1fr); } }
+  .kpi {
+    background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius);
+    padding: 15px 16px; box-shadow: var(--shadow); display: flex; flex-direction: column; gap: 6px;
+  }
+  .kpi .label { font-size: 11px; letter-spacing: .09em; text-transform: uppercase; color: var(--ink-faint); font-weight: 600; }
+  .kpi .value { font-family: var(--mono); font-variant-numeric: tabular-nums; font-size: 25px; font-weight: 600; letter-spacing: -.02em; }
+  .kpi .value .cur { font-size: 14px; color: var(--ink-faint); margin-right: 2px; font-weight: 500; }
+  .kpi .foot { font-size: 12px; color: var(--ink-faint); }
+  .kpi.accent { border-color: color-mix(in srgb, var(--accent) 35%, var(--line)); }
+  .kpi.accent .value { color: var(--accent-ink); }
+
+  .panels { display: grid; grid-template-columns: 1.15fr .85fr; gap: 20px; }
+  @media (max-width: 980px) { .panels { grid-template-columns: 1fr; } }
+  .card {
+    background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius);
+    box-shadow: var(--shadow); padding: 18px 20px;
+  }
+  .card h2 {
+    font-size: 13px; letter-spacing: .04em; text-transform: uppercase; color: var(--ink-soft);
+    font-weight: 650; margin-bottom: 16px; display: flex; justify-content: space-between; align-items: baseline;
+  }
+  .card h2 .hint { font-size: 11px; letter-spacing: 0; text-transform: none; color: var(--ink-faint); font-weight: 400; }
+
+  .barlist { display: flex; flex-direction: column; gap: 11px; }
+  .barrow { display: grid; grid-template-columns: 1fr; gap: 4px; }
+  .barrow .brtop { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; font-size: 12.5px; }
+  .barrow .brname { color: var(--ink); font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .barrow .brval { font-family: var(--mono); font-variant-numeric: tabular-nums; color: var(--ink-soft); flex: none; }
+  .barrow .track { height: 7px; background: var(--paper); border-radius: 4px; overflow: hidden; }
+  .barrow .fill { height: 100%; background: linear-gradient(90deg, var(--accent), color-mix(in srgb, var(--accent) 70%, var(--amber))); border-radius: 4px; }
+
+  #daychart { width: 100%; height: 150px; display: block; }
+
+  .tablewrap { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow); overflow: hidden; }
+  .tablebar { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 14px 18px; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+  .tablebar h2 { font-size: 13px; letter-spacing: .04em; text-transform: uppercase; color: var(--ink-soft); font-weight: 650; }
+  .tablebar .rowcount { font-size: 12px; color: var(--ink-faint); }
+  .btn {
+    padding: 7px 13px; font: inherit; font-size: 12.5px; cursor: pointer; border-radius: 7px;
+    background: var(--accent); color: #fff; border: 0; font-weight: 550; display: inline-flex; gap: 6px; align-items: center;
+  }
+  .btn:hover { background: var(--accent-ink); }
+  .scroll { overflow-x: auto; max-height: 620px; overflow-y: auto; }
+  table { border-collapse: collapse; width: 100%; font-size: 12.5px; }
+  thead th {
+    position: sticky; top: 0; background: var(--panel); text-align: left; padding: 10px 14px;
+    font-size: 11px; letter-spacing: .05em; text-transform: uppercase; color: var(--ink-faint); font-weight: 600;
+    border-bottom: 1px solid var(--line-strong); cursor: pointer; white-space: nowrap; z-index: 1;
+  }
+  thead th.n { text-align: right; }
+  thead th .arrow { color: var(--accent); margin-left: 3px; }
+  tbody td { padding: 9px 14px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+  tbody td.n { text-align: right; font-family: var(--mono); font-variant-numeric: tabular-nums; }
+  tbody td.name { white-space: normal; min-width: 200px; max-width: 320px; }
+  tbody tr:hover td { background: color-mix(in srgb, var(--accent-soft) 55%, transparent); }
+  .doctag { display: inline-block; font-size: 10.5px; padding: 2px 7px; border-radius: 20px; font-weight: 600; letter-spacing: .02em; }
+  .doc33 { background: var(--accent-soft); color: var(--accent-ink); }
+  .doc34 { background: var(--amber-soft); color: var(--amber); }
+  .doc61 { background: var(--crit-soft); color: var(--crit); }
+  .empty { padding: 50px; text-align: center; color: var(--ink-faint); font-size: 14px; }
+
+  .note {
+    font-size: 12px; color: var(--ink-faint); background: var(--panel); border: 1px dashed var(--line-strong);
+    border-radius: var(--radius); padding: 13px 16px; line-height: 1.6;
+  }
+  .note b { color: var(--ink-soft); }
+</style>
+
+<header class="top">
+  <div class="brand">
+    <span class="eyebrow">Registro de Compras · SII</span>
+    <h1>Análisis de DTE recibidos</h1>
+    <span class="sub" id="brandsub">RUT __RUT__ · <span id="periodlabel">—</span></span>
+  </div>
+  <div class="top-actions">
+    <button class="btn-sii" id="btnSII" title="Abre el portal oficial del SII para iniciar sesión">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></svg>
+      Conectar / Actualizar en SII
+    </button>
+    <div class="lastupd">Última actualización: <b id="lastupd"></b></div>
+    <div class="top-meta" id="topmeta"></div>
+    <div class="sii-hint">Se abre el portal oficial del SII. Inicia sesión y luego pídele a Claude que actualice los datos.</div>
+  </div>
+</header>
+
+<div class="layout">
+  <aside class="filters">
+    <div class="fgroup">
+      <label class="title">Período</label>
+      <div class="seg" id="segPeriodo"></div>
+    </div>
+
+    <div class="fgroup">
+      <label class="title">Tipo de documento</label>
+      <div class="chips" id="chipDoc"></div>
+    </div>
+
+    <div class="fgroup">
+      <label class="title">Proveedor</label>
+      <input type="text" id="qProv" placeholder="Nombre o RUT…" autocomplete="off">
+    </div>
+
+    <div class="fgroup">
+      <label class="title">Fecha del documento</label>
+      <div class="range-row">
+        <div><small>Desde</small><input type="date" id="fDesde"></div>
+        <div><small>Hasta</small><input type="date" id="fHasta"></div>
+      </div>
+    </div>
+
+    <div class="fgroup">
+      <label class="title">Monto total ($)</label>
+      <div class="range-row">
+        <div><small>Mínimo</small><input type="number" id="mMin" placeholder="0" min="0"></div>
+        <div><small>Máximo</small><input type="number" id="mMax" placeholder="∞" min="0"></div>
+      </div>
+    </div>
+
+    <button class="btn-reset" id="btnReset">Limpiar filtros</button>
+  </aside>
+
+  <main>
+    <section class="kpis" id="kpis"></section>
+
+    <section class="panels">
+      <div class="card">
+        <h2>Top proveedores <span class="hint">por monto total</span></h2>
+        <div class="barlist" id="topProv"></div>
+      </div>
+      <div class="card">
+        <h2>Compras por día <span class="hint">fecha de documento</span></h2>
+        <canvas id="daychart"></canvas>
+      </div>
+    </section>
+
+    <section class="tablewrap">
+      <div class="tablebar">
+        <div>
+          <h2>Detalle de documentos</h2>
+          <span class="rowcount" id="rowcount"></span>
+        </div>
+        <button class="btn" id="btnExport">↓ Exportar CSV filtrado</button>
+      </div>
+      <div class="scroll">
+        <table>
+          <thead>
+            <tr>
+              <th data-k="fechaDocto">Fecha</th>
+              <th data-k="tipoDoc">Tipo</th>
+              <th data-k="razon">Proveedor</th>
+              <th data-k="rut">RUT</th>
+              <th data-k="folio" class="n">Folio</th>
+              <th data-k="neto" class="n">Neto</th>
+              <th data-k="iva" class="n">IVA</th>
+              <th data-k="total" class="n">Total</th>
+            </tr>
+          </thead>
+          <tbody id="tbody"></tbody>
+        </table>
+        <div class="empty" id="emptyMsg" hidden>Sin documentos que coincidan con los filtros.</div>
+      </div>
+    </section>
+
+    <p class="note">
+      <b>Notas.</b> Las <b>Notas de Crédito (61)</b> se muestran en positivo pero se <b>restan</b> del monto neto de las tarjetas superiores.
+      Los datos provienen del Registro de Compra descargado del SII. Para actualizarlos con nuevos períodos, vuelve a descargar el detalle e insértalo aquí.
+      Esta página es de solo lectura y no se conecta al SII (el SII exige autenticación en cada sesión y no ofrece acceso permanente).
+    </p>
+  </main>
+</div>
+
+<script>
+const RAW = /*__DATA__*/{};
+
+// Fecha/hora de la última descarga de datos desde el SII (se actualiza al refrescar).
+const ULTIMA_ACTUALIZACION = "__ULTIMA_ACTUALIZACION__";
+const SII_URL = "https://www4.sii.cl/consdcvinternetui/";
+
+// ---- Parse ----
+const DOC_NAMES = { "33": "Factura", "34": "Exenta", "61": "N. Crédito" };
+const MES_NOMBRE = { "01":"Ene","02":"Feb","03":"Mar","04":"Abr","05":"May","06":"Jun","07":"Jul","08":"Ago","09":"Sep","10":"Oct","11":"Nov","12":"Dic" };
+function periodLabel(p){ return (MES_NOMBRE[p.slice(4,6)]||p.slice(4,6)) + " " + p.slice(0,4); }
+function parseCSV(text, mes) {
+  const lines = text.split("\n").filter(l => l.trim().length);
+  const rows = [];
+  for (let i = 1; i < lines.length; i++) {
+    const c = lines[i].split(";");
+    if (!c[0] || !c[0].trim()) continue; // skip "otros impuestos" continuation lines
+    const tipo = c[1].trim();
+    rows.push({
+      mes,
+      nro: +c[0],
+      tipoDoc: tipo,
+      rut: (c[3]||"").trim(),
+      razon: (c[4]||"").trim(),
+      folio: (c[5]||"").trim(),
+      fechaDocto: (c[6]||"").trim(),
+      exento: +(c[9]||0),
+      neto: +(c[10]||0),
+      iva: +(c[11]||0),
+      total: +(c[14]||0),
+    });
+  }
+  return rows;
+}
+let DATA = [];
+for (const mes of Object.keys(RAW)) DATA = DATA.concat(parseCSV(RAW[mes], mes));
+
+// date helpers: dd/mm/yyyy
+function toISO(d) { const m = d.match(/(\d{2})\/(\d{2})\/(\d{4})/); return m ? m[3]+"-"+m[2]+"-"+m[1] : ""; }
+function fmt(n) { return (n<0?"-":"") + Math.abs(Math.round(n)).toLocaleString("es-CL"); }
+DATA.forEach(r => { r.iso = toISO(r.fechaDocto); });
+
+// ---- State ----
+const state = { periodo: "all", docs: new Set(["33","34","61"]), q: "", desde: "", hasta: "", min: null, max: null, sortK: "fechaDocto", sortDir: 1 };
+
+// ---- Filter ----
+function filtered() {
+  return DATA.filter(r => {
+    if (state.periodo !== "all" && r.mes !== state.periodo) return false;
+    if (!state.docs.has(r.tipoDoc)) return false;
+    if (state.q) { const q = state.q.toLowerCase(); if (!(r.razon.toLowerCase().includes(q) || r.rut.toLowerCase().includes(q))) return false; }
+    if (state.desde && r.iso && r.iso < state.desde) return false;
+    if (state.hasta && r.iso && r.iso > state.hasta) return false;
+    if (state.min != null && r.total < state.min) return false;
+    if (state.max != null && r.total > state.max) return false;
+    return true;
+  });
+}
+
+function signed(r) { return r.tipoDoc === "61" ? -1 : 1; }
+
+// ---- Render ----
+function renderKPIs(rows) {
+  const nDocs = rows.length;
+  const neto = rows.reduce((s,r)=> s + signed(r)*r.neto, 0);
+  const iva = rows.reduce((s,r)=> s + signed(r)*r.iva, 0);
+  const total = rows.reduce((s,r)=> s + signed(r)*r.total, 0);
+  const provs = new Set(rows.map(r=>r.rut)).size;
+  const el = document.getElementById("kpis");
+  el.innerHTML = `
+    <div class="kpi"><span class="label">Documentos</span><span class="value">${nDocs.toLocaleString("es-CL")}</span><span class="foot">${provs} proveedores únicos</span></div>
+    <div class="kpi accent"><span class="label">Monto Neto</span><span class="value"><span class="cur">$</span>${fmt(neto)}</span><span class="foot">neto de notas de crédito</span></div>
+    <div class="kpi"><span class="label">IVA Recuperable</span><span class="value"><span class="cur">$</span>${fmt(iva)}</span><span class="foot">crédito fiscal</span></div>
+    <div class="kpi"><span class="label">Monto Total</span><span class="value"><span class="cur">$</span>${fmt(total)}</span><span class="foot">neto + IVA + otros imp.</span></div>`;
+}
+
+function renderTopProv(rows) {
+  const map = new Map();
+  rows.forEach(r => { const v = signed(r)*r.total; map.set(r.razon, (map.get(r.razon)||0) + v); });
+  const arr = [...map.entries()].sort((a,b)=> b[1]-a[1]).slice(0,10);
+  const max = Math.max(1, ...arr.map(a=>Math.abs(a[1])));
+  const el = document.getElementById("topProv");
+  if (!arr.length) { el.innerHTML = '<div class="empty" style="padding:24px">Sin datos</div>'; return; }
+  el.innerHTML = arr.map(([name,val]) => `
+    <div class="barrow">
+      <div class="brtop"><span class="brname" title="${esc(name)}">${esc(name)}</span><span class="brval">$${fmt(val)}</span></div>
+      <div class="track"><div class="fill" style="width:${Math.max(2, Math.abs(val)/max*100)}%"></div></div>
+    </div>`).join("");
+}
+
+function renderDayChart(rows) {
+  const cv = document.getElementById("daychart");
+  const dpr = window.devicePixelRatio || 1;
+  const w = cv.clientWidth, h = 150;
+  cv.width = w*dpr; cv.height = h*dpr;
+  const ctx = cv.getContext("2d"); ctx.scale(dpr,dpr);
+  ctx.clearRect(0,0,w,h);
+  const map = new Map();
+  rows.forEach(r => { if(!r.iso) return; map.set(r.iso, (map.get(r.iso)||0) + signed(r)*r.total); });
+  const days = [...map.entries()].sort((a,b)=> a[0]<b[0]?-1:1);
+  const cs = getComputedStyle(document.documentElement);
+  const accent = cs.getPropertyValue("--accent").trim();
+  const line = cs.getPropertyValue("--line").trim();
+  const faint = cs.getPropertyValue("--ink-faint").trim();
+  if (!days.length) { ctx.fillStyle = faint; ctx.font = "13px " + cs.getPropertyValue("--sans"); ctx.fillText("Sin datos", 10, 24); return; }
+  const pad = {l: 8, r: 8, t: 12, b: 22};
+  const max = Math.max(1, ...days.map(d=>Math.abs(d[1])));
+  const bw = (w - pad.l - pad.r) / days.length;
+  ctx.strokeStyle = line; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(pad.l, h-pad.b+.5); ctx.lineTo(w-pad.r, h-pad.b+.5); ctx.stroke();
+  days.forEach((d,i) => {
+    const bh = (Math.abs(d[1])/max) * (h - pad.t - pad.b);
+    const x = pad.l + i*bw + bw*0.18, bwi = bw*0.64;
+    ctx.fillStyle = d[1] < 0 ? cs.getPropertyValue("--crit").trim() : accent;
+    ctx.globalAlpha = .9;
+    ctx.fillRect(x, h-pad.b-bh, bwi, bh);
+  });
+  ctx.globalAlpha = 1; ctx.fillStyle = faint; ctx.font = "10px " + cs.getPropertyValue("--sans");
+  const first = days[0][0].slice(8)+"/"+days[0][0].slice(5,7);
+  const last = days[days.length-1][0].slice(8)+"/"+days[days.length-1][0].slice(5,7);
+  ctx.fillText(first, pad.l, h-6);
+  ctx.textAlign = "right"; ctx.fillText(last, w-pad.r, h-6); ctx.textAlign = "left";
+}
+
+function esc(s){ return String(s).replace(/[&<>"]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+
+function renderTable(rows) {
+  const sorted = [...rows].sort((a,b) => {
+    let av=a[state.sortK], bv=b[state.sortK];
+    if (state.sortK === "fechaDocto") { av=a.iso; bv=b.iso; }
+    if (typeof av === "number" && typeof bv === "number") return (av-bv)*state.sortDir;
+    return String(av).localeCompare(String(bv), "es")*state.sortDir;
+  });
+  const tb = document.getElementById("tbody");
+  const empty = document.getElementById("emptyMsg");
+  document.getElementById("rowcount").textContent = rows.length + " de " + DATA.length + " documentos";
+  if (!sorted.length) { tb.innerHTML=""; empty.hidden=false; return; }
+  empty.hidden = true;
+  tb.innerHTML = sorted.map(r => `
+    <tr>
+      <td>${esc(r.fechaDocto)}</td>
+      <td><span class="doctag doc${r.tipoDoc}">${DOC_NAMES[r.tipoDoc]||r.tipoDoc}</span></td>
+      <td class="name">${esc(r.razon)}</td>
+      <td class="num" style="color:var(--ink-faint)">${esc(r.rut)}</td>
+      <td class="n">${esc(r.folio)}</td>
+      <td class="n">${fmt(r.neto)}</td>
+      <td class="n">${fmt(r.iva)}</td>
+      <td class="n">${fmt(r.total)}</td>
+    </tr>`).join("");
+  document.querySelectorAll("thead th").forEach(th => {
+    const k = th.dataset.k; th.querySelector(".arrow")?.remove();
+    if (k === state.sortK) { const s=document.createElement("span"); s.className="arrow"; s.textContent = state.sortDir>0?"↑":"↓"; th.appendChild(s); }
+  });
+}
+
+function render() {
+  const rows = filtered();
+  renderKPIs(rows); renderTopProv(rows); renderDayChart(rows); renderTable(rows);
+}
+
+// ---- Wire up ----
+function buildDocChips() {
+  const counts = {}; DATA.forEach(r => counts[r.tipoDoc]=(counts[r.tipoDoc]||0)+1);
+  const labels = { "33":"Factura Electrónica", "34":"Factura Exenta", "61":"Nota de Crédito" };
+  const el = document.getElementById("chipDoc");
+  el.innerHTML = Object.keys(labels).filter(k=>counts[k]).map(k => `
+    <label class="chip"><input type="checkbox" data-doc="${k}" checked><span class="box"></span><span>${labels[k]}</span><span class="tag">${counts[k]||0}</span></label>`).join("");
+  el.querySelectorAll("input").forEach(inp => inp.addEventListener("change", e => {
+    const k = e.target.dataset.doc; e.target.checked ? state.docs.add(k) : state.docs.delete(k); render();
+  }));
+}
+document.getElementById("segPeriodo").addEventListener("click", e => {
+  const b = e.target.closest("button"); if(!b) return;
+  document.querySelectorAll("#segPeriodo button").forEach(x=>x.setAttribute("aria-pressed", x===b));
+  state.periodo = b.dataset.p; render();
+});
+document.getElementById("qProv").addEventListener("input", e => { state.q = e.target.value; render(); });
+document.getElementById("fDesde").addEventListener("change", e => { state.desde = e.target.value; render(); });
+document.getElementById("fHasta").addEventListener("change", e => { state.hasta = e.target.value; render(); });
+document.getElementById("mMin").addEventListener("input", e => { state.min = e.target.value===""?null:+e.target.value; render(); });
+document.getElementById("mMax").addEventListener("input", e => { state.max = e.target.value===""?null:+e.target.value; render(); });
+document.querySelectorAll("thead th").forEach(th => th.addEventListener("click", () => {
+  const k = th.dataset.k; if (state.sortK===k) state.sortDir*=-1; else { state.sortK=k; state.sortDir = (k==="razon"||k==="fechaDocto")?1:-1; } render();
+}));
+document.getElementById("btnReset").addEventListener("click", () => {
+  state.periodo="all"; state.docs=new Set(["33","34","61"]); state.q=""; state.desde=""; state.hasta=""; state.min=null; state.max=null;
+  document.querySelectorAll("#segPeriodo button").forEach(x=>x.setAttribute("aria-pressed", x.dataset.p==="all"));
+  document.querySelectorAll("#chipDoc input").forEach(i=>i.checked=true);
+  document.getElementById("qProv").value=""; document.getElementById("fDesde").value=""; document.getElementById("fHasta").value="";
+  document.getElementById("mMin").value=""; document.getElementById("mMax").value=""; render();
+});
+document.getElementById("btnExport").addEventListener("click", () => {
+  const rows = filtered();
+  const head = ["Mes","Nro","Tipo","RUT","Razon Social","Folio","Fecha Docto","Neto","IVA","Total"];
+  const lines = [head.join(";")].concat(rows.map(r => [r.mes,r.nro,DOC_NAMES[r.tipoDoc]||r.tipoDoc,r.rut,r.razon,r.folio,r.fechaDocto,r.neto,r.iva,r.total].join(";")));
+  const blob = new Blob(["﻿"+lines.join("\n")], {type:"text/csv;charset=utf-8"});
+  const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = "compras_dte_filtrado.csv"; a.click();
+});
+
+// top meta
+(function(){
+  const total = DATA.reduce((s,r)=> s + signed(r)*r.total, 0);
+  document.getElementById("topmeta").innerHTML = `<b>${DATA.length}</b> documentos cargados<br><b>$${fmt(total)}</b> monto total neto`;
+})();
+
+// Selector de períodos dinámico (a partir de los datos cargados)
+(function buildPeriodos(){
+  const periods = Object.keys(RAW).sort();
+  const seg = document.getElementById("segPeriodo");
+  seg.innerHTML = '<button data-p="all" aria-pressed="true">Todos</button>' +
+    periods.map(p => `<button data-p="${p}">${periodLabel(p)}</button>`).join("");
+  const lbl = document.getElementById("periodlabel");
+  if (periods.length) lbl.textContent = periods.length > 1
+    ? periodLabel(periods[0]) + " – " + periodLabel(periods[periods.length-1])
+    : periodLabel(periods[0]);
+})();
+
+// Botón: abrir portal oficial del SII para iniciar sesión
+document.getElementById("btnSII").addEventListener("click", () => {
+  window.open(SII_URL, "_blank", "noopener");
+});
+document.getElementById("lastupd").textContent = ULTIMA_ACTUALIZACION;
+
+buildDocChips();
+render();
+window.addEventListener("resize", () => renderDayChart(filtered()));
+</script>
