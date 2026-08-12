@@ -92,6 +92,29 @@ def _swap_estado(body, new_code):
     return json.dumps(obj) if hit[0] else None
 
 
+def _remap_rows(rows, canon_upper):
+    """Reordena las filas de un export según su PROPIO encabezado para que calcen con el
+    encabezado canónico `canon_upper` (lista de nombres en mayúsculas). Así da igual que una
+    pestaña (p.ej. PENDIENTE) omita columnas como 'Fecha Acuse' y corra todo lo demás.
+    `rows` incluye el encabezado en rows[0]. Devuelve solo filas de datos ya alineadas."""
+    if not rows:
+        return []
+    hdr = [h.strip().upper() for h in rows[0].split(";")]
+    pos = {}
+    for i, name in enumerate(hdr):
+        if name and name not in pos:
+            pos[name] = i
+    out = []
+    for row in rows[1:]:
+        c = row.split(";")
+        vals = []
+        for name in canon_upper:
+            j = pos.get(name)
+            vals.append(c[j] if (j is not None and j < len(c)) else "")
+        out.append(";".join(vals))
+    return out
+
+
 def descargar_del_sii(rut_full, clave, periodos_lista):
     """Loguea en el SII y baja el detalle de compras de cada período manejando la página
     igual que un humano: seleccionar mes/año → Consultar → Descargar Detalles (REGISTRO).
@@ -180,11 +203,11 @@ def descargar_del_sii(rut_full, clave, periodos_lista):
             except Exception:
                 pass
 
+            # Encabezado canónico = el de REGISTRO (tiene todas las columnas, incl. 'Fecha Acuse').
             header = base_rows[0] if base_rows else None
-            combined = []  # (situacion_label, fila_csv)
+            exports = []  # (label, rows_con_encabezado)
             if len(base_rows) > 1:
-                for row in base_rows[1:]:
-                    combined.append(("Registro", row))
+                exports.append(("Registro", base_rows))
                 print(f"  · {pt} Registro: {len(base_rows) - 1} documentos")
 
             # Reproduce la exportación para las otras pestañas del SII
@@ -208,16 +231,24 @@ def descargar_del_sii(rut_full, clave, periodos_lista):
                 if rows2 and header is None:
                     header = rows2[0]
                 if rows2 and len(rows2) > 1:
-                    for row in rows2[1:]:
-                        combined.append((label, row))
+                    exports.append((label, rows2))
                     print(f"  · {pt} {label}: {len(rows2) - 1} documentos")
 
-            if header is None or not combined:
+            if header is None or not exports:
                 print(f"  · {pt}: sin documentos")
                 continue
-            out_lines = [header + ";SITUACION"] + [row + ";" + label for (label, row) in combined]
+
+            # Normaliza cada pestaña por NOMBRE de columna (no por posición) para corregir el
+            # corrimiento cuando el SII omite columnas en una pestaña (p.ej. 'Fecha Acuse' en Pendiente).
+            canon_upper = [h.strip().upper() for h in header.split(";")]
+            out_lines = [header + ";SITUACION"]
+            total = 0
+            for label, rows in exports:
+                for row in _remap_rows(rows, canon_upper):
+                    out_lines.append(row + ";" + label)
+                    total += 1
             resultados[pt] = "\n".join(out_lines)
-            print(f"  · {pt}: {len(combined)} documentos (todas las situaciones)")
+            print(f"  · {pt}: {total} documentos (todas las situaciones)")
         browser.close()
     return resultados
 

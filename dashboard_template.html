@@ -103,10 +103,6 @@
   .cell-input.num { width: 58px; text-align: right; font-variant-numeric: tabular-nums; }
   .cell-input.txt { width: 130px; text-align: left; }
   .eb-ok { display:inline-block; padding:2px 9px; border-radius:20px; background:var(--accent-soft); color:var(--accent-ink); font-weight:600; font-size:11.5px; }
-  .sit { display:inline-block; padding:2px 9px; border-radius:20px; font-weight:600; font-size:11.5px; white-space:nowrap; }
-  .sit-reg { background:#eef2f7; color:#5b6470; }
-  .sit-pend { background:#fff3d6; color:#8a6100; }
-  .sit-otro { background:#fde2e1; color:#a11; }
   .verfac { display:inline-block; padding:3px 10px; border-radius:6px; border:1px solid var(--accent); color:var(--accent-ink); text-decoration:none; font-size:12px; font-weight:600; }
   .verfac:hover { background:var(--accent); color:#fff; }
   .updates { font-size: 11px; color: var(--ink-faint); margin-top: 5px; line-height: 1.5; }
@@ -153,7 +149,6 @@
     <div class="fgroup"><label class="title">Mes</label><div class="chips" id="fMes"></div></div>
     <div class="fgroup"><label class="title">Tipo de documento</label><div class="chips" id="chipDoc"></div></div>
     <div class="fgroup"><label class="title">Estado Banco</label><div class="chips" id="fBanco"></div></div>
-    <div class="fgroup"><label class="title">Situación SII</label><div class="chips" id="fSituacion"></div></div>
     <div class="fgroup" style="grid-column: 1 / -1;"><label class="title">Fecha de pago</label><div class="chips" id="fFpago"></div></div>
     <div class="fgroup" style="grid-column: 1 / -1;"><label class="title">Estado</label><div class="chips" id="fEstado"></div></div>
     <div class="fgroup"><label class="title">N° Factura</label><input type="text" id="qFolio" placeholder="Buscar folio…" autocomplete="off"></div>
@@ -183,7 +178,6 @@
             <th>Fecha de pago</th>
             <th>Estado</th>
             <th>Estado Banco</th>
-            <th data-k="situacion">Situación SII</th>
             <th>Factura</th>
           </tr>
         </thead>
@@ -354,7 +348,7 @@ function estadoBanco(r){ return TRANSF_IDX.has(normRut(r.rut) + "|" + String(r.f
 // ===== Estado / filtros =====
 const DOCS_DEFAULT = ["33","34"];
 // Todos los filtros son de selección múltiple (conjuntos). Vacío = sin filtrar (muestra todo).
-const state = { periodos:new Set(), anios:new Set(), meses:new Set(), docs:new Set(DOCS_DEFAULT), bancos:new Set(), estados:new Set(), situaciones:new Set(), fpagos:new Set(), qFolio:"", q:"", sortK:"iso", sortDir:-1 };
+const state = { periodos:new Set(), anios:new Set(), meses:new Set(), docs:new Set(DOCS_DEFAULT), bancos:new Set(), estados:new Set(), fpagos:new Set(), qFolio:"", q:"", sortK:"iso", sortDir:-1 };
 
 function fechaPagoISO(r){
   if(!r.iso) return "";
@@ -371,7 +365,6 @@ function passes(r, except) {
   if (except!=="docs" && state.docs.size && !state.docs.has(r.tipoDoc)) return false;
   if (except!=="bancos" && state.bancos.size) { const eb = estadoBanco(r)==="Aceptada" ? "aceptada" : "pendiente"; if (!state.bancos.has(eb)) return false; }
   if (except!=="estados" && state.estados.size) { const es = (FAC[facId(r)]||{}).estado || "__vacio__"; if (!state.estados.has(es)) return false; }
-  if (except!=="situaciones" && state.situaciones.size) { if (!state.situaciones.has(r.situacion||"Registro")) return false; }
   if (except!=="fpagos" && state.fpagos.size) { const fp=fechaPagoISO(r); if(!state.fpagos.has(fp)) return false; }
   if (state.qFolio) { if (!String(r.folio).includes(state.qFolio.trim())) return false; }
   if (state.q) { const q = state.q.toLowerCase(); if (!(r.razon.toLowerCase().includes(q) || r.rut.toLowerCase().includes(q))) return false; }
@@ -421,7 +414,6 @@ function renderTable(rows) {
       <td class="mono fac-fpago" data-id="${esc(id)}">${fpago}</td>
       <td>${(()=>{ const opts=["","Pagada","NC, Revisar","Revisada, pagar"]; const cur=f.estado||""; if(cur && !opts.includes(cur)) opts.push(cur); return '<select class="cell-input txt fac-estado" data-id="'+esc(id)+'">'+opts.map(o=>'<option value="'+esc(o)+'"'+(o===cur?' selected':'')+'>'+(o||'—')+'</option>').join('')+'</select>'; })()}</td>
       <td>${eb==="Aceptada" ? '<span class="eb-ok">Aceptada</span>' : ''}</td>
-      <td>${(()=>{ const s=r.situacion||"Registro"; const cls=s==="Registro"?"sit-reg":(s==="Pendiente"?"sit-pend":"sit-otro"); return '<span class="sit '+cls+'">'+esc(s)+'</span>'; })()}</td>
       <td>${(IMG[r.folio]||[]).map((u,i)=>`<a class="verfac" href="${esc(u)}" target="_blank" rel="noopener">Ver${(IMG[r.folio]||[]).length>1?' '+(i+1):''}</a>`).join(' ')}</td>
     </tr>`; }).join("");
 
@@ -486,11 +478,6 @@ function rebuildFilters(){
   const estDefs=[{val:"Pagada",label:"Pagada"},{val:"NC, Revisar",label:"NC, Revisar"},{val:"Revisada, pagar",label:"Revisada, pagar"},{val:"__vacio__",label:"Sin estado"}];
   chipGroup("fEstado", estDefs.filter(d=> estAvail.has(d.val) || state.estados.has(d.val)), state.estados);
 
-  const sitAvail=facetSet("situaciones", r=> r.situacion||"Registro");
-  const sitOrder=["Registro","Pendiente","No incluir","Reclamado"];
-  const sits=[...new Set([...sitAvail, ...state.situaciones])].sort((a,b)=>{ const ia=sitOrder.indexOf(a), ib=sitOrder.indexOf(b); return (ia<0?9:ia)-(ib<0?9:ib); });
-  chipGroup("fSituacion", sits.map(s=>({val:s,label:s})), state.situaciones);
-
   const fpAvail=facetSet("fpagos", r=> fechaPagoISO(r));
   const fpagos=[...new Set([...fpAvail, ...state.fpagos])].filter(Boolean).sort();
   chipGroup("fFpago", fpagos.map(f=>({val:f,label:fpagoLabel(f)})), state.fpagos);
@@ -500,7 +487,7 @@ rebuildFilters();
 
 // ===== Persistencia de la vista (filtros/tab/orden) — nube (compartida) + local (instantáneo) =====
 function currentTab(){ const b=document.querySelector('.viewtabs button[aria-selected="true"]'); return b?b.dataset.view:"facturas"; }
-function getView(){ return { tab:currentTab(), periodos:[...state.periodos], anios:[...state.anios], meses:[...state.meses], docs:[...state.docs], bancos:[...state.bancos], estados:[...state.estados], situaciones:[...state.situaciones], fpagos:[...state.fpagos], qFolio:state.qFolio, q:state.q, sortK:state.sortK, sortDir:state.sortDir }; }
+function getView(){ return { tab:currentTab(), periodos:[...state.periodos], anios:[...state.anios], meses:[...state.meses], docs:[...state.docs], bancos:[...state.bancos], estados:[...state.estados], fpagos:[...state.fpagos], qFolio:state.qFolio, q:state.q, sortK:state.sortK, sortDir:state.sortDir }; }
 function syncChips(){
   const q=document.getElementById("qProv"); if(q) q.value=state.q;
   const qf=document.getElementById("qFolio"); if(qf) qf.value=state.qFolio||"";
@@ -511,7 +498,7 @@ function applyView(v){
   __applying=true;
   setSet(state.periodos, v.periodos); setSet(state.anios, v.anios); setSet(state.meses, v.meses);
   setSet(state.docs, v.docs||DOCS_DEFAULT); setSet(state.bancos, v.bancos); setSet(state.estados, v.estados);
-  setSet(state.situaciones, v.situaciones); setSet(state.fpagos, v.fpagos);
+  setSet(state.fpagos, v.fpagos);
   state.qFolio=v.qFolio||"";
   state.q=v.q||""; state.sortK=v.sortK||"iso"; state.sortDir=v.sortDir!=null?v.sortDir:-1;
   rebuildFilters(); syncChips();
@@ -538,17 +525,17 @@ document.querySelectorAll("#viewFacturas thead th").forEach(th=> th.addEventList
   const k=th.dataset.k; if(!k) return; if(state.sortK===k) state.sortDir*=-1; else { state.sortK=k; state.sortDir=(k==="razon"||k==="mesNum")?1:-1; } render(); saveView();
 }));
 document.getElementById("btnReset").addEventListener("click", ()=>{
-  state.periodos.clear(); state.anios.clear(); state.meses.clear(); state.bancos.clear(); state.estados.clear(); state.situaciones.clear(); state.fpagos.clear();
+  state.periodos.clear(); state.anios.clear(); state.meses.clear(); state.bancos.clear(); state.estados.clear(); state.fpagos.clear();
   setSet(state.docs, DOCS_DEFAULT); state.q=""; state.qFolio="";
   document.getElementById("qProv").value=""; document.getElementById("qFolio").value="";
   rebuildFilters(); render(); saveView();
 });
 document.getElementById("btnExport").addEventListener("click", ()=>{
   const rows = filtered();
-  const head = ["Anio","Mes","N Factura","Proveedor","Costo total c/IVA","Fecha compra","Dias de pago","Fecha de pago","Estado","Estado Banco","Situacion SII"];
+  const head = ["Anio","Mes","N Factura","Proveedor","Costo total c/IVA","Fecha compra","Dias de pago","Fecha de pago","Estado","Estado Banco"];
   const lines = [head.join(";")].concat(rows.map(r=>{
     const id=facId(r), f=FAC[id]||{}, dias=diasEfectivos(r);
-    return [r.anio, MES_NOM[r.mesNum]||"", r.folio, r.razon, signed(r)*r.total, r.fechaDocto, dias, addDias(r.iso,dias), f.estado||"", estadoBanco(r), r.situacion||"Registro"].join(";");
+    return [r.anio, MES_NOM[r.mesNum]||"", r.folio, r.razon, signed(r)*r.total, r.fechaDocto, dias, addDias(r.iso,dias), f.estado||"", estadoBanco(r)].join(";");
   }));
   const blob = new Blob(["﻿"+lines.join("\n")], {type:"text/csv;charset=utf-8"});
   const a = document.createElement("a"); a.href=URL.createObjectURL(blob); a.download="facturas_compra.csv"; a.click();
