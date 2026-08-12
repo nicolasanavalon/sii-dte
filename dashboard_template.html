@@ -182,6 +182,7 @@
             <th data-k="folio" class="n">N° Factura</th>
             <th data-k="razon">Proveedor</th>
             <th data-k="total" class="n">Costo total c/IVA</th>
+            <th class="n">$ NC</th>
             <th data-k="iso">Fecha compra</th>
             <th class="n">Días de pago</th>
             <th>Fecha de pago</th>
@@ -362,6 +363,19 @@ function setBank(obj){
   __bankTimer=setTimeout(()=>{ fetch(API_URL,{method:"POST",headers:{"Content-Type":"text/plain;charset=utf-8"},body:JSON.stringify({tipo:"prov",rut:"__BANCOS__",razon:"bancos",dias:"",credito:JSON.stringify(obj)})}).catch(()=>{}); }, 900);
 }
 
+// Monto de Nota de Crédito por factura (para descontar del TEF). Se guarda en la nube en un
+// registro especial __NC__ (mismo mecanismo que __BANCOS__), sin tocar el Apps Script.
+// Estructura: { "RUT|folio": "20000", ... }  (monto en pesos, solo dígitos).
+function getNC(){ try{ return JSON.parse((CFG["__NC__"]||{}).credito||"{}") || {}; }catch(e){ return {}; } }
+let __ncTimer;
+function setNC(obj){
+  if(!CFG["__NC__"]) CFG["__NC__"]={razon:"nc"};
+  CFG["__NC__"].credito = JSON.stringify(obj);
+  if(!API_OK) return;
+  clearTimeout(__ncTimer);
+  __ncTimer=setTimeout(()=>{ fetch(API_URL,{method:"POST",headers:{"Content-Type":"text/plain;charset=utf-8"},body:JSON.stringify({tipo:"prov",rut:"__NC__",razon:"nc",dias:"",credito:JSON.stringify(obj)})}).catch(()=>{}); }, 900);
+}
+
 function rutTef(rut){ return normRut(rut).replace(/-/g,""); }   // dígitos + DV, sin puntos ni guion
 function fld(val, len, align, fill){
   let s = String(val==null?"":val);
@@ -373,6 +387,7 @@ function fld(val, len, align, fill){
 // Devuelve {lines:[...], incompletos:[{folio,razon,motivo}], sinCargo:bool}
 function generarTEF(){
   const bank = getBank();
+  const ncMap = getNC();
   const cargo = soloDigitos((bank.__cargo__||{}).cta||"");
   const rutCliente = fld(rutTef(RUT_EMISOR),10,"R","0");
   const cargoFld = fld(cargo,12,"R","0");
@@ -385,8 +400,10 @@ function generarTEF(){
     const cuenta = String(info.c||"").trim();
     const tipo = info.t;              // CTD / JUV
     const email = String(info.e||"").trim();
-    const monto = Math.round(Math.abs(signed(r)*r.total));
+    const nc = parseInt(soloDigitos(ncMap[facId(r)]||""),10) || 0;   // monto NC a descontar
+    const monto = Math.round(Math.abs(signed(r)*r.total)) - nc;      // se transfiere solo la diferencia
     const falta = [];
+    if (monto <= 0){ incompletos.push({ folio:r.folio, razon:r.razon, motivo:"la NC ($"+fmt(nc)+") cubre o supera el total" }); return; }
     if (!cargo) falta.push("cuenta de cargo");
     if (!banco) falta.push("banco");
     if (!cuenta) falta.push("N° de cuenta");
@@ -525,17 +542,20 @@ function renderTable(rows) {
   const tb = document.getElementById("tbody");
   document.getElementById("emptyMsg").hidden = sorted.length>0;
   document.getElementById("rowcount").textContent = rows.length + " de " + DATA.length + " facturas" + ((API_OK && !cfgLoaded) ? " · sincronizando estados guardados…" : "");
+  const NCMAP = getNC();
   tb.innerHTML = sorted.map(r => {
     const id = facId(r);
     const f = FAC[id] || {};
     const dias = diasEfectivos(r);
     const fpago = addDias(r.iso, dias);
     const eb = estadoBanco(r);
+    const ncv = NCMAP[id];
     return `
     <tr class="${r.tipoDoc==='61'?'nc':''}">
       <td class="n mono">${esc(r.folio)}${r.tipoDoc==='61'?' <span style="font-size:10px">(NC)</span>':''}</td>
       <td class="name" title="${esc(r.razon)}">${esc(r.razon)}</td>
       <td class="n">$${fmt(signed(r)*r.total)}</td>
+      <td class="n"><input class="cell-input num fac-nc" type="text" inputmode="numeric" data-id="${esc(id)}" value="${ncv!=null&&ncv!==''?esc(fmtMiles(ncv)):''}" placeholder="—"></td>
       <td class="mono">${esc(r.fechaDocto)}</td>
       <td class="n"><input class="cell-input num fac-dias" type="number" min="0" data-id="${esc(id)}" value="${dias}"></td>
       <td class="mono fac-fpago" data-id="${esc(id)}">${fpago}</td>
@@ -556,6 +576,14 @@ function renderTable(rows) {
   document.querySelectorAll("#tbody .fac-estado").forEach(inp=> inp.addEventListener("change", e=>{
     const id=e.target.dataset.id, v=e.target.value; if(!FAC[id]) FAC[id]={}; if(v==="") delete FAC[id].estado; else FAC[id].estado=v; saveFactura(id);
   }));
+  document.querySelectorAll("#tbody .fac-nc").forEach(inp=>{
+    inp.addEventListener("input", e=>{ e.target.value = fmtMiles(e.target.value); });
+    inp.addEventListener("change", e=>{
+      const id=e.target.dataset.id, v=soloDigitos(e.target.value);
+      const m=getNC(); if(v==="") delete m[id]; else m[id]=v; setNC(m);
+      toast("Guardado ✓");
+    });
+  });
 
   document.querySelectorAll("#viewFacturas thead th").forEach(th => {
     th.querySelector(".arrow")?.remove();
@@ -659,10 +687,12 @@ document.getElementById("btnReset").addEventListener("click", ()=>{
 });
 document.getElementById("btnExport").addEventListener("click", ()=>{
   const rows = filtered();
-  const head = ["Anio","Mes","N Factura","Proveedor","Costo total c/IVA","Fecha compra","Dias de pago","Fecha de pago","Estado","Estado Banco"];
+  const head = ["Anio","Mes","N Factura","Proveedor","Costo total c/IVA","NC","A transferir","Fecha compra","Dias de pago","Fecha de pago","Estado","Estado Banco"];
+  const ncMap = getNC();
   const lines = [head.join(";")].concat(rows.map(r=>{
     const id=facId(r), f=FAC[id]||{}, dias=diasEfectivos(r);
-    return [r.anio, MES_NOM[r.mesNum]||"", r.folio, r.razon, signed(r)*r.total, r.fechaDocto, dias, addDias(r.iso,dias), f.estado||"", estadoBanco(r)].join(";");
+    const nc = parseInt(soloDigitos(ncMap[id]||""),10)||0, tot=signed(r)*r.total;
+    return [r.anio, MES_NOM[r.mesNum]||"", r.folio, r.razon, tot, nc, (tot-nc), r.fechaDocto, dias, addDias(r.iso,dias), f.estado||"", estadoBanco(r)].join(";");
   }));
   const blob = new Blob(["﻿"+lines.join("\n")], {type:"text/csv;charset=utf-8"});
   const a = document.createElement("a"); a.href=URL.createObjectURL(blob); a.download="facturas_compra.csv"; a.click();
