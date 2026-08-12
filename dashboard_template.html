@@ -103,6 +103,12 @@
   .cell-input.num { width: 58px; text-align: right; font-variant-numeric: tabular-nums; }
   .cell-input.txt { width: 130px; text-align: left; }
   .eb-ok { display:inline-block; padding:2px 9px; border-radius:20px; background:var(--accent-soft); color:var(--accent-ink); font-weight:600; font-size:11.5px; }
+  .cargobar { display:flex; align-items:center; gap:16px; flex-wrap:wrap; padding:12px 14px; margin:0 0 12px; background:var(--accent-soft); border-radius:10px; }
+  .cargobar .title { font-weight:700; color:var(--accent-ink); }
+  .cargobar label { display:flex; flex-direction:column; gap:3px; font-size:11px; color:var(--ink-faint); font-weight:600; }
+  .cargobar input { padding:6px 9px; border:1px solid var(--line); border-radius:7px; font-size:13px; min-width:180px; background:var(--card); color:var(--ink); }
+  .cargobar input[readonly] { background:transparent; color:var(--ink-faint); }
+  #provBody select.prov-bank { padding:5px 7px; border:1px solid var(--line); border-radius:7px; font-size:12.5px; background:var(--card); color:var(--ink); min-width:120px; }
   .verfac { display:inline-block; padding:3px 10px; border-radius:6px; border:1px solid var(--accent); color:var(--accent-ink); text-decoration:none; font-size:12px; font-weight:600; }
   .verfac:hover { background:var(--accent); color:#fff; }
   .updates { font-size: 11px; color: var(--ink-faint); margin-top: 5px; line-height: 1.5; }
@@ -164,7 +170,10 @@
         <h2>Facturas de compra</h2>
         <span class="rowcount" id="rowcount"></span>
       </div>
-      <button class="btn" id="btnExport">↓ Exportar CSV</button>
+      <div style="display:flex; gap:8px; flex-wrap:wrap;">
+        <button class="btn" id="btnExport">↓ Exportar CSV</button>
+        <button class="btn" id="btnTEF" title="Genera el archivo .TXT para transferencias masivas del Banco de Chile con las facturas en estado &quot;Revisada, pagar&quot;">↓ Descargar TEF</button>
+      </div>
     </div>
     <div class="scroll">
       <table>
@@ -207,6 +216,12 @@
           <input type="file" id="fileCfg" accept="application/json" hidden>
         </div>
       </div>
+      <div class="cargobar">
+        <span class="title">Datos para transferencias (TEF)</span>
+        <label>RUT de tu empresa <input type="text" id="tefRut" readonly></label>
+        <label>Cuenta de cargo (Banco de Chile) <input type="text" id="tefCargo" inputmode="numeric" placeholder="Solo números"></label>
+        <span class="rowcount" id="cargoStatus"></span>
+      </div>
       <div class="scroll">
         <table>
           <thead>
@@ -217,6 +232,10 @@
               <th class="n">Total comprado</th>
               <th class="n">Días de pago</th>
               <th class="n">Crédito máx. $</th>
+              <th>Banco</th>
+              <th>Tipo cuenta</th>
+              <th>N° de cuenta</th>
+              <th>E-mail aviso</th>
             </tr>
           </thead>
           <tbody id="provBody"></tbody>
@@ -224,7 +243,7 @@
       </div>
     </section>
     <p class="note">
-      Ordenados de mayor a menor compra. <b>Días de pago</b> y <b>Crédito máx.</b> se guardan <b>en la nube</b>, visibles desde cualquier dispositivo.
+      Ordenados de mayor a menor compra. Todo (<b>Días de pago</b>, <b>Crédito máx.</b>, <b>Banco</b>, <b>Tipo cuenta</b>, <b>N° de cuenta</b> y <b>e-mail</b>) se guarda <b>en la nube</b>. Los datos bancarios se usan para generar el archivo <b>TEF</b> de transferencias masivas.
     </p>
   </div>
 
@@ -270,6 +289,7 @@
 const RAW = /*__DATA__*/{};
 const IMG = /*__IMG__*/{};   // folio -> [webUrl de OneDrive, ...]
 const ULTIMA_ACTUALIZACION = "__ULTIMA_ACTUALIZACION__";
+const RUT_EMISOR = "__RUT__";
 const SII_URL = "https://github.com/nicolasanavalon/sii-dte/actions/workflows/update.yml";
 const API_URL = "https://script.google.com/macros/s/AKfycby2RiC-sLbkTEiUyivIfxvWLNZLCBUcpuO_IL5aGB9mMzp1vrelUsKsNskkj5OmBt2N/exec";
 const API_OK = API_URL.indexOf("__API_") !== 0;
@@ -309,6 +329,113 @@ function soloDigitos(s){ return String(s).replace(/\D/g, ""); }
 function esc(s){ return String(s).replace(/[&<>"]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 function signed(r){ return r.tipoDoc === "61" ? -1 : 1; }
 function normRut(s){ return String(s||"").replace(/\./g,"").replace(/\s/g,"").toUpperCase(); }
+
+// ===== TEF (Transferencias masivas Banco de Chile) =====
+// Bancos chilenos con su RUT (para el campo "Rut Banco Beneficiario" en transferencias a otros bancos).
+// chile:true => Tipo de operación TEC (dentro de Banco de Chile); false => TOB (otros bancos).
+const BANCOS_CL = [
+  { k:"chile",       n:"Banco de Chile / Edwards",  rut:"97004000-5", chile:true },
+  { k:"estado",      n:"BancoEstado",               rut:"97030000-7", chile:false },
+  { k:"santander",   n:"Banco Santander",           rut:"97036000-K", chile:false },
+  { k:"bci",         n:"BCI",                        rut:"97006000-6", chile:false },
+  { k:"scotiabank",  n:"Scotiabank Chile",          rut:"97018000-1", chile:false },
+  { k:"itau",        n:"Banco Itaú Chile",          rut:"76645030-K", chile:false },
+  { k:"bice",        n:"Banco BICE",                rut:"97080000-K", chile:false },
+  { k:"security",    n:"Banco Security",            rut:"97053000-2", chile:false },
+  { k:"internacional",n:"Banco Internacional",      rut:"97011000-3", chile:false },
+  { k:"falabella",   n:"Banco Falabella",           rut:"96509660-4", chile:false },
+  { k:"ripley",      n:"Banco Ripley",              rut:"97947000-2", chile:false },
+  { k:"consorcio",   n:"Banco Consorcio",           rut:"99500410-0", chile:false },
+  { k:"hsbc",        n:"HSBC Bank Chile",           rut:"97951000-4", chile:false },
+];
+const BANCO_BY_K = Object.fromEntries(BANCOS_CL.map(b=>[b.k,b]));
+
+// Datos bancarios por proveedor + cuenta de cargo: se guardan en la nube en un registro especial
+// (__BANCOS__) reusando el mismo mecanismo de "prov", sin tocar el Apps Script.
+function getBank(){ try{ return JSON.parse((CFG["__BANCOS__"]||{}).credito||"{}") || {}; }catch(e){ return {}; } }
+let __bankTimer;
+function setBank(obj){
+  if(!CFG["__BANCOS__"]) CFG["__BANCOS__"]={razon:"bancos"};
+  CFG["__BANCOS__"].credito = JSON.stringify(obj);
+  if(!API_OK) return;
+  clearTimeout(__bankTimer);
+  __bankTimer=setTimeout(()=>{ fetch(API_URL,{method:"POST",headers:{"Content-Type":"text/plain;charset=utf-8"},body:JSON.stringify({tipo:"prov",rut:"__BANCOS__",razon:"bancos",dias:"",credito:JSON.stringify(obj)})}).catch(()=>{}); }, 900);
+}
+
+function rutTef(rut){ return normRut(rut).replace(/-/g,""); }   // dígitos + DV, sin puntos ni guion
+function fld(val, len, align, fill){
+  let s = String(val==null?"":val);
+  if (s.length>len) s = s.slice(0,len);
+  return align==="R" ? s.padStart(len,fill) : s.padEnd(len,fill);
+}
+
+// Construye las líneas TEF de las facturas en estado "Revisada, pagar".
+// Devuelve {lines:[...], incompletos:[{folio,razon,motivo}], sinCargo:bool}
+function generarTEF(){
+  const bank = getBank();
+  const cargo = soloDigitos((bank.__cargo__||{}).cta||"");
+  const rutCliente = fld(rutTef(RUT_EMISOR),10,"R","0");
+  const cargoFld = fld(cargo,12,"R","0");
+  const lines = [], incompletos = [];
+  DATA.forEach(r=>{
+    const f = FAC[facId(r)] || {};
+    if ((f.estado||"") !== "Revisada, pagar") return;
+    const info = bank[r.rut] || {};
+    const banco = BANCO_BY_K[info.b];
+    const cuenta = String(info.c||"").trim();
+    const tipo = info.t;              // CTD / JUV
+    const email = String(info.e||"").trim();
+    const monto = Math.round(Math.abs(signed(r)*r.total));
+    const falta = [];
+    if (!cargo) falta.push("cuenta de cargo");
+    if (!banco) falta.push("banco");
+    if (!cuenta) falta.push("N° de cuenta");
+    if (banco && !banco.chile && !tipo) falta.push("tipo de cuenta");
+    if (falta.length){ incompletos.push({ folio:r.folio, razon:r.razon, motivo:falta.join(", ") }); return; }
+    const op = banco.chile ? "TEC" : "TOB";
+    const rutBanco = banco.chile ? fld("",10,"L"," ") : fld(rutTef(banco.rut),10,"R","0");
+    const tipoCta  = banco.chile ? fld("",3,"L"," ")  : fld(tipo||"",3,"L"," ");
+    const notif = email ? "1" : "0";
+    const asunto = email ? fld("Pago factura "+r.folio,30,"L"," ") : fld("",30,"L"," ");
+    const dirmail = email ? fld(email,50,"L"," ") : fld("",50,"L"," ");
+    const line =
+      fld(op,3,"L"," ") + rutCliente + cargoFld +
+      fld(rutTef(r.rut),10,"R","0") + fld(r.razon,30,"L"," ") + fld(cuenta,18,"L"," ") +
+      rutBanco + fld(monto,11,"R","0") + " " + fld("Fact "+r.folio,30,"L"," ") +
+      notif + asunto + dirmail + tipoCta;
+    lines.push(line);
+  });
+  return { lines, incompletos, sinCargo: !cargo };
+}
+
+function descargarTEF(){
+  const { lines, incompletos, sinCargo } = generarTEF();
+  if (sinCargo && !lines.length && !incompletos.length){ alert("No hay facturas en estado \"Revisada, pagar\"."); return; }
+  if (!lines.length){
+    let msg = "No se pudo generar el archivo TEF.\n";
+    if (sinCargo) msg += "\n• Falta tu CUENTA DE CARGO (configúrala en la pestaña Proveedores).";
+    if (incompletos.length) msg += "\n• "+incompletos.length+" factura(s) sin datos bancarios del proveedor.";
+    alert(msg); return;
+  }
+  // Máximo 100 registros por archivo: se parte en varios si hace falta.
+  const chunks = [];
+  for (let i=0;i<lines.length;i+=100) chunks.push(lines.slice(i,i+100));
+  const stamp = (()=>{ const d=new Date(); return d.getFullYear()+String(d.getMonth()+1).padStart(2,"0")+String(d.getDate()).padStart(2,"0"); })();
+  chunks.forEach((ch,idx)=>{
+    const name = "TEF_"+stamp+(chunks.length>1?("_"+(idx+1)):"")+".txt";
+    const blob = new Blob([ch.join("\r\n")+"\r\n"], { type:"text/plain;charset=utf-8" });
+    const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = name;
+    document.body.appendChild(a); a.click(); setTimeout(()=>{ URL.revokeObjectURL(a.href); a.remove(); }, 400+idx*300);
+  });
+  let msg = "Archivo TEF generado: "+lines.length+" transferencia(s)"+(chunks.length>1?(" en "+chunks.length+" archivos (máx. 100 c/u)"):"")+".";
+  if (incompletos.length){
+    msg += "\n\n⚠️ "+incompletos.length+" factura(s) quedaron FUERA por faltar datos bancarios:\n";
+    msg += incompletos.slice(0,15).map(x=> "• "+x.folio+" · "+x.razon+" (falta: "+x.motivo+")").join("\n");
+    if (incompletos.length>15) msg += "\n… y "+(incompletos.length-15)+" más.";
+    msg += "\n\nComplétalos en la pestaña Proveedores y vuelve a descargar.";
+  }
+  alert(msg);
+}
 function addDias(iso, dias){
   if (!iso) return "";
   const d = new Date(iso + "T00:00:00"); if (isNaN(d)) return "";
@@ -540,6 +667,8 @@ document.getElementById("btnExport").addEventListener("click", ()=>{
   const blob = new Blob(["﻿"+lines.join("\n")], {type:"text/csv;charset=utf-8"});
   const a = document.createElement("a"); a.href=URL.createObjectURL(blob); a.download="facturas_compra.csv"; a.click();
 });
+document.getElementById("btnTEF").addEventListener("click", descargarTEF);
+(function(){ const tc=document.getElementById("tefCargo"); if(!tc) return; tc.addEventListener("input", e=>{ e.target.value=soloDigitos(e.target.value); }); tc.addEventListener("change", e=>{ const b=getBank(); const v=soloDigitos(e.target.value); if(!b.__cargo__) b.__cargo__={}; if(v) b.__cargo__.cta=v; else delete b.__cargo__.cta; setBank(b); const st=document.getElementById("cargoStatus"); if(st) st.textContent="Guardado ✓"; }); })();
 document.getElementById("btnSII").addEventListener("click", ()=>{ window.open(SII_URL, "_blank", "noopener"); });
 document.getElementById("updDte").textContent = ULTIMA_ACTUALIZACION;
 document.getElementById("updFac").textContent = ULTIMA_ACTUALIZACION;
@@ -622,9 +751,16 @@ function aggProveedores(){
 }
 function renderProv(){
   const arr = aggProveedores();
+  const bank = getBank();
   document.getElementById("provcount").textContent = arr.length + " proveedores · orden por total comprado";
+  // Sincroniza la barra de config de la cuenta de cargo
+  const tr=document.getElementById("tefRut"); if(tr) tr.value = RUT_EMISOR;
+  const tc=document.getElementById("tefCargo"); if(tc) tc.value = (bank.__cargo__||{}).cta || "";
+  const bancoOpts = (sel)=> '<option value="">—</option>'+BANCOS_CL.map(b=>'<option value="'+b.k+'"'+(b.k===sel?' selected':'')+'>'+esc(b.n)+'</option>').join("");
+  const tipoOpts = (sel)=>{ const o=[["","—"],["CTD","Corriente"],["JUV","Vista"]]; return o.map(x=>'<option value="'+x[0]+'"'+(x[0]===sel?' selected':'')+'>'+x[1]+'</option>').join(""); };
   document.getElementById("provBody").innerHTML = arr.map(o=>{
     const c = CFG[o.rut] || {};
+    const bk = bank[o.rut] || {};
     return `<tr>
       <td class="name">${esc(o.razon)}</td>
       <td class="mono" style="color:var(--ink-faint)">${esc(o.rut)}</td>
@@ -632,9 +768,13 @@ function renderProv(){
       <td class="n">$${fmt(o.total)}</td>
       <td class="n"><input class="prov-input" type="number" min="0" step="1" data-rut="${esc(o.rut)}" data-razon="${esc(o.razon)}" data-f="dias" value="${c.dias!=null?esc(c.dias):''}" placeholder="—"></td>
       <td class="n"><input class="prov-input" type="text" inputmode="numeric" data-rut="${esc(o.rut)}" data-razon="${esc(o.razon)}" data-f="credito" value="${c.credito!=null&&c.credito!==''?esc(fmtMiles(c.credito)):''}" placeholder="—"></td>
+      <td><select class="prov-bank" data-rut="${esc(o.rut)}" data-f="b">${bancoOpts(bk.b||"")}</select></td>
+      <td><select class="prov-bank" data-rut="${esc(o.rut)}" data-f="t">${tipoOpts(bk.t||"")}</select></td>
+      <td><input class="prov-input" type="text" inputmode="numeric" data-rut="${esc(o.rut)}" data-bf="c" value="${esc(bk.c||"")}" placeholder="—"></td>
+      <td><input class="prov-input" type="email" data-rut="${esc(o.rut)}" data-bf="e" value="${esc(bk.e||"")}" placeholder="—" style="min-width:150px"></td>
     </tr>`;
   }).join("");
-  document.querySelectorAll("#provBody .prov-input").forEach(inp=>{
+  document.querySelectorAll("#provBody .prov-input[data-f]").forEach(inp=>{
     if (inp.dataset.f === "credito") inp.addEventListener("input", e=>{ e.target.value = fmtMiles(e.target.value); });
     inp.addEventListener("change", e=>{
       const rut=e.target.dataset.rut, razon=e.target.dataset.razon, f=e.target.dataset.f;
@@ -644,6 +784,10 @@ function renderProv(){
       saveRow(rut, razon);
     });
   });
+  // Campos bancarios (banco/tipo = select; cuenta/email = input con data-bf)
+  const saveBankField = (rut, f, v)=>{ const b=getBank(); if(!b[rut]) b[rut]={}; v=String(v).trim(); if(v==="") delete b[rut][f]; else b[rut][f]=v; if(b[rut] && Object.keys(b[rut]).length===0) delete b[rut]; setBank(b); setProvStatus("Guardado ✓"); };
+  document.querySelectorAll("#provBody .prov-bank").forEach(sel=> sel.addEventListener("change", e=> saveBankField(e.target.dataset.rut, e.target.dataset.f, e.target.value)));
+  document.querySelectorAll("#provBody .prov-input[data-bf]").forEach(inp=> inp.addEventListener("change", e=> saveBankField(e.target.dataset.rut, e.target.dataset.bf, e.target.value)));
 }
 
 // ===== Transferencias =====
