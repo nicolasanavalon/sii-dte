@@ -59,7 +59,7 @@
   .btn-reset { padding: 8px 12px; font: inherit; font-size: 12.5px; cursor: pointer; background: transparent; color: var(--ink-soft); border: 1px solid var(--line-strong); border-radius: 8px; white-space: nowrap; }
   .btn-reset:hover { border-color: var(--accent); color: var(--accent-ink); }
 
-  .kpis { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+  .kpis { display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px; }
   @media (max-width: 720px) { .kpis { grid-template-columns: 1fr; } }
   .kpi { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 15px 16px; box-shadow: var(--shadow); display: flex; flex-direction: column; gap: 6px; }
   .kpi .label { font-size: 11px; letter-spacing: .09em; text-transform: uppercase; color: var(--ink-faint); font-weight: 600; }
@@ -148,9 +148,9 @@
     <div class="fgroup"><label class="title">Mes</label><div class="chips" id="fMes"></div></div>
     <div class="fgroup"><label class="title">Tipo de documento</label><div class="chips" id="chipDoc"></div></div>
     <div class="fgroup"><label class="title">Estado Banco</label><div class="chips" id="fBanco"></div></div>
+    <div class="fgroup"><label class="title">Días de pago</label><div class="chips" id="fDias"></div></div>
     <div class="fgroup" style="grid-column: 1 / -1;"><label class="title">Estado</label><div class="chips" id="fEstado"></div></div>
     <div class="fgroup"><label class="title">Proveedor</label><input type="text" id="qProv" placeholder="Nombre o RUT…" autocomplete="off"></div>
-    <div class="fgroup"><label class="title">Fecha compra (documento)</label><div class="range-row"><input type="date" id="fDesde" aria-label="Desde"><input type="date" id="fHasta" aria-label="Hasta"></div></div>
     <div class="fgroup"><label class="title">&nbsp;</label><button class="btn-reset" id="btnReset">Limpiar filtros</button></div>
   </section>
 
@@ -340,7 +340,7 @@ function estadoBanco(r){ return TRANSF_IDX.has(normRut(r.rut) + "|" + String(r.f
 // ===== Estado / filtros =====
 const DOCS_DEFAULT = ["33","34"];
 // Todos los filtros son de selección múltiple (conjuntos). Vacío = sin filtrar (muestra todo).
-const state = { periodos:new Set(), anios:new Set(), meses:new Set(), docs:new Set(DOCS_DEFAULT), bancos:new Set(), estados:new Set(), q:"", desde:"", hasta:"", sortK:"iso", sortDir:-1 };
+const state = { periodos:new Set(), anios:new Set(), meses:new Set(), docs:new Set(DOCS_DEFAULT), bancos:new Set(), estados:new Set(), dias:new Set(), q:"", sortK:"iso", sortDir:-1 };
 
 function filtered() {
   return DATA.filter(r => {
@@ -350,9 +350,8 @@ function filtered() {
     if (state.docs.size && !state.docs.has(r.tipoDoc)) return false;
     if (state.bancos.size) { const eb = estadoBanco(r)==="Aceptada" ? "aceptada" : "pendiente"; if (!state.bancos.has(eb)) return false; }
     if (state.estados.size) { const es = (FAC[facId(r)]||{}).estado || "__vacio__"; if (!state.estados.has(es)) return false; }
+    if (state.dias.size && !state.dias.has(String(diasEfectivos(r)))) return false;
     if (state.q) { const q = state.q.toLowerCase(); if (!(r.razon.toLowerCase().includes(q) || r.rut.toLowerCase().includes(q))) return false; }
-    if (state.desde && r.iso && r.iso < state.desde) return false;
-    if (state.hasta && r.iso && r.iso > state.hasta) return false;
     return true;
   });
 }
@@ -360,17 +359,15 @@ function filtered() {
 function chipGroup(containerId, items, selSet){
   const el = document.getElementById(containerId);
   el.innerHTML = items.map(it=>`<label class="chip"><input type="checkbox" value="${esc(it.val)}" ${selSet.has(it.val)?'checked':''}><span>${esc(it.label)}${it.count!=null?' ('+it.count+')':''}</span></label>`).join("");
-  el.querySelectorAll("input").forEach(inp=> inp.addEventListener("change", e=>{ const v=e.target.value; e.target.checked?selSet.add(v):selSet.delete(v); render(); }));
+  el.querySelectorAll("input").forEach(inp=> inp.addEventListener("change", e=>{ const v=e.target.value; e.target.checked?selSet.add(v):selSet.delete(v); render(); saveView(); }));
 }
 
 function renderKPIs(rows) {
   const n = rows.length;
   const total = rows.reduce((s,r)=> s + signed(r)*r.total, 0);
-  const credito = rows.reduce((s,r)=> s + (estadoBanco(r)==="Aceptada" ? 0 : signed(r)*r.total), 0);
   document.getElementById("kpis").innerHTML = `
-    <div class="kpi"><span class="label">Cantidad de Facturas</span><span class="value">${n.toLocaleString("es-CL")}</span><span class="foot">${new Set(rows.map(r=>r.rut)).size} proveedores</span></div>
-    <div class="kpi accent"><span class="label">Costo total c/IVA</span><span class="value"><span class="cur">$</span>${fmt(total)}</span><span class="foot">neto de notas de crédito</span></div>
-    <div class="kpi warn"><span class="label">Costo total c/IVA crédito</span><span class="value"><span class="cur">$</span>${fmt(credito)}</span><span class="foot">pendiente (sin transferencia aceptada)</span></div>`;
+    <div class="kpi"><span class="label">Cantidad de facturas</span><span class="value">${n.toLocaleString("es-CL")}</span><span class="foot">${new Set(rows.map(r=>r.rut)).size} proveedores</span></div>
+    <div class="kpi accent"><span class="label">Costo total</span><span class="value"><span class="cur">$</span>${fmt(total)}</span><span class="foot">c/IVA · neto de notas de crédito</span></div>`;
 }
 
 function renderTable(rows) {
@@ -440,24 +437,58 @@ function render(){ const rows = filtered(); renderKPIs(rows); renderTable(rows);
 
   chipGroup("fBanco", [{val:"aceptada",label:"Aceptada"},{val:"pendiente",label:"Pendiente"}], state.bancos);
   chipGroup("fEstado", [{val:"Pagada",label:"Pagada"},{val:"NC, Revisar",label:"NC, Revisar"},{val:"Revisada, pagar",label:"Revisada, pagar"},{val:"__vacio__",label:"Sin estado"}], state.estados);
+  buildDiasFilter();
 })();
+
+function buildDiasFilter(){
+  const vals=[...new Set(DATA.map(r=>String(diasEfectivos(r))))].sort((a,b)=>(+a)-(+b));
+  chipGroup("fDias", vals.map(d=>({val:d,label:d+" días"})), state.dias);
+}
+
+// ===== Persistencia de la vista (filtros/tab/orden) — nube (compartida) + local (instantáneo) =====
+function currentTab(){ const b=document.querySelector('.viewtabs button[aria-selected="true"]'); return b?b.dataset.view:"facturas"; }
+function getView(){ return { tab:currentTab(), periodos:[...state.periodos], anios:[...state.anios], meses:[...state.meses], docs:[...state.docs], bancos:[...state.bancos], estados:[...state.estados], dias:[...state.dias], q:state.q, sortK:state.sortK, sortDir:state.sortDir }; }
+function syncChips(){
+  const map={fPeriodo:state.periodos,fAnio:state.anios,fMes:state.meses,chipDoc:state.docs,fBanco:state.bancos,fEstado:state.estados,fDias:state.dias};
+  Object.keys(map).forEach(id=> document.querySelectorAll('#'+id+' input').forEach(i=> i.checked=map[id].has(i.value)));
+  const q=document.getElementById("qProv"); if(q) q.value=state.q;
+}
+let __applying=false;
+function applyView(v){
+  if(!v || typeof v!=="object") return;
+  __applying=true;
+  state.periodos=new Set(v.periodos||[]); state.anios=new Set(v.anios||[]); state.meses=new Set(v.meses||[]);
+  state.docs=new Set(v.docs||DOCS_DEFAULT); state.bancos=new Set(v.bancos||[]); state.estados=new Set(v.estados||[]); state.dias=new Set(v.dias||[]);
+  state.q=v.q||""; state.sortK=v.sortK||"iso"; state.sortDir=v.sortDir!=null?v.sortDir:-1;
+  syncChips();
+  if(v.tab && v.tab!=="facturas"){ const b=document.querySelector('.viewtabs button[data-view="'+v.tab+'"]'); if(b) b.click(); }
+  __applying=false;
+  render();
+}
+let __viewTimer;
+function saveView(){
+  if(__applying) return;
+  const v=getView();
+  try{ localStorage.setItem("sii_vista", JSON.stringify(v)); }catch(e){}
+  if(!API_OK) return;
+  clearTimeout(__viewTimer);
+  __viewTimer=setTimeout(()=>{ fetch(API_URL,{method:"POST",headers:{"Content-Type":"text/plain;charset=utf-8"},body:JSON.stringify({tipo:"prov",rut:"__VISTA__",razon:"vista",dias:"",credito:JSON.stringify(v)})}).catch(()=>{}); }, 900);
+}
 document.getElementById("btnFiltros").addEventListener("click", ()=>{
   const fb=document.getElementById("filterbar"), b=document.getElementById("btnFiltros");
   const show=fb.hidden; fb.hidden=!show; b.setAttribute("aria-expanded", show?"true":"false");
 });
-document.getElementById("qProv").addEventListener("input", e=>{ state.q=e.target.value; render(); });
-document.getElementById("fDesde").addEventListener("change", e=>{ state.desde=e.target.value; render(); });
-document.getElementById("fHasta").addEventListener("change", e=>{ state.hasta=e.target.value; render(); });
+document.getElementById("qProv").addEventListener("input", e=>{ state.q=e.target.value; render(); saveView(); });
 document.querySelectorAll("#viewFacturas thead th").forEach(th=> th.addEventListener("click", ()=>{
-  const k=th.dataset.k; if(!k) return; if(state.sortK===k) state.sortDir*=-1; else { state.sortK=k; state.sortDir=(k==="razon"||k==="mesNum")?1:-1; } render();
+  const k=th.dataset.k; if(!k) return; if(state.sortK===k) state.sortDir*=-1; else { state.sortK=k; state.sortDir=(k==="razon"||k==="mesNum")?1:-1; } render(); saveView();
 }));
 document.getElementById("btnReset").addEventListener("click", ()=>{
-  state.periodos.clear(); state.anios.clear(); state.meses.clear(); state.bancos.clear(); state.estados.clear();
-  state.docs = new Set(DOCS_DEFAULT); state.q=""; state.desde=""; state.hasta="";
-  document.querySelectorAll("#fPeriodo input, #fAnio input, #fMes input, #fBanco input, #fEstado input").forEach(i=> i.checked=false);
+  state.periodos.clear(); state.anios.clear(); state.meses.clear(); state.bancos.clear(); state.estados.clear(); state.dias.clear();
+  state.docs = new Set(DOCS_DEFAULT); state.q="";
+  document.querySelectorAll("#fPeriodo input, #fAnio input, #fMes input, #fBanco input, #fEstado input, #fDias input").forEach(i=> i.checked=false);
   document.querySelectorAll("#chipDoc input").forEach(i=> i.checked = state.docs.has(i.value));
-  document.getElementById("qProv").value=""; document.getElementById("fDesde").value=""; document.getElementById("fHasta").value="";
-  render();
+  document.getElementById("qProv").value="";
+  render(); saveView();
 });
 document.getElementById("btnExport").addEventListener("click", ()=>{
   const rows = filtered();
@@ -645,6 +676,7 @@ document.querySelectorAll(".viewtabs button").forEach(b=> b.addEventListener("cl
   document.getElementById("viewFacturas").hidden = v!=="facturas";
   document.getElementById("viewProveedores").hidden = v!=="proveedores";
   document.getElementById("viewTransferencias").hidden = v!=="transferencias";
+  saveView();
   if (v==="proveedores") { renderProv(); setProvStatus("Cargando…"); await loadCfgRemote(); renderProv(); if (cfgLoaded) setProvStatus(""); }
   if (v==="transferencias") { renderTransf(); setTransfStatus("Cargando…"); await loadCfgRemote(); renderTransf(); if (cfgLoaded) setTransfStatus(""); }
 }));
@@ -671,6 +703,11 @@ document.getElementById("fileCfg").addEventListener("change", e=>{
 document.getElementById("btnImportTransf").addEventListener("click", ()=> document.getElementById("fileTransf").click());
 document.getElementById("fileTransf").addEventListener("change", e=>{ const f=e.target.files[0]; if(f) importarTransferencias(f); e.target.value=""; });
 
+try{ const lv=JSON.parse(localStorage.getItem("sii_vista")||"null"); if(lv) applyView(lv); }catch(e){}
 render();
-if (API_OK) loadCfgRemote().then(()=>{ buildTransfIdx(); actualizarBancoStamp(); render(); });
+if (API_OK) loadCfgRemote().then(()=>{
+  buildTransfIdx(); actualizarBancoStamp(); buildDiasFilter();
+  try{ const cv=(CFG["__VISTA__"]||{}).credito; if(cv) applyView(JSON.parse(cv)); }catch(e){}
+  render();
+});
 </script>
