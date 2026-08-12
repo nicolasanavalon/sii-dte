@@ -524,7 +524,7 @@ function renderTable(rows) {
   });
   const tb = document.getElementById("tbody");
   document.getElementById("emptyMsg").hidden = sorted.length>0;
-  document.getElementById("rowcount").textContent = rows.length + " de " + DATA.length + " facturas";
+  document.getElementById("rowcount").textContent = rows.length + " de " + DATA.length + " facturas" + ((API_OK && !cfgLoaded) ? " · sincronizando estados guardados…" : "");
   tb.innerHTML = sorted.map(r => {
     const id = facId(r);
     const f = FAC[id] || {};
@@ -692,23 +692,44 @@ function toast(msg, err){
 }
 
 // Lectura vía JSONP (evita CORS de Apps Script)
+// Carga robusta desde la nube (JSONP). La respuesta puede ser grande (>70 KB) y el Apps Script
+// a veces demora por arranque en frío; por eso: callback ÚNICO por llamada que PERSISTE entre
+// reintentos (una respuesta que llega tarde igual resuelve, sin el error "callback is not defined"),
+// espera larga (15 s por intento) y hasta 6 intentos que se solapan (gana el primero que llega).
 function loadCfgRemote(){
   return new Promise((resolve)=>{
     if (!API_OK) { setProvStatus("Guardado en la nube no configurado", true); return resolve(); }
-    let intento = 0;
+    const cb = "__cfg_cb_" + Date.now();
+    let settled = false, intento = 0;
+    window[cb] = (data)=>{
+      // Respuestas tardías o duplicadas de Google caen aquí también: el guard las vuelve inofensivas.
+      if (settled) return; settled = true;
+      data = data || {};
+      CFG = data.prov || {}; FAC = data.fac || {}; TRANSF = data.transf || {};
+      buildTransfIdx(); cfgLoaded = true;
+      setProvStatus("");
+      resolve();
+    };
+    // No borramos el callback: queda como no-op guardado por `settled`, así una respuesta tardía
+    // o duplicada de Google nunca provoca "callback is not defined" (la "fuga" es una función mínima).
     function attempt(){
-      intento++;
-      const cb = "__cfg_cb_" + Date.now() + "_" + intento;
-      let done = false;
+      if (settled) return;
+      const mine = ++intento;
       const s = document.createElement("script");
-      function cleanup(){ try { delete window[cb]; } catch(e){ window[cb] = undefined; } if (s.parentNode) s.parentNode.removeChild(s); }
-      window[cb] = (data)=>{ done = true; data = data || {}; CFG = data.prov || {}; FAC = data.fac || {}; TRANSF = data.transf || {}; buildTransfIdx(); cfgLoaded = true; cleanup(); resolve(); };
-      s.src = API_URL + "?callback=" + cb + "&ts=" + Date.now();
-      s.onerror = ()=>{ if(!done){ cleanup(); retry(); } };
+      s.async = true;
+      s.src = API_URL + "?callback=" + cb + "&ts=" + Date.now() + "_" + mine;
+      s.onerror = ()=>{ if (s.parentNode) s.remove(); next(mine); };
+      s.onload  = ()=>{ setTimeout(()=>{ if (s.parentNode) s.remove(); }, 200); };
       document.body.appendChild(s);
-      setTimeout(()=>{ if(!done){ cleanup(); retry(); } }, 8000);
+      setTimeout(()=> next(mine), 15000);   // si este intento no resolvió en 15 s, lanza el siguiente
     }
-    function retry(){ if (intento < 4) { setProvStatus("Reintentando cargar…"); attempt(); } else { setProvStatus("No se pudo cargar desde la nube", true); resolve(); } }
+    function next(fromIntento){
+      if (settled || fromIntento !== intento) return;   // solo el intento vigente dispara el próximo
+      if (intento >= 6){ setProvStatus("No se pudo cargar de la nube. Recarga la página.", true); return resolve(); }
+      setProvStatus("Cargando desde la nube… (reintento " + intento + ")");
+      attempt();
+    }
+    setProvStatus("Cargando desde la nube…");
     attempt();
   });
 }
