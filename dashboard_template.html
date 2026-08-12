@@ -401,7 +401,7 @@ function generarTEF(){
     const line =
       fld(op,3,"L"," ") + rutCliente + cargoFld +
       fld(rutTef(r.rut),10,"R","0") + fld(r.razon,30,"L"," ") + fld(cuenta,18,"L"," ") +
-      rutBanco + fld(monto,11,"R","0") + " " + fld("Fact "+r.folio,30,"L"," ") +
+      rutBanco + fld(monto,11,"R","0") + " " + fld(r.folio,30,"L"," ") +
       notif + asunto + dirmail + tipoCta;
     lines.push(line);
   });
@@ -853,7 +853,10 @@ async function importarTransferencias(file){
       if (!numTx) continue;
       const mensaje = String(r[col["Mensaje"]]||"").trim();
       const asunto = String(r[col["Asunto"]]||"").trim();
-      const folio = (mensaje && mensaje!=="-") ? mensaje : ((asunto && asunto!=="-") ? asunto : "");
+      let folio = (mensaje && mensaje!=="-") ? mensaje : ((asunto && asunto!=="-") ? asunto : "");
+      // Si el mensaje viniera con un prefijo tipo "Fact 5678043" o "Factura N°5678043", lo quitamos
+      // para que el cruce por folio calce igual (el ideal es que el mensaje sea solo el número).
+      folio = folio.replace(/^\s*fact(?:ura)?\.?\s*(?:n[º°o]?\.?\s*)?/i, "").trim();
       items.push({
         numTx,
         fecha: String(r[col["Fecha"]]||"").trim(),
@@ -870,7 +873,7 @@ async function importarTransferencias(file){
     const now = new Date();
     const cargado = String(now.getDate()).padStart(2,"0")+"/"+String(now.getMonth()+1).padStart(2,"0")+"/"+now.getFullYear()+" "+String(now.getHours()).padStart(2,"0")+":"+String(now.getMinutes()).padStart(2,"0");
     let nuevos = 0;
-    items.forEach(t=>{ if(!TRANSF[t.numTx]){ TRANSF[t.numTx] = Object.assign({}, t, {cargadoEn: cargado}); nuevos++; } else { TRANSF[t.numTx].estado = t.estado; } });
+    items.forEach(t=>{ if(!TRANSF[t.numTx]){ TRANSF[t.numTx] = Object.assign({}, t, {cargadoEn: cargado}); nuevos++; } else { TRANSF[t.numTx].estado = t.estado; TRANSF[t.numTx].folio = t.folio; } });
     buildTransfIdx(); actualizarBancoStamp(); renderTransf(); render();
     // 2) Guardar en la nube en segundo plano
     setTransfStatus("Guardando en la nube… ("+items.length+")");
