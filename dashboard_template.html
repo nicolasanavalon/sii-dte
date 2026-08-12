@@ -103,6 +103,10 @@
   .cell-input.num { width: 58px; text-align: right; font-variant-numeric: tabular-nums; }
   .cell-input.txt { width: 130px; text-align: left; }
   .eb-ok { display:inline-block; padding:2px 9px; border-radius:20px; background:var(--accent-soft); color:var(--accent-ink); font-weight:600; font-size:11.5px; }
+  .sit { display:inline-block; padding:2px 9px; border-radius:20px; font-weight:600; font-size:11.5px; white-space:nowrap; }
+  .sit-reg { background:#eef2f7; color:#5b6470; }
+  .sit-pend { background:#fff3d6; color:#8a6100; }
+  .sit-otro { background:#fde2e1; color:#a11; }
   .verfac { display:inline-block; padding:3px 10px; border-radius:6px; border:1px solid var(--accent); color:var(--accent-ink); text-decoration:none; font-size:12px; font-weight:600; }
   .verfac:hover { background:var(--accent); color:#fff; }
   .updates { font-size: 11px; color: var(--ink-faint); margin-top: 5px; line-height: 1.5; }
@@ -149,8 +153,10 @@
     <div class="fgroup"><label class="title">Mes</label><div class="chips" id="fMes"></div></div>
     <div class="fgroup"><label class="title">Tipo de documento</label><div class="chips" id="chipDoc"></div></div>
     <div class="fgroup"><label class="title">Estado Banco</label><div class="chips" id="fBanco"></div></div>
-    <div class="fgroup"><label class="title">Fecha de pago</label><div class="range-row"><input type="date" id="fpDesde" aria-label="Desde"><input type="date" id="fpHasta" aria-label="Hasta"></div></div>
+    <div class="fgroup"><label class="title">Situación SII</label><div class="chips" id="fSituacion"></div></div>
+    <div class="fgroup" style="grid-column: 1 / -1;"><label class="title">Fecha de pago</label><div class="chips" id="fFpago"></div></div>
     <div class="fgroup" style="grid-column: 1 / -1;"><label class="title">Estado</label><div class="chips" id="fEstado"></div></div>
+    <div class="fgroup"><label class="title">N° Factura</label><input type="text" id="qFolio" placeholder="Buscar folio…" autocomplete="off"></div>
     <div class="fgroup"><label class="title">Proveedor</label><input type="text" id="qProv" placeholder="Nombre o RUT…" autocomplete="off"></div>
     <div class="fgroup"><label class="title">&nbsp;</label><button class="btn-reset" id="btnReset">Limpiar filtros</button></div>
   </section>
@@ -177,6 +183,7 @@
             <th>Fecha de pago</th>
             <th>Estado</th>
             <th>Estado Banco</th>
+            <th data-k="situacion">Situación SII</th>
             <th>Factura</th>
           </tr>
         </thead>
@@ -279,6 +286,11 @@ function periodLabel(p){ return (MES_ABR[p.slice(4,6)]||p.slice(4,6)) + " " + p.
 
 function parseCSV(text, periodo) {
   const lines = text.split("\n").filter(l => l.trim().length);
+  const header = (lines[0]||"").split(";");
+  // fetch_sii.py añade la pestaña del SII (Registro/Pendiente/No incluir/Reclamado) como ÚLTIMA columna.
+  // Ojo: en el export del SII las filas traen una columna más que el encabezado (un campo vacío al final),
+  // por eso no sirve el índice del encabezado; tomamos el último campo de cada fila.
+  const hasSit = header.some(h => h.trim().toUpperCase() === "SITUACION");
   const rows = [];
   for (let i = 1; i < lines.length; i++) {
     const c = lines[i].split(";");
@@ -289,6 +301,7 @@ function parseCSV(text, periodo) {
       periodo, tipoDoc: (c[1]||"").trim(), rut: (c[3]||"").trim(), razon: (c[4]||"").trim(), folio: (c[5]||"").trim(),
       fechaDocto: fdoc, anio: md ? md[3] : "", mesNum: md ? md[2] : "", iso: md ? md[3]+"-"+md[2]+"-"+md[1] : "",
       neto: +(c[10]||0), iva: +(c[11]||0), total: +(c[14]||0),
+      situacion: hasSit ? ((c[c.length-1]||"").trim() || "Registro") : "Registro",
     });
   }
   return rows;
@@ -341,7 +354,7 @@ function estadoBanco(r){ return TRANSF_IDX.has(normRut(r.rut) + "|" + String(r.f
 // ===== Estado / filtros =====
 const DOCS_DEFAULT = ["33","34"];
 // Todos los filtros son de selección múltiple (conjuntos). Vacío = sin filtrar (muestra todo).
-const state = { periodos:new Set(), anios:new Set(), meses:new Set(), docs:new Set(DOCS_DEFAULT), bancos:new Set(), estados:new Set(), fpDesde:"", fpHasta:"", q:"", sortK:"iso", sortDir:-1 };
+const state = { periodos:new Set(), anios:new Set(), meses:new Set(), docs:new Set(DOCS_DEFAULT), bancos:new Set(), estados:new Set(), situaciones:new Set(), fpagos:new Set(), qFolio:"", q:"", sortK:"iso", sortDir:-1 };
 
 function fechaPagoISO(r){
   if(!r.iso) return "";
@@ -350,25 +363,29 @@ function fechaPagoISO(r){
   return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0");
 }
 
-function filtered() {
-  return DATA.filter(r => {
-    if (state.periodos.size && !state.periodos.has(r.periodo)) return false;
-    if (state.anios.size && !state.anios.has(r.anio)) return false;
-    if (state.meses.size && !state.meses.has(r.mesNum)) return false;
-    if (state.docs.size && !state.docs.has(r.tipoDoc)) return false;
-    if (state.bancos.size) { const eb = estadoBanco(r)==="Aceptada" ? "aceptada" : "pendiente"; if (!state.bancos.has(eb)) return false; }
-    if (state.estados.size) { const es = (FAC[facId(r)]||{}).estado || "__vacio__"; if (!state.estados.has(es)) return false; }
-    if (state.fpDesde || state.fpHasta) { const fp=fechaPagoISO(r); if(!fp) return false; if(state.fpDesde && fp<state.fpDesde) return false; if(state.fpHasta && fp>state.fpHasta) return false; }
-    if (state.q) { const q = state.q.toLowerCase(); if (!(r.razon.toLowerCase().includes(q) || r.rut.toLowerCase().includes(q))) return false; }
-    return true;
-  });
+// Predicado de filtrado. `except` = clave de un filtro a ignorar (para el facetado estilo Excel).
+function passes(r, except) {
+  if (except!=="periodos" && state.periodos.size && !state.periodos.has(r.periodo)) return false;
+  if (except!=="anios" && state.anios.size && !state.anios.has(r.anio)) return false;
+  if (except!=="meses" && state.meses.size && !state.meses.has(r.mesNum)) return false;
+  if (except!=="docs" && state.docs.size && !state.docs.has(r.tipoDoc)) return false;
+  if (except!=="bancos" && state.bancos.size) { const eb = estadoBanco(r)==="Aceptada" ? "aceptada" : "pendiente"; if (!state.bancos.has(eb)) return false; }
+  if (except!=="estados" && state.estados.size) { const es = (FAC[facId(r)]||{}).estado || "__vacio__"; if (!state.estados.has(es)) return false; }
+  if (except!=="situaciones" && state.situaciones.size) { if (!state.situaciones.has(r.situacion||"Registro")) return false; }
+  if (except!=="fpagos" && state.fpagos.size) { const fp=fechaPagoISO(r); if(!state.fpagos.has(fp)) return false; }
+  if (state.qFolio) { if (!String(r.folio).includes(state.qFolio.trim())) return false; }
+  if (state.q) { const q = state.q.toLowerCase(); if (!(r.razon.toLowerCase().includes(q) || r.rut.toLowerCase().includes(q))) return false; }
+  return true;
 }
+function filtered() { return DATA.filter(r => passes(r, null)); }
+// Filas que pasan todos los filtros EXCEPTO el indicado (para saber qué valores mostrar en ese filtro).
+function rowsExcept(field) { return DATA.filter(r => passes(r, field)); }
 
 function setSet(s, arr){ s.clear(); (arr||[]).forEach(x=> s.add(String(x))); }
 function chipGroup(containerId, items, selSet){
   const el = document.getElementById(containerId);
   el.innerHTML = items.map(it=>`<label class="chip"><input type="checkbox" value="${esc(it.val)}" ${selSet.has(it.val)?'checked':''}><span>${esc(it.label)}${it.count!=null?' ('+it.count+')':''}</span></label>`).join("");
-  el.querySelectorAll("input").forEach(inp=> inp.addEventListener("change", e=>{ const v=e.target.value; e.target.checked?selSet.add(v):selSet.delete(v); render(); saveView(); }));
+  el.querySelectorAll("input").forEach(inp=> inp.addEventListener("change", e=>{ const v=e.target.value; e.target.checked?selSet.add(v):selSet.delete(v); onFilterChange(); }));
 }
 
 function renderKPIs(rows) {
@@ -404,6 +421,7 @@ function renderTable(rows) {
       <td class="mono fac-fpago" data-id="${esc(id)}">${fpago}</td>
       <td>${(()=>{ const opts=["","Pagada","NC, Revisar","Revisada, pagar"]; const cur=f.estado||""; if(cur && !opts.includes(cur)) opts.push(cur); return '<select class="cell-input txt fac-estado" data-id="'+esc(id)+'">'+opts.map(o=>'<option value="'+esc(o)+'"'+(o===cur?' selected':'')+'>'+(o||'—')+'</option>').join('')+'</select>'; })()}</td>
       <td>${eb==="Aceptada" ? '<span class="eb-ok">Aceptada</span>' : ''}</td>
+      <td>${(()=>{ const s=r.situacion||"Registro"; const cls=s==="Registro"?"sit-reg":(s==="Pendiente"?"sit-pend":"sit-otro"); return '<span class="sit '+cls+'">'+esc(s)+'</span>'; })()}</td>
       <td>${(IMG[r.folio]||[]).map((u,i)=>`<a class="verfac" href="${esc(u)}" target="_blank" rel="noopener">Ver${(IMG[r.folio]||[]).length>1?' '+(i+1):''}</a>`).join(' ')}</td>
     </tr>`; }).join("");
 
@@ -428,35 +446,64 @@ function renderTable(rows) {
 
 function render(){ const rows = filtered(); renderKPIs(rows); renderTable(rows); }
 
-// ===== Filtros dinámicos (todos de selección múltiple) =====
-(function(){
-  const periods = Object.keys(RAW).sort();
+// ===== Filtros dinámicos, facetados estilo Excel =====
+// Cada filtro muestra solo los valores presentes en las filas que pasan LOS DEMÁS filtros,
+// más los que estén seleccionados (para poder deseleccionarlos aunque ya no tengan datos).
+const DOC_LABELS = {"33":"Factura","34":"Exenta","61":"Nota de Crédito"};
+function fpagoLabel(iso){ const m=String(iso).match(/(\d{4})-(\d{2})-(\d{2})/); return m ? m[3]+"/"+m[2]+"/"+m[1] : iso; }
+function facetSet(field, accessor){
+  const s=new Set();
+  rowsExcept(field).forEach(r=>{ const v=accessor(r); if(v!=null && v!=="") s.add(String(v)); });
+  return s;
+}
+function rebuildFilters(){
+  // Período (nunca cambia el conjunto base, pero lo facetamos igual por consistencia)
+  const periodAvail=facetSet("periodos", r=>r.periodo);
+  const periods=[...new Set([...periodAvail, ...state.periodos])].sort();
   chipGroup("fPeriodo", periods.map(p=>({val:p,label:periodLabel(p)})), state.periodos);
-  const lbl = document.getElementById("periodlabel");
-  if (periods.length) lbl.textContent = periods.length>1 ? periodLabel(periods[0])+" – "+periodLabel(periods[periods.length-1]) : periodLabel(periods[0]);
+  const lbl=document.getElementById("periodlabel");
+  const allP=Object.keys(RAW).sort();
+  if (allP.length) lbl.textContent = allP.length>1 ? periodLabel(allP[0])+" – "+periodLabel(allP[allP.length-1]) : periodLabel(allP[0]);
 
-  const anios=[...new Set(DATA.map(r=>r.anio).filter(Boolean))].sort();
+  const anioAvail=facetSet("anios", r=>r.anio);
+  const anios=[...new Set([...anioAvail, ...state.anios])].sort();
   chipGroup("fAnio", anios.map(a=>({val:a,label:a})), state.anios);
-  const meses=[...new Set(DATA.map(r=>r.mesNum).filter(Boolean))].sort();
+
+  const mesAvail=facetSet("meses", r=>r.mesNum);
+  const meses=[...new Set([...mesAvail, ...state.meses])].sort();
   chipGroup("fMes", meses.map(m=>({val:m,label:MES_NOM[m]||m})), state.meses);
 
-  const counts={}; DATA.forEach(r=> counts[r.tipoDoc]=(counts[r.tipoDoc]||0)+1);
-  const docLabels={"33":"Factura","34":"Exenta","61":"Nota de Crédito"};
-  chipGroup("chipDoc", Object.keys(docLabels).filter(k=>counts[k]).map(k=>({val:k,label:docLabels[k],count:counts[k]})), state.docs);
+  const docAvail=facetSet("docs", r=>r.tipoDoc);
+  const counts={}; rowsExcept("docs").forEach(r=> counts[r.tipoDoc]=(counts[r.tipoDoc]||0)+1);
+  const docs=Object.keys(DOC_LABELS).filter(k=> docAvail.has(k) || state.docs.has(k));
+  chipGroup("chipDoc", docs.map(k=>({val:k,label:DOC_LABELS[k],count:counts[k]||0})), state.docs);
 
-  chipGroup("fBanco", [{val:"aceptada",label:"Aceptada"},{val:"pendiente",label:"Pendiente"}], state.bancos);
-  chipGroup("fEstado", [{val:"Pagada",label:"Pagada"},{val:"NC, Revisar",label:"NC, Revisar"},{val:"Revisada, pagar",label:"Revisada, pagar"},{val:"__vacio__",label:"Sin estado"}], state.estados);
-})();
+  const bancoAvail=facetSet("bancos", r=> estadoBanco(r)==="Aceptada"?"aceptada":"pendiente");
+  const bancoDefs=[{val:"aceptada",label:"Aceptada"},{val:"pendiente",label:"Pendiente"}];
+  chipGroup("fBanco", bancoDefs.filter(d=> bancoAvail.has(d.val) || state.bancos.has(d.val)), state.bancos);
+
+  const estAvail=facetSet("estados", r=> (FAC[facId(r)]||{}).estado || "__vacio__");
+  const estDefs=[{val:"Pagada",label:"Pagada"},{val:"NC, Revisar",label:"NC, Revisar"},{val:"Revisada, pagar",label:"Revisada, pagar"},{val:"__vacio__",label:"Sin estado"}];
+  chipGroup("fEstado", estDefs.filter(d=> estAvail.has(d.val) || state.estados.has(d.val)), state.estados);
+
+  const sitAvail=facetSet("situaciones", r=> r.situacion||"Registro");
+  const sitOrder=["Registro","Pendiente","No incluir","Reclamado"];
+  const sits=[...new Set([...sitAvail, ...state.situaciones])].sort((a,b)=>{ const ia=sitOrder.indexOf(a), ib=sitOrder.indexOf(b); return (ia<0?9:ia)-(ib<0?9:ib); });
+  chipGroup("fSituacion", sits.map(s=>({val:s,label:s})), state.situaciones);
+
+  const fpAvail=facetSet("fpagos", r=> fechaPagoISO(r));
+  const fpagos=[...new Set([...fpAvail, ...state.fpagos])].filter(Boolean).sort();
+  chipGroup("fFpago", fpagos.map(f=>({val:f,label:fpagoLabel(f)})), state.fpagos);
+}
+function onFilterChange(){ rebuildFilters(); render(); saveView(); }
+rebuildFilters();
 
 // ===== Persistencia de la vista (filtros/tab/orden) — nube (compartida) + local (instantáneo) =====
 function currentTab(){ const b=document.querySelector('.viewtabs button[aria-selected="true"]'); return b?b.dataset.view:"facturas"; }
-function getView(){ return { tab:currentTab(), periodos:[...state.periodos], anios:[...state.anios], meses:[...state.meses], docs:[...state.docs], bancos:[...state.bancos], estados:[...state.estados], fpDesde:state.fpDesde, fpHasta:state.fpHasta, q:state.q, sortK:state.sortK, sortDir:state.sortDir }; }
+function getView(){ return { tab:currentTab(), periodos:[...state.periodos], anios:[...state.anios], meses:[...state.meses], docs:[...state.docs], bancos:[...state.bancos], estados:[...state.estados], situaciones:[...state.situaciones], fpagos:[...state.fpagos], qFolio:state.qFolio, q:state.q, sortK:state.sortK, sortDir:state.sortDir }; }
 function syncChips(){
-  const map={fPeriodo:state.periodos,fAnio:state.anios,fMes:state.meses,chipDoc:state.docs,fBanco:state.bancos,fEstado:state.estados};
-  Object.keys(map).forEach(id=> document.querySelectorAll('#'+id+' input').forEach(i=> i.checked=map[id].has(i.value)));
   const q=document.getElementById("qProv"); if(q) q.value=state.q;
-  const d1=document.getElementById("fpDesde"); if(d1) d1.value=state.fpDesde||"";
-  const d2=document.getElementById("fpHasta"); if(d2) d2.value=state.fpHasta||"";
+  const qf=document.getElementById("qFolio"); if(qf) qf.value=state.qFolio||"";
 }
 let __applying=false;
 function applyView(v){
@@ -464,9 +511,10 @@ function applyView(v){
   __applying=true;
   setSet(state.periodos, v.periodos); setSet(state.anios, v.anios); setSet(state.meses, v.meses);
   setSet(state.docs, v.docs||DOCS_DEFAULT); setSet(state.bancos, v.bancos); setSet(state.estados, v.estados);
-  state.fpDesde=v.fpDesde||""; state.fpHasta=v.fpHasta||"";
+  setSet(state.situaciones, v.situaciones); setSet(state.fpagos, v.fpagos);
+  state.qFolio=v.qFolio||"";
   state.q=v.q||""; state.sortK=v.sortK||"iso"; state.sortDir=v.sortDir!=null?v.sortDir:-1;
-  syncChips();
+  rebuildFilters(); syncChips();
   if(v.tab && v.tab!=="facturas"){ const b=document.querySelector('.viewtabs button[data-view="'+v.tab+'"]'); if(b) b.click(); }
   __applying=false;
   render();
@@ -484,26 +532,23 @@ document.getElementById("btnFiltros").addEventListener("click", ()=>{
   const fb=document.getElementById("filterbar"), kp=document.getElementById("kpis"), b=document.getElementById("btnFiltros");
   const show=fb.hidden; fb.hidden=!show; kp.hidden=!show; b.setAttribute("aria-expanded", show?"true":"false");
 });
-document.getElementById("qProv").addEventListener("input", e=>{ state.q=e.target.value; render(); saveView(); });
-document.getElementById("fpDesde").addEventListener("change", e=>{ state.fpDesde=e.target.value; render(); saveView(); });
-document.getElementById("fpHasta").addEventListener("change", e=>{ state.fpHasta=e.target.value; render(); saveView(); });
+document.getElementById("qProv").addEventListener("input", e=>{ state.q=e.target.value; onFilterChange(); });
+document.getElementById("qFolio").addEventListener("input", e=>{ state.qFolio=e.target.value; onFilterChange(); });
 document.querySelectorAll("#viewFacturas thead th").forEach(th=> th.addEventListener("click", ()=>{
   const k=th.dataset.k; if(!k) return; if(state.sortK===k) state.sortDir*=-1; else { state.sortK=k; state.sortDir=(k==="razon"||k==="mesNum")?1:-1; } render(); saveView();
 }));
 document.getElementById("btnReset").addEventListener("click", ()=>{
-  state.periodos.clear(); state.anios.clear(); state.meses.clear(); state.bancos.clear(); state.estados.clear();
-  setSet(state.docs, DOCS_DEFAULT); state.q=""; state.fpDesde=""; state.fpHasta="";
-  document.querySelectorAll("#fPeriodo input, #fAnio input, #fMes input, #fBanco input, #fEstado input").forEach(i=> i.checked=false);
-  document.querySelectorAll("#chipDoc input").forEach(i=> i.checked = state.docs.has(i.value));
-  document.getElementById("qProv").value=""; document.getElementById("fpDesde").value=""; document.getElementById("fpHasta").value="";
-  render(); saveView();
+  state.periodos.clear(); state.anios.clear(); state.meses.clear(); state.bancos.clear(); state.estados.clear(); state.situaciones.clear(); state.fpagos.clear();
+  setSet(state.docs, DOCS_DEFAULT); state.q=""; state.qFolio="";
+  document.getElementById("qProv").value=""; document.getElementById("qFolio").value="";
+  rebuildFilters(); render(); saveView();
 });
 document.getElementById("btnExport").addEventListener("click", ()=>{
   const rows = filtered();
-  const head = ["Anio","Mes","N Factura","Proveedor","Costo total c/IVA","Fecha compra","Dias de pago","Fecha de pago","Estado","Estado Banco"];
+  const head = ["Anio","Mes","N Factura","Proveedor","Costo total c/IVA","Fecha compra","Dias de pago","Fecha de pago","Estado","Estado Banco","Situacion SII"];
   const lines = [head.join(";")].concat(rows.map(r=>{
     const id=facId(r), f=FAC[id]||{}, dias=diasEfectivos(r);
-    return [r.anio, MES_NOM[r.mesNum]||"", r.folio, r.razon, signed(r)*r.total, r.fechaDocto, dias, addDias(r.iso,dias), f.estado||"", estadoBanco(r)].join(";");
+    return [r.anio, MES_NOM[r.mesNum]||"", r.folio, r.razon, signed(r)*r.total, r.fechaDocto, dias, addDias(r.iso,dias), f.estado||"", estadoBanco(r), r.situacion||"Registro"].join(";");
   }));
   const blob = new Blob(["﻿"+lines.join("\n")], {type:"text/csv;charset=utf-8"});
   const a = document.createElement("a"); a.href=URL.createObjectURL(blob); a.download="facturas_compra.csv"; a.click();

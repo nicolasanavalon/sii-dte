@@ -53,9 +53,50 @@ MESES_LABEL = {
 }
 
 
+# Situaciones del Registro de Compra del SII. La UI muestra por defecto REGISTRO;
+# las demás pestañas (PENDIENTE, NO_INCLUIR, RECLAMADO) se piden reusando la misma
+# petición de exportación, cambiando solo el código de estado.
+ESTADOS_SII = [
+    ("REGISTRO", "Registro"),
+    ("PENDIENTE", "Pendiente"),
+    ("NO_INCLUIR", "No incluir"),
+    ("RECLAMADO", "Reclamado"),
+]
+
+
+def _swap_estado(body, new_code):
+    """Devuelve el cuerpo (JSON) de la petición de exportación con el estado cambiado
+    a `new_code`. Busca el valor literal 'REGISTRO' en el JSON y lo reemplaza. Si no lo
+    encuentra, devuelve None (no se puede reproducir esa pestaña)."""
+    if not body:
+        return None
+    try:
+        obj = json.loads(body)
+    except Exception:
+        return body.replace("REGISTRO", new_code) if "REGISTRO" in body else None
+    hit = [False]
+
+    def walk(o):
+        if isinstance(o, dict):
+            for k, v in list(o.items()):
+                if isinstance(v, str) and v.strip().upper() == "REGISTRO":
+                    o[k] = new_code
+                    hit[0] = True
+                else:
+                    walk(v)
+        elif isinstance(o, list):
+            for it in o:
+                walk(it)
+
+    walk(obj)
+    return json.dumps(obj) if hit[0] else None
+
+
 def descargar_del_sii(rut_full, clave, periodos_lista):
     """Loguea en el SII y baja el detalle de compras de cada período manejando la página
-    igual que un humano: seleccionar mes/año → Consultar → Descargar Detalles.
+    igual que un humano: seleccionar mes/año → Consultar → Descargar Detalles (REGISTRO).
+    Luego reproduce esa misma petición para PENDIENTE, NO_INCLUIR y RECLAMADO.
+    Cada fila lleva una columna extra 'SITUACION' con la pestaña de la que proviene.
     Devuelve {periodo: csv_texto}."""
     import re as _re
     from playwright.sync_api import sync_playwright, TimeoutError as PWTimeout
@@ -114,21 +155,69 @@ def descargar_del_sii(rut_full, clave, periodos_lista):
                 page.get_by_role("button", name=_re.compile(r"^\s*consultar\s*$", _re.I)).first.click()
             page.wait_for_timeout(2500)
 
-            # Captura la respuesta JSON del export al presionar "Descargar Detalles"
+            # Captura la respuesta JSON del export (pestaña REGISTRO por defecto)
             try:
                 with page.expect_response(lambda r: "getDetalleCompraExport" in r.url, timeout=30000) as ri:
                     page.get_by_role("button", name=_re.compile("descargar detalles", _re.I)).first.click()
-                j = ri.value.json()
-                rows = j.get("data", []) if isinstance(j, dict) else []
+                resp = ri.value
+                j = resp.json()
+                base_rows = j.get("data", []) if isinstance(j, dict) else []
             except PWTimeout:
                 print(f"  · {pt}: no se pudo capturar la descarga (¿sin datos?)", file=sys.stderr)
                 continue
 
-            if len(rows) <= 1:
+            url = resp.url
+            try:
+                base_body = resp.request.post_data
+            except Exception:
+                base_body = None
+            req_headers = {}
+            try:
+                h = resp.request.headers
+                for k in ("content-type", "accept"):
+                    if k in h:
+                        req_headers[k] = h[k]
+            except Exception:
+                pass
+
+            header = base_rows[0] if base_rows else None
+            combined = []  # (situacion_label, fila_csv)
+            if len(base_rows) > 1:
+                for row in base_rows[1:]:
+                    combined.append(("Registro", row))
+                print(f"  · {pt} Registro: {len(base_rows) - 1} documentos")
+
+            # Reproduce la exportación para las otras pestañas del SII
+            for code, label in ESTADOS_SII[1:]:
+                rows2 = None
+                try:
+                    if base_body:
+                        nb = _swap_estado(base_body, code)
+                        if nb is None:
+                            continue
+                        r2 = page.request.post(url, data=nb, headers=req_headers or {"content-type": "application/json"})
+                    elif "REGISTRO" in url:
+                        r2 = page.request.get(url.replace("REGISTRO", code))
+                    else:
+                        continue
+                    j2 = r2.json()
+                    rows2 = j2.get("data", []) if isinstance(j2, dict) else []
+                except Exception as e:
+                    print(f"  · {pt} {label}: no se pudo descargar ({e})", file=sys.stderr)
+                    continue
+                if rows2 and header is None:
+                    header = rows2[0]
+                if rows2 and len(rows2) > 1:
+                    for row in rows2[1:]:
+                        combined.append((label, row))
+                    print(f"  · {pt} {label}: {len(rows2) - 1} documentos")
+
+            if header is None or not combined:
                 print(f"  · {pt}: sin documentos")
                 continue
-            resultados[pt] = "\n".join(rows)
-            print(f"  · {pt}: {len(rows) - 1} documentos")
+            out_lines = [header + ";SITUACION"] + [row + ";" + label for (label, row) in combined]
+            resultados[pt] = "\n".join(out_lines)
+            print(f"  · {pt}: {len(combined)} documentos (todas las situaciones)")
         browser.close()
     return resultados
 
