@@ -60,6 +60,7 @@
   .btn-reset:hover { border-color: var(--accent); color: var(--accent-ink); }
 
   .kpis { display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px; }
+  .kpis[hidden] { display: none; }
   @media (max-width: 720px) { .kpis { grid-template-columns: 1fr; } }
   .kpi { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 15px 16px; box-shadow: var(--shadow); display: flex; flex-direction: column; gap: 6px; }
   .kpi .label { font-size: 11px; letter-spacing: .09em; text-transform: uppercase; color: var(--ink-faint); font-weight: 600; }
@@ -148,13 +149,13 @@
     <div class="fgroup"><label class="title">Mes</label><div class="chips" id="fMes"></div></div>
     <div class="fgroup"><label class="title">Tipo de documento</label><div class="chips" id="chipDoc"></div></div>
     <div class="fgroup"><label class="title">Estado Banco</label><div class="chips" id="fBanco"></div></div>
-    <div class="fgroup"><label class="title">Días de pago</label><div class="chips" id="fDias"></div></div>
+    <div class="fgroup"><label class="title">Fecha de pago</label><div class="range-row"><input type="date" id="fpDesde" aria-label="Desde"><input type="date" id="fpHasta" aria-label="Hasta"></div></div>
     <div class="fgroup" style="grid-column: 1 / -1;"><label class="title">Estado</label><div class="chips" id="fEstado"></div></div>
     <div class="fgroup"><label class="title">Proveedor</label><input type="text" id="qProv" placeholder="Nombre o RUT…" autocomplete="off"></div>
     <div class="fgroup"><label class="title">&nbsp;</label><button class="btn-reset" id="btnReset">Limpiar filtros</button></div>
   </section>
 
-  <section class="kpis" id="kpis"></section>
+  <section class="kpis" id="kpis" hidden></section>
 
   <section class="card tablewrap">
     <div class="tablebar">
@@ -340,7 +341,14 @@ function estadoBanco(r){ return TRANSF_IDX.has(normRut(r.rut) + "|" + String(r.f
 // ===== Estado / filtros =====
 const DOCS_DEFAULT = ["33","34"];
 // Todos los filtros son de selección múltiple (conjuntos). Vacío = sin filtrar (muestra todo).
-const state = { periodos:new Set(), anios:new Set(), meses:new Set(), docs:new Set(DOCS_DEFAULT), bancos:new Set(), estados:new Set(), dias:new Set(), q:"", sortK:"iso", sortDir:-1 };
+const state = { periodos:new Set(), anios:new Set(), meses:new Set(), docs:new Set(DOCS_DEFAULT), bancos:new Set(), estados:new Set(), fpDesde:"", fpHasta:"", q:"", sortK:"iso", sortDir:-1 };
+
+function fechaPagoISO(r){
+  if(!r.iso) return "";
+  const d=new Date(r.iso+"T00:00:00"); if(isNaN(d)) return "";
+  d.setDate(d.getDate()+diasEfectivos(r));
+  return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0");
+}
 
 function filtered() {
   return DATA.filter(r => {
@@ -350,12 +358,13 @@ function filtered() {
     if (state.docs.size && !state.docs.has(r.tipoDoc)) return false;
     if (state.bancos.size) { const eb = estadoBanco(r)==="Aceptada" ? "aceptada" : "pendiente"; if (!state.bancos.has(eb)) return false; }
     if (state.estados.size) { const es = (FAC[facId(r)]||{}).estado || "__vacio__"; if (!state.estados.has(es)) return false; }
-    if (state.dias.size && !state.dias.has(String(diasEfectivos(r)))) return false;
+    if (state.fpDesde || state.fpHasta) { const fp=fechaPagoISO(r); if(!fp) return false; if(state.fpDesde && fp<state.fpDesde) return false; if(state.fpHasta && fp>state.fpHasta) return false; }
     if (state.q) { const q = state.q.toLowerCase(); if (!(r.razon.toLowerCase().includes(q) || r.rut.toLowerCase().includes(q))) return false; }
     return true;
   });
 }
 
+function setSet(s, arr){ s.clear(); (arr||[]).forEach(x=> s.add(String(x))); }
 function chipGroup(containerId, items, selSet){
   const el = document.getElementById(containerId);
   el.innerHTML = items.map(it=>`<label class="chip"><input type="checkbox" value="${esc(it.val)}" ${selSet.has(it.val)?'checked':''}><span>${esc(it.label)}${it.count!=null?' ('+it.count+')':''}</span></label>`).join("");
@@ -437,28 +446,25 @@ function render(){ const rows = filtered(); renderKPIs(rows); renderTable(rows);
 
   chipGroup("fBanco", [{val:"aceptada",label:"Aceptada"},{val:"pendiente",label:"Pendiente"}], state.bancos);
   chipGroup("fEstado", [{val:"Pagada",label:"Pagada"},{val:"NC, Revisar",label:"NC, Revisar"},{val:"Revisada, pagar",label:"Revisada, pagar"},{val:"__vacio__",label:"Sin estado"}], state.estados);
-  buildDiasFilter();
 })();
-
-function buildDiasFilter(){
-  const vals=[...new Set(DATA.map(r=>String(diasEfectivos(r))))].sort((a,b)=>(+a)-(+b));
-  chipGroup("fDias", vals.map(d=>({val:d,label:d+" días"})), state.dias);
-}
 
 // ===== Persistencia de la vista (filtros/tab/orden) — nube (compartida) + local (instantáneo) =====
 function currentTab(){ const b=document.querySelector('.viewtabs button[aria-selected="true"]'); return b?b.dataset.view:"facturas"; }
-function getView(){ return { tab:currentTab(), periodos:[...state.periodos], anios:[...state.anios], meses:[...state.meses], docs:[...state.docs], bancos:[...state.bancos], estados:[...state.estados], dias:[...state.dias], q:state.q, sortK:state.sortK, sortDir:state.sortDir }; }
+function getView(){ return { tab:currentTab(), periodos:[...state.periodos], anios:[...state.anios], meses:[...state.meses], docs:[...state.docs], bancos:[...state.bancos], estados:[...state.estados], fpDesde:state.fpDesde, fpHasta:state.fpHasta, q:state.q, sortK:state.sortK, sortDir:state.sortDir }; }
 function syncChips(){
-  const map={fPeriodo:state.periodos,fAnio:state.anios,fMes:state.meses,chipDoc:state.docs,fBanco:state.bancos,fEstado:state.estados,fDias:state.dias};
+  const map={fPeriodo:state.periodos,fAnio:state.anios,fMes:state.meses,chipDoc:state.docs,fBanco:state.bancos,fEstado:state.estados};
   Object.keys(map).forEach(id=> document.querySelectorAll('#'+id+' input').forEach(i=> i.checked=map[id].has(i.value)));
   const q=document.getElementById("qProv"); if(q) q.value=state.q;
+  const d1=document.getElementById("fpDesde"); if(d1) d1.value=state.fpDesde||"";
+  const d2=document.getElementById("fpHasta"); if(d2) d2.value=state.fpHasta||"";
 }
 let __applying=false;
 function applyView(v){
   if(!v || typeof v!=="object") return;
   __applying=true;
-  state.periodos=new Set(v.periodos||[]); state.anios=new Set(v.anios||[]); state.meses=new Set(v.meses||[]);
-  state.docs=new Set(v.docs||DOCS_DEFAULT); state.bancos=new Set(v.bancos||[]); state.estados=new Set(v.estados||[]); state.dias=new Set(v.dias||[]);
+  setSet(state.periodos, v.periodos); setSet(state.anios, v.anios); setSet(state.meses, v.meses);
+  setSet(state.docs, v.docs||DOCS_DEFAULT); setSet(state.bancos, v.bancos); setSet(state.estados, v.estados);
+  state.fpDesde=v.fpDesde||""; state.fpHasta=v.fpHasta||"";
   state.q=v.q||""; state.sortK=v.sortK||"iso"; state.sortDir=v.sortDir!=null?v.sortDir:-1;
   syncChips();
   if(v.tab && v.tab!=="facturas"){ const b=document.querySelector('.viewtabs button[data-view="'+v.tab+'"]'); if(b) b.click(); }
@@ -475,19 +481,21 @@ function saveView(){
   __viewTimer=setTimeout(()=>{ fetch(API_URL,{method:"POST",headers:{"Content-Type":"text/plain;charset=utf-8"},body:JSON.stringify({tipo:"prov",rut:"__VISTA__",razon:"vista",dias:"",credito:JSON.stringify(v)})}).catch(()=>{}); }, 900);
 }
 document.getElementById("btnFiltros").addEventListener("click", ()=>{
-  const fb=document.getElementById("filterbar"), b=document.getElementById("btnFiltros");
-  const show=fb.hidden; fb.hidden=!show; b.setAttribute("aria-expanded", show?"true":"false");
+  const fb=document.getElementById("filterbar"), kp=document.getElementById("kpis"), b=document.getElementById("btnFiltros");
+  const show=fb.hidden; fb.hidden=!show; kp.hidden=!show; b.setAttribute("aria-expanded", show?"true":"false");
 });
 document.getElementById("qProv").addEventListener("input", e=>{ state.q=e.target.value; render(); saveView(); });
+document.getElementById("fpDesde").addEventListener("change", e=>{ state.fpDesde=e.target.value; render(); saveView(); });
+document.getElementById("fpHasta").addEventListener("change", e=>{ state.fpHasta=e.target.value; render(); saveView(); });
 document.querySelectorAll("#viewFacturas thead th").forEach(th=> th.addEventListener("click", ()=>{
   const k=th.dataset.k; if(!k) return; if(state.sortK===k) state.sortDir*=-1; else { state.sortK=k; state.sortDir=(k==="razon"||k==="mesNum")?1:-1; } render(); saveView();
 }));
 document.getElementById("btnReset").addEventListener("click", ()=>{
-  state.periodos.clear(); state.anios.clear(); state.meses.clear(); state.bancos.clear(); state.estados.clear(); state.dias.clear();
-  state.docs = new Set(DOCS_DEFAULT); state.q="";
-  document.querySelectorAll("#fPeriodo input, #fAnio input, #fMes input, #fBanco input, #fEstado input, #fDias input").forEach(i=> i.checked=false);
+  state.periodos.clear(); state.anios.clear(); state.meses.clear(); state.bancos.clear(); state.estados.clear();
+  setSet(state.docs, DOCS_DEFAULT); state.q=""; state.fpDesde=""; state.fpHasta="";
+  document.querySelectorAll("#fPeriodo input, #fAnio input, #fMes input, #fBanco input, #fEstado input").forEach(i=> i.checked=false);
   document.querySelectorAll("#chipDoc input").forEach(i=> i.checked = state.docs.has(i.value));
-  document.getElementById("qProv").value="";
+  document.getElementById("qProv").value=""; document.getElementById("fpDesde").value=""; document.getElementById("fpHasta").value="";
   render(); saveView();
 });
 document.getElementById("btnExport").addEventListener("click", ()=>{
@@ -526,15 +534,21 @@ function toast(msg, err){
 function loadCfgRemote(){
   return new Promise((resolve)=>{
     if (!API_OK) { setProvStatus("Guardado en la nube no configurado", true); return resolve(); }
-    const cb = "__cfg_cb_" + Date.now();
-    let done = false;
-    const s = document.createElement("script");
-    function cleanup(){ try { delete window[cb]; } catch(e){ window[cb] = undefined; } if (s.parentNode) s.parentNode.removeChild(s); }
-    window[cb] = (data)=>{ done = true; data = data || {}; CFG = data.prov || {}; FAC = data.fac || {}; TRANSF = data.transf || {}; buildTransfIdx(); cfgLoaded = true; cleanup(); resolve(); };
-    s.src = API_URL + "?callback=" + cb + "&ts=" + Date.now();
-    s.onerror = ()=>{ if(!done){ cleanup(); setProvStatus("No se pudo cargar desde la nube", true); resolve(); } };
-    document.body.appendChild(s);
-    setTimeout(()=>{ if(!done){ cleanup(); setProvStatus("No se pudo cargar desde la nube", true); resolve(); } }, 10000);
+    let intento = 0;
+    function attempt(){
+      intento++;
+      const cb = "__cfg_cb_" + Date.now() + "_" + intento;
+      let done = false;
+      const s = document.createElement("script");
+      function cleanup(){ try { delete window[cb]; } catch(e){ window[cb] = undefined; } if (s.parentNode) s.parentNode.removeChild(s); }
+      window[cb] = (data)=>{ done = true; data = data || {}; CFG = data.prov || {}; FAC = data.fac || {}; TRANSF = data.transf || {}; buildTransfIdx(); cfgLoaded = true; cleanup(); resolve(); };
+      s.src = API_URL + "?callback=" + cb + "&ts=" + Date.now();
+      s.onerror = ()=>{ if(!done){ cleanup(); retry(); } };
+      document.body.appendChild(s);
+      setTimeout(()=>{ if(!done){ cleanup(); retry(); } }, 8000);
+    }
+    function retry(){ if (intento < 4) { setProvStatus("Reintentando cargar…"); attempt(); } else { setProvStatus("No se pudo cargar desde la nube", true); resolve(); } }
+    attempt();
   });
 }
 
@@ -706,7 +720,7 @@ document.getElementById("fileTransf").addEventListener("change", e=>{ const f=e.
 try{ const lv=JSON.parse(localStorage.getItem("sii_vista")||"null"); if(lv) applyView(lv); }catch(e){}
 render();
 if (API_OK) loadCfgRemote().then(()=>{
-  buildTransfIdx(); actualizarBancoStamp(); buildDiasFilter();
+  buildTransfIdx(); actualizarBancoStamp();
   try{ const cv=(CFG["__VISTA__"]||{}).credito; if(cv) applyView(JSON.parse(cv)); }catch(e){}
   render();
 });
