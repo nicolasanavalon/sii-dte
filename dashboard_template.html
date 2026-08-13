@@ -421,11 +421,13 @@ function generarTEF(){
       fld(rutTef(r.rut),10,"R","0") + fld(r.razon,30,"L"," ") + fld(cuenta,18,"L"," ");
     // Tramo desde Monto hasta Dirección e-mail (Monto, Abono, Motivo, Notif, Asunto, e-mail).
     const post = fld(monto,11,"R","0") + " " + fld(r.folio,30,"L"," ") + notif + asunto + dirmail;
-    // Banco de Chile (TEC): LLEVA "Rut Banco Beneficiario" (en blanco) pero NO el "Tipo de Cuenta"
-    //   final → 216 caracteres. Otros bancos (TOB): con Rut Banco (RUT del banco) y Tipo de Cuenta → 219.
+    // "Rut Banco Beneficiario" = RUT del banco destino (para Banco de Chile es su propio RUT, 97004000-5).
+    // Banco de Chile (TEC): con Rut Banco, SIN "Tipo de Cuenta" final → 216 caracteres.
+    // Otros bancos (TOB): con Rut Banco y con "Tipo de Cuenta" → 219 caracteres.
+    const rutBancoStr = fld(rutTef(banco.rut),10,"R","0");
     const line = banco.chile
-      ? (pre + fld("",10,"L"," ") + post)
-      : (pre + fld(rutTef(banco.rut),10,"R","0") + post + fld(tipo||"CTD",3,"L"," "));
+      ? (pre + rutBancoStr + post)
+      : (pre + rutBancoStr + post + fld(tipo||"CTD",3,"L"," "));
     lines.push(line);
   });
   return { lines, incompletos, sinCargo: !cargo };
