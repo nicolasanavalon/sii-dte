@@ -377,8 +377,11 @@ function setNC(obj){
 }
 
 function rutTef(rut){ return normRut(rut).replace(/-/g,""); }   // dígitos + DV, sin puntos ni guion
+// El banco cuenta BYTES y espera ASCII: quitamos tildes/ñ y cualquier carácter no ASCII,
+// para que cada carácter sea 1 byte y el largo de la línea calce exacto.
+function ascii(s){ return String(s==null?"":s).normalize("NFD").replace(new RegExp("[\\u0300-\\u036f]","g"),"").replace(/[^\x20-\x7E]/g," "); }
 function fld(val, len, align, fill){
-  let s = String(val==null?"":val);
+  let s = ascii(val);
   if (s.length>len) s = s.slice(0,len);
   return align==="R" ? s.padStart(len,fill) : s.padEnd(len,fill);
 }
@@ -440,7 +443,7 @@ function descargarTEF(){
   const stamp = (()=>{ const d=new Date(); return d.getFullYear()+String(d.getMonth()+1).padStart(2,"0")+String(d.getDate()).padStart(2,"0"); })();
   chunks.forEach((ch,idx)=>{
     const name = "TEF_"+stamp+(chunks.length>1?("_"+(idx+1)):"")+".txt";
-    const blob = new Blob([ch.join("\r\n")+"\r\n"], { type:"text/plain;charset=utf-8" });
+    const blob = new Blob([ch.join("\r\n")], { type:"text/plain;charset=utf-8" });
     const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = name;
     document.body.appendChild(a); a.click(); setTimeout(()=>{ URL.revokeObjectURL(a.href); a.remove(); }, 400+idx*300);
   });
