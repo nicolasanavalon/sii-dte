@@ -585,12 +585,14 @@ function renderTable(rows) {
     const id=e.target.dataset.id, v=e.target.value; if(!FAC[id]) FAC[id]={}; if(v==="") delete FAC[id].estado; else FAC[id].estado=v; saveFactura(id);
   }));
   document.querySelectorAll("#tbody .fac-nc").forEach(inp=>{
-    inp.addEventListener("input", e=>{ e.target.value = fmtMiles(e.target.value); });
-    inp.addEventListener("change", e=>{
+    // Guardamos MIENTRAS se escribe (input), no solo al salir del campo (change): así el valor
+    // queda en CFG al instante (el TEF lo resta aunque no salgas del campo) y se persiste solo.
+    const guardarNC = (e)=>{
       const id=e.target.dataset.id, v=soloDigitos(e.target.value);
       const m=getNC(); if(v==="") delete m[id]; else m[id]=v; setNC(m);
-      toast("Guardado ✓");
-    });
+    };
+    inp.addEventListener("input", e=>{ e.target.value = fmtMiles(e.target.value); guardarNC(e); });
+    inp.addEventListener("change", e=>{ guardarNC(e); toast("Guardado ✓"); });
   });
 
   document.querySelectorAll("#viewFacturas thead th").forEach(th => {
