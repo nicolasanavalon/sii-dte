@@ -413,18 +413,19 @@ function generarTEF(){
     if (banco && !banco.chile && !tipo) falta.push("tipo de cuenta");
     if (falta.length){ incompletos.push({ folio:r.folio, razon:r.razon, motivo:falta.join(", ") }); return; }
     const op = banco.chile ? "TEC" : "TOB";
-    const rutBanco = banco.chile ? fld("",10,"L"," ") : fld(rutTef(banco.rut),10,"R","0");
-    // Tipo de Cuenta SIEMPRE relleno (CTD/JUV), también para Banco de Chile: si se deja en blanco,
-    // la línea termina en espacios y el banco los recorta → "largo de línea incorrecto".
-    const tipoCta  = fld(tipo||"CTD",3,"L"," ");
     const notif = email ? "1" : "0";
     const asunto = email ? fld("Pago factura "+r.folio,30,"L"," ") : fld("",30,"L"," ");
     const dirmail = email ? fld(email,50,"L"," ") : fld("",50,"L"," ");
-    const line =
-      fld(op,3,"L"," ") + rutCliente + cargoFld +
-      fld(rutTef(r.rut),10,"R","0") + fld(r.razon,30,"L"," ") + fld(cuenta,18,"L"," ") +
-      rutBanco + fld(monto,11,"R","0") + " " + fld(r.folio,30,"L"," ") +
-      notif + asunto + dirmail + tipoCta;
+    // Tramo común hasta la Cuenta del Beneficiario (posiciones 1–83).
+    const pre = fld(op,3,"L"," ") + rutCliente + cargoFld +
+      fld(rutTef(r.rut),10,"R","0") + fld(r.razon,30,"L"," ") + fld(cuenta,18,"L"," ");
+    // Tramo desde Monto hasta Dirección e-mail (Monto, Abono, Motivo, Notif, Asunto, e-mail).
+    const post = fld(monto,11,"R","0") + " " + fld(r.folio,30,"L"," ") + notif + asunto + dirmail;
+    // Banco de Chile (TEC): SIN "Rut Banco Beneficiario" ni "Tipo de Cuenta" → 206 caracteres.
+    // Otros bancos (TOB): CON ambos campos → 219 caracteres.
+    const line = banco.chile
+      ? (pre + post)
+      : (pre + fld(rutTef(banco.rut),10,"R","0") + post + fld(tipo||"CTD",3,"L"," "));
     lines.push(line);
   });
   return { lines, incompletos, sinCargo: !cargo };
