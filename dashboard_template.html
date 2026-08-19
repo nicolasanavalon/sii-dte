@@ -379,7 +379,7 @@ function setNC(obj){
 function rutTef(rut){ return normRut(rut).replace(/-/g,""); }   // dígitos + DV, sin puntos ni guion
 // El banco cuenta BYTES y espera ASCII: quitamos tildes/ñ y cualquier carácter no ASCII,
 // para que cada carácter sea 1 byte y el largo de la línea calce exacto.
-function ascii(s){ return String(s==null?"":s).normalize("NFD").replace(new RegExp("[\\u0300-\\u036f]","g"),"").replace(/[^\x20-\x7E]/g," "); }
+function ascii(s){ return String(s==null?"":s).normalize("NFD").replace(new RegExp("[\\u0300-\\u036f]","g"),"").replace(/[^\x20-\x7E]/g," ").replace(/\?/g," "); }
 function fld(val, len, align, fill){
   let s = ascii(val);
   if (s.length>len) s = s.slice(0,len);
