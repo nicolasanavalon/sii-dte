@@ -2,12 +2,19 @@ name: Actualizar DTE desde SII
 
 on:
   schedule:
-    - cron: "0 11 * * *"
-  workflow_dispatch: {}
+    - cron: "0 11 * * *"   # ~07:00 hora de Chile (GitHub usa UTC; puede haber atrasos de minutos)
+  workflow_dispatch: {}     # permite ejecutarlo a mano desde la pestaña Actions
+  push:
+    branches: [main]
+    paths:                  # si se sube un cambio de código, se reconstruye y publica solo
+      - "dashboard_template.html"
+      - "fetch_sii.py"
+      - "requirements.txt"
+      - ".github/workflows/update.yml"
 
 permissions:
-  contents: write
-  pages: write
+  contents: write   # para guardar los CSV y el index.html en el repo
+  pages: write      # para publicar en GitHub Pages
   id-token: write
 
 concurrency:
@@ -42,7 +49,7 @@ jobs:
           git config user.name "sii-bot"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add data index.html
-          git commit -m "Actualiza DTE" || echo "Sin cambios"
+          git commit -m "Actualiza DTE ($(TZ=America/Santiago date +%Y-%m-%d))" || echo "Sin cambios"
           git push || echo "Nada que empujar"
 
       - name: Preparar artefacto de Pages

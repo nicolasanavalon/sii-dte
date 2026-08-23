@@ -261,6 +261,13 @@
           <input type="file" id="fileTransf" accept=".xls,.xlsx" hidden>
         </div>
       </div>
+      <div class="cargobar" id="transfFiltersBar">
+        <label>Proveedor <input type="text" id="tfProv" placeholder="Nombre o RUT…" autocomplete="off"></label>
+        <label>N° Factura <input type="text" id="tfFolio" placeholder="Buscar folio…" autocomplete="off"></label>
+        <label>Fecha desde <input type="date" id="tfDesde"></label>
+        <label>Fecha hasta <input type="date" id="tfHasta"></label>
+        <button class="btn-reset" id="tfReset">Limpiar filtros</button>
+      </div>
       <div class="scroll">
         <table>
           <thead>
@@ -467,7 +474,13 @@ function addDias(iso, dias){
   d.setDate(d.getDate() + (parseInt(dias,10) || 0));
   return String(d.getDate()).padStart(2,"0") + "/" + String(d.getMonth()+1).padStart(2,"0") + "/" + d.getFullYear();
 }
-function parseFecha(s){ const m=String(s).match(/(\d{2})\/(\d{2})\/(\d{4})/); return m ? new Date(+m[3],+m[2]-1,+m[1]).getTime() : 0; }
+function parseFecha(s){
+  const m=String(s).match(/(\d{2})\/(\d{2})\/(\d{4})/);
+  if (m) return new Date(+m[3],+m[2]-1,+m[1]).getTime();
+  // Algunas transferencias quedaron guardadas como Date.toString() en vez de dd/mm/yyyy; fallback:
+  const d=new Date(s);
+  return isNaN(d) ? 0 : d.getTime();
+}
 function normFecha(s){ if(!s) return ""; s=String(s); const m=s.match(/(\d{2})\/(\d{2})\/(\d{4})/); if(m) return m[1]+"/"+m[2]+"/"+m[3]; const d=new Date(s); if(!isNaN(d)) return String(d.getDate()).padStart(2,"0")+"/"+String(d.getMonth()+1).padStart(2,"0")+"/"+d.getFullYear(); return s; }
 function normDateTime(s){ if(!s) return ""; s=String(s); const m=s.match(/(\d{2})\/(\d{2})\/(\d{4})(?:[ ,]+(\d{1,2}:\d{2}))?/); if(m) return m[1]+"/"+m[2]+"/"+m[3]+(m[4]?" "+m[4]:""); const d=new Date(s); if(!isNaN(d)) return String(d.getDate()).padStart(2,"0")+"/"+String(d.getMonth()+1).padStart(2,"0")+"/"+d.getFullYear()+" "+String(d.getHours()).padStart(2,"0")+":"+String(d.getMinutes()).padStart(2,"0"); return s; }
 function facId(r){ return r.rut + "|" + r.folio; }
@@ -652,10 +665,15 @@ rebuildFilters();
 
 // ===== Persistencia de la vista (filtros/tab/orden) — nube (compartida) + local (instantáneo) =====
 function currentTab(){ const b=document.querySelector('.viewtabs button[aria-selected="true"]'); return b?b.dataset.view:"facturas"; }
-function getView(){ return { tab:currentTab(), periodos:[...state.periodos], anios:[...state.anios], meses:[...state.meses], docs:[...state.docs], bancos:[...state.bancos], estados:[...state.estados], fpagos:[...state.fpagos], qFolio:state.qFolio, q:state.q, sortK:state.sortK, sortDir:state.sortDir }; }
+function getView(){ return { tab:currentTab(), periodos:[...state.periodos], anios:[...state.anios], meses:[...state.meses], docs:[...state.docs], bancos:[...state.bancos], estados:[...state.estados], fpagos:[...state.fpagos], qFolio:state.qFolio, q:state.q, sortK:state.sortK, sortDir:state.sortDir,
+  tfProv:tState.qProv, tfFolio:tState.qFolio, tfDesde:tState.desde, tfHasta:tState.hasta }; }
 function syncChips(){
   const q=document.getElementById("qProv"); if(q) q.value=state.q;
   const qf=document.getElementById("qFolio"); if(qf) qf.value=state.qFolio||"";
+  const tp=document.getElementById("tfProv"); if(tp) tp.value=tState.qProv||"";
+  const tf=document.getElementById("tfFolio"); if(tf) tf.value=tState.qFolio||"";
+  const td=document.getElementById("tfDesde"); if(td) td.value=tState.desde||"";
+  const th=document.getElementById("tfHasta"); if(th) th.value=tState.hasta||"";
 }
 let __applying=false;
 function applyView(v){
@@ -666,6 +684,7 @@ function applyView(v){
   setSet(state.fpagos, v.fpagos);
   state.qFolio=v.qFolio||"";
   state.q=v.q||""; state.sortK=v.sortK||"iso"; state.sortDir=v.sortDir!=null?v.sortDir:-1;
+  tState.qProv=v.tfProv||""; tState.qFolio=v.tfFolio||""; tState.desde=v.tfDesde||""; tState.hasta=v.tfHasta||"";
   rebuildFilters(); syncChips();
   if(v.tab && v.tab!=="facturas"){ const b=document.querySelector('.viewtabs button[data-view="'+v.tab+'"]'); if(b) b.click(); }
   __applying=false;
@@ -852,10 +871,32 @@ function renderProv(){
 }
 
 // ===== Transferencias =====
+const tState = { qProv:"", qFolio:"", desde:"", hasta:"" };
+function filteredTransf(arr){
+  return arr.filter(t=>{
+    if (tState.qProv){
+      const q = tState.qProv.toLowerCase();
+      const okNombre = String(t.nombre||"").toLowerCase().includes(q);
+      const okRut = normRut(t.rut).includes(normRut(tState.qProv));
+      if (!okNombre && !okRut) return false;
+    }
+    if (tState.qFolio && !String(t.folio||"").includes(tState.qFolio.trim())) return false;
+    if (tState.desde || tState.hasta){
+      const ft = parseFecha(t.fecha);
+      if (!ft) return false;
+      if (tState.desde && ft < new Date(tState.desde+"T00:00:00").getTime()) return false;
+      if (tState.hasta && ft > new Date(tState.hasta+"T23:59:59").getTime()) return false;
+    }
+    return true;
+  });
+}
 function renderTransf(){
-  const arr = Object.keys(TRANSF).map(k=>TRANSF[k]).sort((a,b)=> parseFecha(b.fecha)-parseFecha(a.fecha));
-  document.getElementById("transfcount").textContent = arr.length + " transferencias cargadas";
-  document.getElementById("transfEmpty").hidden = arr.length>0;
+  const todas = Object.keys(TRANSF).map(k=>TRANSF[k]).sort((a,b)=> parseFecha(b.fecha)-parseFecha(a.fecha));
+  const arr = filteredTransf(todas);
+  document.getElementById("transfcount").textContent = arr.length + " de " + todas.length + " transferencias";
+  const empty = document.getElementById("transfEmpty");
+  empty.hidden = arr.length>0;
+  empty.textContent = todas.length===0 ? 'Aún no cargas transferencias. Usa "Importar transferencias (Excel)".' : "Sin transferencias que coincidan con los filtros.";
   document.getElementById("transfBody").innerHTML = arr.map(t=>`
     <tr>
       <td class="mono">${esc(normFecha(t.fecha))}</td>
@@ -899,7 +940,7 @@ async function importarTransferencias(file){
       folio = folio.replace(/^\s*fact(?:ura)?\.?\s*(?:n[º°o]?\.?\s*)?/i, "").trim();
       items.push({
         numTx,
-        fecha: String(r[col["Fecha"]]||"").trim(),
+        fecha: normFecha(r[col["Fecha"]]||""),
         rut: String(r[col["Rut"]]||"").trim(),
         folio,
         nombre: String(r[col["Nombre Empresa"]]||"").trim(),
@@ -951,6 +992,19 @@ document.getElementById("fileCfg").addEventListener("change", e=>{
     } catch(err){ alert("Archivo de configuración inválido."); }
   };
   rd.readAsText(f);
+});
+
+// Filtros de Transferencias
+function onTransfFilterChange(){ renderTransf(); saveView(); }
+document.getElementById("tfProv").addEventListener("input", e=>{ tState.qProv=e.target.value; onTransfFilterChange(); });
+document.getElementById("tfFolio").addEventListener("input", e=>{ tState.qFolio=e.target.value; onTransfFilterChange(); });
+document.getElementById("tfDesde").addEventListener("change", e=>{ tState.desde=e.target.value; onTransfFilterChange(); });
+document.getElementById("tfHasta").addEventListener("change", e=>{ tState.hasta=e.target.value; onTransfFilterChange(); });
+document.getElementById("tfReset").addEventListener("click", ()=>{
+  tState.qProv=""; tState.qFolio=""; tState.desde=""; tState.hasta="";
+  document.getElementById("tfProv").value=""; document.getElementById("tfFolio").value="";
+  document.getElementById("tfDesde").value=""; document.getElementById("tfHasta").value="";
+  onTransfFilterChange();
 });
 
 // Importar transferencias
