@@ -116,8 +116,7 @@
   .toolbar { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
   .toolbar-right { display: flex; gap: 8px; margin-left: auto; }
   .paybar { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
-  .paychip { display:flex; flex-direction:column; align-items:center; justify-content:center; min-width:58px; padding:5px 8px; border-radius:8px; background:var(--panel); border:1px solid var(--line); cursor:pointer; user-select:none; line-height:1.25; }
-  .paychip:hover { border-color: var(--accent); }
+  .paychip { display:flex; flex-direction:column; align-items:center; justify-content:center; min-width:58px; padding:5px 8px; border-radius:8px; background:var(--panel); border:1px solid var(--line); line-height:1.25; }
   .paychip .pd-date { font-size:10px; font-weight:700; color:var(--ink-faint); text-transform:uppercase; letter-spacing:.03em; }
   .paychip .pd-amt { font-size:12.5px; font-weight:700; color:var(--ink); }
   .paychip.muted .pd-amt { color:var(--ink-faint); font-weight:600; }
@@ -580,17 +579,12 @@ function renderPayStrip(){
     const nc = r.tipoDoc!=="61" ? (parseInt(soloDigitos(ncMap[facId(r)]||""),10)||0) : 0;
     dias[idx[fp]].total += (signed(r)*r.total - nc);
   });
+  // Solo visualizador: sin clic, sin filtro, sin apariencia de botón.
   el.innerHTML = dias.map((d,i)=>{
     const label = DOW_ABR[d.date.getDay()]+" "+String(d.date.getDate()).padStart(2,"0");
     const cls = "paychip"+(i===0?" today":"")+(d.total===0?" muted":"");
-    return `<div class="${cls}" data-iso="${d.iso}" title="Facturas no pagadas con fecha de pago ${label}"><span class="pd-date">${i===0?"Hoy":label}</span><span class="pd-amt">$${fmt(d.total)}</span></div>`;
+    return `<div class="${cls}"><span class="pd-date">${i===0?"Hoy":label}</span><span class="pd-amt">$${fmt(d.total)}</span></div>`;
   }).join("");
-  el.querySelectorAll(".paychip").forEach(chip=> chip.addEventListener("click", ()=>{
-    setSet(state.fpagos, [chip.dataset.iso]);
-    onFilterChange();
-    const fb=document.getElementById("filterbar");
-    if (fb.hidden) document.getElementById("btnFiltros").click();
-  }));
 }
 
 function renderKPIs(rows) {
