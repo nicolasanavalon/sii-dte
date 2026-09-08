@@ -116,11 +116,14 @@
   .toolbar { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
   .toolbar-right { display: flex; gap: 8px; margin-left: auto; }
   .paybar { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
-  .paychip { display:flex; flex-direction:column; align-items:center; justify-content:center; min-width:58px; padding:5px 8px; border-radius:8px; background:var(--panel); border:1px solid var(--line); line-height:1.25; }
+  .paychip { display:flex; flex-direction:column; align-items:center; justify-content:center; min-width:58px; padding:5px 8px; border-radius:8px; background:var(--panel); border:1px solid var(--line); line-height:1.25; cursor:pointer; user-select:none; }
+  .paychip:hover { border-color: var(--accent); }
   .paychip .pd-date { font-size:10px; font-weight:700; color:var(--ink-faint); text-transform:uppercase; letter-spacing:.03em; }
   .paychip .pd-amt { font-size:12.5px; font-weight:700; color:var(--ink); }
   .paychip.muted .pd-amt { color:var(--ink-faint); font-weight:600; }
   .paychip.today { border-color: var(--accent); background: var(--accent-soft); }
+  .paychip.clearchip { border-style:dashed; border-color: var(--line-strong); }
+  .paychip.clearchip .pd-date { color: var(--accent-ink); }
   .btn-toggle { padding: 9px 14px; border: 1px solid var(--line-strong); background: var(--panel); color: var(--ink-soft); border-radius: 8px; font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; }
   .btn-toggle[aria-expanded="true"] { border-color: var(--accent); color: var(--accent-ink); }
   .scroll { max-height: 72vh; }
@@ -579,12 +582,28 @@ function renderPayStrip(){
     const nc = r.tipoDoc!=="61" ? (parseInt(soloDigitos(ncMap[facId(r)]||""),10)||0) : 0;
     dias[idx[fp]].total += (signed(r)*r.total - nc);
   });
-  // Solo visualizador: sin clic, sin filtro, sin apariencia de botón.
   el.innerHTML = dias.map((d,i)=>{
     const label = DOW_ABR[d.date.getDay()]+" "+String(d.date.getDate()).padStart(2,"0");
     const cls = "paychip"+(i===0?" today":"")+(d.total===0?" muted":"");
-    return `<div class="${cls}"><span class="pd-date">${i===0?"Hoy":label}</span><span class="pd-amt">$${fmt(d.total)}</span></div>`;
-  }).join("");
+    return `<div class="${cls}" data-iso="${d.iso}" title="Ver facturas no pagadas de ese día"><span class="pd-date">${i===0?"Hoy":label}</span><span class="pd-amt">$${fmt(d.total)}</span></div>`;
+  }).join("") + `<div class="paychip clearchip" id="payStripClear" title="Ver todas las facturas no pagadas, cualquier día"><span class="pd-date">Sin filtro</span></div>`;
+
+  // Estado = cualquiera menos "Pagada" (las 3 categorías posibles hoy en el sistema).
+  const NOT_PAGADA = ["__vacio__","NC, Revisar","Revisada, pagar"];
+  el.querySelectorAll(".paychip[data-iso]").forEach(chip=> chip.addEventListener("click", ()=>{
+    setSet(state.fpagos, [chip.dataset.iso]);
+    setSet(state.estados, NOT_PAGADA);
+    onFilterChange();
+    const fb=document.getElementById("filterbar");
+    if (fb.hidden) document.getElementById("btnFiltros").click();
+  }));
+  document.getElementById("payStripClear").addEventListener("click", ()=>{
+    state.fpagos.clear();
+    setSet(state.estados, NOT_PAGADA);
+    onFilterChange();
+    const fb=document.getElementById("filterbar");
+    if (fb.hidden) document.getElementById("btnFiltros").click();
+  });
 }
 
 function renderKPIs(rows) {
