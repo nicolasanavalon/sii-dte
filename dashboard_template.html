@@ -575,6 +575,7 @@ function renderPayStrip(){
   }
   const idx = {}; dias.forEach((d,i)=> idx[d.iso]=i);
   DATA.forEach(r=>{
+    if (r.tipoDoc==="61") return; // Notas de Crédito no son "algo que pagar"; su descuento va en la columna $ NC de la factura que corresponde.
     const f = FAC[facId(r)] || {};
     if ((f.estado||"") === "Pagada") return;
     const fp = fechaPagoISO(r);
