@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# refresco manual solicitado por el usuario el 2026-09-15 (fuerza recompilación vía push)
 """
 Descarga el Registro de Compra (DTE) desde el SII y regenera el dashboard (index.html).
 
