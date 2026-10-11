@@ -1,4 +1,4 @@
-name: Listar PDF de SUBLIMAR (temporal)
+name: Catálogo SUBLIMAR (temporal)
 
 on:
   push:
@@ -8,14 +8,22 @@ permissions:
   contents: read
 
 jobs:
-  listar:
+  catalogo:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Listar PDF
+      - run: pip install pymupdf==1.26.4 pillow==11.3.0
+      - name: Generar catálogo y miniaturas (solo lectura de OneDrive)
         env:
           MS_REFRESH_TOKEN: ${{ secrets.MS_REFRESH_TOKEN }}
-        run: python tools/listar_sublimar.py
+        run: python tools/catalogo.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: catalogo
+          path: |
+            tools/catalogo.json
+            tools/miniaturas
+          retention-days: 2
