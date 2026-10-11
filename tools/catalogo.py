@@ -15,6 +15,7 @@ import os
 import re
 import sys
 import unicodedata
+import urllib.error
 import urllib.parse
 import urllib.request
 from urllib.parse import quote
@@ -166,9 +167,21 @@ def listar_onedrive(at):
     return items
 
 
+class _SinRedireccion(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, *a, **k):
+        return None
+
+
 def descargar(at, item_id):
+    # /content responde 302 a una URL de descarga ya firmada; hay que seguirla SIN el token
+    # (si se reenvía el Authorization, el servidor de descarga responde 401).
     req = urllib.request.Request(G + "/items/%s/content" % item_id, headers={"Authorization": "Bearer " + at})
-    return urllib.request.urlopen(req, timeout=300).read()
+    try:
+        return urllib.request.build_opener(_SinRedireccion).open(req, timeout=120).read()
+    except urllib.error.HTTPError as e:
+        if e.code not in (301, 302, 303, 307, 308):
+            raise
+        return urllib.request.urlopen(e.headers["Location"], timeout=300).read()
 
 
 def miniatura(pdf_bytes, destino):
@@ -209,25 +222,32 @@ def sincronizar():
     print("OneDrive: %d PDF en %s" % (len(items), CARPETA))
     previo = cargar_previo()
     os.makedirs(MINIS, exist_ok=True)
-    archivos, nuevos, errores = [], 0, 0
+    archivos, pendientes = [], []
     for it in items:
         a = analizar(it["ruta"])
         a.update(id=it["id"], tamano=it.get("size", 0), url=it.get("webUrl"),
-                 modificado=it.get("lastModifiedDateTime"), ctag=it.get("cTag"))
-        mini = os.path.join(MINIS, it["id"] + ".webp")
+                 modificado=it.get("lastModifiedDateTime"), ctag=it.get("cTag"), mini=None, pagina_cm=None)
         ant = previo.get(it["id"])
-        if ant and ant.get("ctag") == a["ctag"] and os.path.exists(mini):
+        if ant and ant.get("ctag") == a["ctag"] and os.path.exists(os.path.join(MINIS, it["id"] + ".webp")):
             a["mini"], a["pagina_cm"] = ant.get("mini"), ant.get("pagina_cm")
         else:
-            try:
-                w, h = miniatura(descargar(at, it["id"]), mini)
-                a["mini"], a["pagina_cm"] = "miniaturas/%s.webp" % it["id"], [round(w, 1), round(h, 1)]
-                nuevos += 1
-            except Exception as e:  # PDF dañado, tiempo de espera, etc.: queda sin miniatura
-                print("  sin miniatura:", it["ruta"], "-", e, file=sys.stderr)
-                a["mini"], a["pagina_cm"] = None, None
-                errores += 1
+            pendientes.append((a, it["ruta"]))
         archivos.append(a)
+
+    def hacer(par):
+        a, ruta = par
+        try:
+            w, h = miniatura(descargar(at, a["id"]), os.path.join(MINIS, a["id"] + ".webp"))
+            a["mini"], a["pagina_cm"] = "miniaturas/%s.webp" % a["id"], [round(w, 1), round(h, 1)]
+            return True
+        except Exception as e:  # PDF dañado, tiempo de espera, etc.: queda sin miniatura
+            print("  sin miniatura:", ruta, "-", e, file=sys.stderr)
+            return False
+
+    from concurrent.futures import ThreadPoolExecutor
+    with ThreadPoolExecutor(max_workers=8) as ex:
+        res = list(ex.map(hacer, pendientes))
+    nuevos, errores = sum(res), len(res) - sum(res)
     # borra miniaturas de archivos que ya no están en OneDrive
     vigentes = {a["id"] + ".webp" for a in archivos}
     for f in os.listdir(MINIS):
