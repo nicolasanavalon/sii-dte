@@ -1,0 +1,21 @@
+name: Listar PDF de SUBLIMAR (temporal)
+
+on:
+  push:
+    branches: [claude/sublimar-listado]
+
+permissions:
+  contents: read
+
+jobs:
+  listar:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Listar PDF
+        env:
+          MS_REFRESH_TOKEN: ${{ secrets.MS_REFRESH_TOKEN }}
+        run: python tools/listar_sublimar.py
