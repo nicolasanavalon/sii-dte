@@ -30,13 +30,23 @@ def env(name):
 
 
 def money(value):
-    return "$" + f"{round(value or 0):,}".replace(",", ".")
+    value = round(value or 0)
+    return ("-" if value < 0 else "") + "$" + f"{abs(value):,}".replace(",", ".")
+
+
+def signed_money(value):
+    return ("+" if round(value) > 0 else "") + money(value)
 
 
 def pct(value):
     if value is None:
         return "—"
     return f"{value:+.1f}%".replace(".", ",")
+
+
+def compare(actual, goal):
+    variation = (actual / goal - 1) * 100 if goal else None
+    return f"{money(actual)} · Meta: {money(goal)}  {pct(variation)} · {signed_money(actual - goal)}"
 
 
 def with_retries(fn, attempts=4):
@@ -59,43 +69,30 @@ def fetch_sales():
     return with_retries(get)
 
 
+def checkpoints(d, now):
+    """Cortes de :00 (checkpoints) y :30 (telegramCheckpoints) ya cerrados, del más nuevo al más viejo."""
+    points = [
+        (c["hour"], 0, c["actual"], c["plan"])
+        for c in d.get("checkpoints") or []
+        if c.get("status") != "future" and c.get("actual") is not None and c.get("plan")
+    ] + [
+        (c["hour"], c.get("minute", 30), c["actual"], c["plan"])
+        for c in d.get("telegramCheckpoints") or []
+        if c.get("actual") is not None and c.get("plan")
+    ]
+    return sorted((p for p in points if (p[0], p[1]) <= (now.hour, now.minute)), reverse=True)
+
+
 def build_report(d):
     now = datetime.now(TZ)
-    actual = d.get("currentSales") or 0
-    plan = d.get("planSales") or 0
-    goal = d.get("dailyGoal") or 0
-    projected = d.get("projectedSales") or 0
-    vs_plan = (actual / plan - 1) * 100 if plan else None
-    proj_vs_goal = (projected / goal - 1) * 100 if goal else None
-
-    subject = f"Pulso {d.get('storeName', '')} {now:%H:%M} · {money(actual)} ({pct(vs_plan)} vs plan)"
-    lines = [
-        f"Pulso de venta · {d.get('storeName', '')} — {now:%d-%m-%Y %H:%M}",
-        "",
-        f"Venta acumulada: {money(actual)}",
-        f"Plan a esta hora: {money(plan)}  ({pct(vs_plan)})",
-        f"Proyección del día: {money(projected)}",
-        f"Meta del día: {money(goal)}  (proyección {pct(proj_vs_goal)})",
-    ]
-    if d.get("priorFinalSales"):
-        lines.append(f"Cierre día de referencia: {money(d['priorFinalSales'])}")
-
-    hours = [c for c in d.get("checkpoints") or [] if c.get("status") != "future" and (c.get("actual") or c.get("plan"))]
-    if hours:
-        lines += ["", "Por hora (acumulado real / plan):"]
-        for c in hours:
-            lines.append(f"  {c['hour']:02d}:00  {money(c.get('actual'))} / {money(c.get('plan'))}  {pct(c.get('variationPercent'))}")
-
-    top = (d.get("topProducts") or [])[:5]
-    if top:
-        lines += ["", "Top productos:"]
-        for p in top:
-            lines.append(f"  {p['units']} × {p['name']} — {money(p['sales'])}")
-
+    slot = now.replace(minute=0 if now.minute < 30 else 30)
+    lines = ["📊 Pulso de venta"]
+    for hour, minute, actual, plan in checkpoints(d, now)[:2]:
+        lines += [f"Checkpoint {hour:02d}:{minute:02d}  Acum: {compare(actual, plan)}", ""]
+    lines.append(f"Proy. {slot:%H:%M}  Real: {compare(d.get('projectedSales') or 0, d.get('dailyGoal') or 0)}")
     if not d.get("connected", True):
         lines += ["", "⚠️ La página indica que la conexión con Justo está caída."]
-    lines += ["", BASE_URL]
-    return subject, "\n".join(lines)
+    return "\n".join(lines)
 
 
 def send_telegram(body):
@@ -139,9 +136,9 @@ def main():
     if "--backup" in sys.argv and recently_sent():
         print("El envío principal ya salió; el respaldo no hace nada.")
         return
-    subject, body = build_report(fetch_sales())
+    body = build_report(fetch_sales())
     if "--dry-run" in sys.argv:
-        print(subject, body, sep="\n\n")
+        print(body)
         return
     if not send_telegram(body):
         sys.exit("Faltan los secretos TELEGRAM_BOT_TOKEN y TELEGRAM_CHAT_ID.")
