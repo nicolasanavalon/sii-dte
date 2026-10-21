@@ -92,7 +92,11 @@ def build_report(d, receipts):
     lines = ["📊 Pulso de venta"]
     for cut in (slot, slot - timedelta(minutes=30)):
         lines += [f"Checkpoint {cut:%H:%M}  Acum: {compare(actual_at(receipts, cut), plan_at(d, cut))}", ""]
-    lines.append(f"Proy. {slot:%H:%M}  Real: {compare(d.get('projectedSales') or 0, d.get('dailyGoal') or 0)}")
+    # Proyección al cierre = meta del día con la misma variación del último checkpoint.
+    goal = d.get("dailyGoal") or 0
+    actual, plan = actual_at(receipts, slot), plan_at(d, slot)
+    projected = goal * actual / plan if plan else d.get("projectedSales") or 0
+    lines.append(f"Proy. {slot:%H:%M}  Real: {compare(projected, goal)}")
     if not d.get("connected", True):
         lines += ["", "⚠️ La página indica que la conexión con Justo está caída."]
     return "\n".join(lines)
