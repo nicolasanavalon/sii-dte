@@ -60,8 +60,8 @@ def with_retries(fn, attempts=4):
             time.sleep(10 * (i + 1))
 
 
-def fetch_sales():
-    req = urllib.request.Request(BASE_URL.rstrip("/") + "/api/sales", headers={"accept": "application/json", "user-agent": "Mozilla/5.0 (pulso-report)"})
+def fetch_json(path):
+    req = urllib.request.Request(BASE_URL.rstrip("/") + path, headers={"accept": "application/json", "user-agent": "Mozilla/5.0 (pulso-report)"})
 
     def get():
         with urllib.request.urlopen(req, timeout=60) as resp:
@@ -69,26 +69,29 @@ def fetch_sales():
     return with_retries(get)
 
 
-def checkpoints(d, now):
-    """Cortes de :00 (checkpoints) y :30 (telegramCheckpoints) ya cerrados, del más nuevo al más viejo."""
-    points = [
-        (c["hour"], 0, c["actual"], c["plan"])
-        for c in d.get("checkpoints") or []
-        if c.get("status") != "future" and c.get("actual") is not None and c.get("plan")
-    ] + [
-        (c["hour"], c.get("minute", 30), c["actual"], c["plan"])
-        for c in d.get("telegramCheckpoints") or []
-        if c.get("actual") is not None and c.get("plan")
-    ]
-    return sorted((p for p in points if (p[0], p[1]) <= (now.hour, now.minute)), reverse=True)
+def plan_at(d, slot):
+    """Plan acumulado a la hora del corte; a las :30 es el promedio entre las dos horas, igual que la página."""
+    plans = {c["hour"]: c.get("plan") or 0 for c in d.get("checkpoints") or []}
+    if slot.minute == 0:
+        return plans.get(slot.hour, 0)
+    return (plans.get(slot.hour, 0) + plans.get(slot.hour + 1, plans.get(slot.hour, 0))) / 2
 
 
-def build_report(d):
+def actual_at(receipts, slot):
+    """Venta acumulada (sin propina) de las boletas emitidas antes del corte."""
+    return sum(
+        r.get("amount") or 0
+        for r in receipts
+        if datetime.fromisoformat(r["createdAt"]) < slot
+    )
+
+
+def build_report(d, receipts):
     now = datetime.now(TZ)
-    slot = now.replace(minute=0 if now.minute < 30 else 30)
+    slot = now.replace(minute=0 if now.minute < 30 else 30, second=0, microsecond=0)
     lines = ["📊 Pulso de venta"]
-    for hour, minute, actual, plan in checkpoints(d, now)[:2]:
-        lines += [f"Checkpoint {hour:02d}:{minute:02d}  Acum: {compare(actual, plan)}", ""]
+    for cut in (slot, slot - timedelta(minutes=30)):
+        lines += [f"Checkpoint {cut:%H:%M}  Acum: {compare(actual_at(receipts, cut), plan_at(d, cut))}", ""]
     lines.append(f"Proy. {slot:%H:%M}  Real: {compare(d.get('projectedSales') or 0, d.get('dailyGoal') or 0)}")
     if not d.get("connected", True):
         lines += ["", "⚠️ La página indica que la conexión con Justo está caída."]
@@ -136,7 +139,8 @@ def main():
     if "--backup" in sys.argv and recently_sent():
         print("El envío principal ya salió; el respaldo no hace nada.")
         return
-    body = build_report(fetch_sales())
+    today = datetime.now(TZ).date().isoformat()
+    body = build_report(fetch_json("/api/sales"), fetch_json(f"/api/receipts?date={today}")["rows"])
     if "--dry-run" in sys.argv:
         print(body)
         return
