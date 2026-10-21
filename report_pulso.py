@@ -1,23 +1,19 @@
 """Reporte horario de "Pulso de venta" (Platón Marina Arauco).
 
-Lee /api/sales de la página y envía un resumen por email y/o Telegram.
+Lee /api/sales de la página y envía un resumen por Telegram.
 Solo usa la librería estándar de Python.
 
-Variables de entorno (cada canal se activa si están sus datos):
-  PULSO_URL            URL base de la página (por defecto la de Platón)
-  REPORT_HOURS         rango de horas de Chile en que se envía, ej. "9-22" (vacío = siempre)
-  Email (Gmail):  SMTP_USER, SMTP_PASSWORD (contraseña de aplicación), REPORT_TO
-                  opcional SMTP_HOST (smtp.gmail.com), SMTP_PORT (465)
-  Telegram:       TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
+Variables de entorno:
+  PULSO_URL           URL base de la página (por defecto la de Platón)
+  REPORT_WINDOW       horario de Chile en que se envía, ej. "10:00-20:30" (vacío = siempre)
+  TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
 """
 import json
 import os
-import smtplib
 import sys
 import urllib.parse
 import urllib.request
 from datetime import datetime
-from email.message import EmailMessage
 from zoneinfo import ZoneInfo
 
 TZ = ZoneInfo("America/Santiago")
@@ -83,20 +79,6 @@ def build_report(d):
     return subject, "\n".join(lines)
 
 
-def send_email(subject, body):
-    user, password, to = env("SMTP_USER"), env("SMTP_PASSWORD"), env("REPORT_TO")
-    if not (user and password and to):
-        return False
-    msg = EmailMessage()
-    msg["Subject"], msg["From"], msg["To"] = subject, user, to
-    msg.set_content(body)
-    with smtplib.SMTP_SSL(env("SMTP_HOST") or "smtp.gmail.com", int(env("SMTP_PORT") or 465), timeout=60) as smtp:
-        smtp.login(user, password)
-        smtp.send_message(msg)
-    print("Email enviado a", to)
-    return True
-
-
 def send_telegram(body):
     token, chat_id = env("TELEGRAM_BOT_TOKEN"), env("TELEGRAM_CHAT_ID")
     if not (token and chat_id):
@@ -107,26 +89,24 @@ def send_telegram(body):
     return True
 
 
-def within_hours():
-    window = env("REPORT_HOURS")
+def within_window():
+    window = env("REPORT_WINDOW")
     if not window or "--force" in sys.argv:
         return True
-    start, end = (int(x) for x in window.split("-"))
-    return start <= datetime.now(TZ).hour <= end
+    start, end = (datetime.strptime(x, "%H:%M").time() for x in window.split("-"))
+    return start <= datetime.now(TZ).time() <= end
 
 
 def main():
-    if not within_hours():
+    if not within_window():
         print("Fuera del horario de reporte, no se envía nada.")
         return
     subject, body = build_report(fetch_sales())
     if "--dry-run" in sys.argv:
         print(subject, body, sep="\n\n")
         return
-    sent = send_email(subject, body)
-    sent = send_telegram(body) or sent
-    if not sent:
-        sys.exit("No hay canal configurado: define SMTP_USER/SMTP_PASSWORD/REPORT_TO o TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_ID.")
+    if not send_telegram(body):
+        sys.exit("Faltan los secretos TELEGRAM_BOT_TOKEN y TELEGRAM_CHAT_ID.")
 
 
 if __name__ == "__main__":

@@ -2,7 +2,9 @@ name: Reporte horario Pulso de venta
 
 on:
   schedule:
-    - cron: "5 * * * *"   # cada hora (UTC); el script solo envía dentro de REPORT_HOURS hora Chile
+    # A los :03 y :33 de cada hora. GitHub usa UTC: este rango cubre el horario de Chile
+    # con y sin horario de verano; el script solo envía entre 10:00 y 20:30 hora Chile.
+    - cron: "3,33 13-23,0 * * *"
   workflow_dispatch: {}   # permite probarlo a mano desde la pestaña Actions
 
 jobs:
@@ -17,10 +19,7 @@ jobs:
 
       - name: Enviar reporte
         env:
-          REPORT_HOURS: "9-22"
-          SMTP_USER: ${{ secrets.SMTP_USER }}
-          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
-          REPORT_TO: ${{ secrets.REPORT_TO }}
+          REPORT_WINDOW: "10:00-20:30"
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: python report_pulso.py ${{ github.event_name == 'workflow_dispatch' && '--force' || '' }}
