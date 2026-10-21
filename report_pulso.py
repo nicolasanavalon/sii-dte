@@ -7,13 +7,18 @@ Variables de entorno:
   PULSO_URL           URL base de la página (por defecto la de Platón)
   REPORT_WINDOW       horario de Chile en que se envía, ej. "10:00-20:30" (vacío = siempre)
   TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
+
+Con --backup (corrida de respaldo de GitHub) no envía si otra corrida del mismo
+workflow ya terminó bien en los últimos BACKUP_LOOKBACK_MIN minutos; usa
+GITHUB_TOKEN, GITHUB_REPOSITORY y GITHUB_RUN_ID que entrega GitHub Actions.
 """
 import json
 import os
 import sys
+import time
 import urllib.parse
 import urllib.request
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 TZ = ZoneInfo("America/Santiago")
@@ -34,10 +39,24 @@ def pct(value):
     return f"{value:+.1f}%".replace(".", ",")
 
 
+def with_retries(fn, attempts=4):
+    for i in range(attempts):
+        try:
+            return fn()
+        except Exception as exc:
+            if i == attempts - 1:
+                raise
+            print(f"Falló ({exc}); reintentando…")
+            time.sleep(10 * (i + 1))
+
+
 def fetch_sales():
     req = urllib.request.Request(BASE_URL.rstrip("/") + "/api/sales", headers={"accept": "application/json", "user-agent": "Mozilla/5.0 (pulso-report)"})
-    with urllib.request.urlopen(req, timeout=60) as resp:
-        return json.load(resp)
+
+    def get():
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            return json.load(resp)
+    return with_retries(get)
 
 
 def build_report(d):
@@ -84,7 +103,7 @@ def send_telegram(body):
     if not (token and chat_id):
         return False
     data = urllib.parse.urlencode({"chat_id": chat_id, "text": body, "disable_web_page_preview": "true"}).encode()
-    urllib.request.urlopen(f"https://api.telegram.org/bot{token}/sendMessage", data=data, timeout=60).read()
+    with_retries(lambda: urllib.request.urlopen(f"https://api.telegram.org/bot{token}/sendMessage", data=data, timeout=60).read())
     print("Telegram enviado")
     return True
 
@@ -97,9 +116,28 @@ def within_window():
     return start <= datetime.now(TZ).time() <= end
 
 
+def recently_sent():
+    """True si otra corrida de este workflow terminó bien hace poco (evita duplicados del respaldo)."""
+    repo, run_id, token = env("GITHUB_REPOSITORY"), env("GITHUB_RUN_ID"), env("GITHUB_TOKEN")
+    run = json.load(urllib.request.urlopen(urllib.request.Request(
+        f"https://api.github.com/repos/{repo}/actions/runs/{run_id}",
+        headers={"authorization": f"Bearer {token}", "accept": "application/vnd.github+json"}), timeout=60))
+    since = datetime.now(timezone.utc) - timedelta(minutes=int(env("BACKUP_LOOKBACK_MIN") or 20))
+    runs = json.load(urllib.request.urlopen(urllib.request.Request(
+        f"https://api.github.com/repos/{repo}/actions/workflows/{run['workflow_id']}/runs?status=success&per_page=10",
+        headers={"authorization": f"Bearer {token}", "accept": "application/vnd.github+json"}), timeout=60))["workflow_runs"]
+    return any(
+        r["id"] != run["id"] and datetime.fromisoformat(r["created_at"].replace("Z", "+00:00")) >= since
+        for r in runs
+    )
+
+
 def main():
     if not within_window():
         print("Fuera del horario de reporte, no se envía nada.")
+        return
+    if "--backup" in sys.argv and recently_sent():
+        print("El envío principal ya salió; el respaldo no hace nada.")
         return
     subject, body = build_report(fetch_sales())
     if "--dry-run" in sys.argv:

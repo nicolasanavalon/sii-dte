@@ -1,15 +1,31 @@
 name: Reporte horario Pulso de venta
 
+# Disparo principal: cron-job.org llama a este workflow (workflow_dispatch) a las :03 y :33,
+# de 10:03 a 20:03 hora Chile, porque el cron propio de GitHub suele atrasarse o saltarse.
+# Respaldo: el cron de GitHub corre 10 minutos después y solo envía si el principal no salió.
 on:
+  workflow_dispatch:
+    inputs:
+      force:
+        description: "Enviar aunque esté fuera de horario (para probar)"
+        type: boolean
+        default: false
   schedule:
-    # A los :03 y :33 de cada hora. GitHub usa UTC: este rango cubre el horario de Chile
-    # con y sin horario de verano; el script solo envía entre 10:00 y 20:30 hora Chile.
-    - cron: "3,33 13-23,0 * * *"
-  workflow_dispatch: {}   # permite probarlo a mano desde la pestaña Actions
+    # UTC; este rango cubre Chile con y sin horario de verano. El script filtra por hora Chile.
+    - cron: "13,43 13-23,0 * * *"
+
+permissions:
+  actions: read   # para que el respaldo vea si el envío principal ya salió
+  contents: read
+
+concurrency:
+  group: pulso-report
+  cancel-in-progress: false
 
 jobs:
   report:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
 
@@ -22,4 +38,8 @@ jobs:
           REPORT_WINDOW: "10:00-20:30"
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-        run: python report_pulso.py ${{ github.event_name == 'workflow_dispatch' && '--force' || '' }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: >-
+          python report_pulso.py
+          ${{ github.event_name == 'schedule' && '--backup' || '' }}
+          ${{ inputs.force && '--force' || '' }}
