@@ -7,6 +7,7 @@ Variables de entorno:
   PULSO_URL           URL base de la página (por defecto la de Platón)
   REPORT_WINDOW       horario de Chile en que se envía, ej. "10:00-20:30" (vacío = siempre)
   TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
+  TELEGRAM_CHAT_ID_EXTRA  otros chat IDs que reciben el mismo mensaje, separados por coma (opcional)
 
 Con --backup (corrida de respaldo de GitHub) no envía si otra corrida del mismo
 workflow ya terminó bien en los últimos BACKUP_LOOKBACK_MIN minutos; usa
@@ -106,9 +107,19 @@ def send_telegram(body):
     token, chat_id = env("TELEGRAM_BOT_TOKEN"), env("TELEGRAM_CHAT_ID")
     if not (token and chat_id):
         return False
-    data = urllib.parse.urlencode({"chat_id": chat_id, "text": body, "disable_web_page_preview": "true"}).encode()
-    with_retries(lambda: urllib.request.urlopen(f"https://api.telegram.org/bot{token}/sendMessage", data=data, timeout=60).read())
-    print("Telegram enviado")
+
+    def send(to):
+        data = urllib.parse.urlencode({"chat_id": to, "text": body, "disable_web_page_preview": "true"}).encode()
+        with_retries(lambda: urllib.request.urlopen(f"https://api.telegram.org/bot{token}/sendMessage", data=data, timeout=60).read())
+        print("Telegram enviado")
+
+    send(chat_id)
+    # Destinatarios adicionales: si alguno falla no se reintenta todo, para no duplicarle el mensaje al principal.
+    for extra in filter(None, (x.strip() for x in env("TELEGRAM_CHAT_ID_EXTRA").split(","))):
+        try:
+            send(extra)
+        except Exception as exc:
+            print(f"::warning::No se pudo enviar a un destinatario adicional: {exc}")
     return True
 
 
