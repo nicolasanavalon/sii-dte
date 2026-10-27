@@ -38,7 +38,7 @@ jobs:
           REPORT_WINDOW: "10:00-20:30"
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-          TELEGRAM_CHAT_ID_EXTRA: ${{ secrets.TELEGRAM_CHAT_ID_EXTRA }}
+          TELEGRAM_CHAT_ID_EXTRA: "8991687548"   # destinatarios adicionales, separados por coma
           GITHUB_TOKEN: ${{ github.token }}
         run: >-
           python report_pulso.py
