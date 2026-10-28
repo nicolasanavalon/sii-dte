@@ -1,8 +1,9 @@
-"""Reporte diario por Telegram: facturas de compra que vencen hoy y no están pagadas.
+"""Reporte diario por Telegram: facturas de compra que vencen hoy y mañana y no están pagadas.
 
 Usa la misma lógica que la franja "Hoy" del dashboard (dashboard_template.html):
   fecha de pago = fecha del documento + días de pago (de la factura o, si no, del proveedor),
-  excluye Notas de Crédito y facturas con estado "Pagada", y descuenta la NC manual.
+  excluye Notas de Crédito, facturas con estado "Pagada" y las sin días de pago (> 0),
+  y descuenta la NC manual.
 Lee los CSV de data/ (los actualiza update.yml) y la configuración guardada en Google Sheets.
 
 Variables de entorno: TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID; con --backup no envía si
@@ -72,7 +73,9 @@ def vencen(rows, cloud, dia):
         fid = f"{r['rut']}|{r['folio']}"
         if r["tipo"] == "61" or (fac.get(fid) or {}).get("estado") == "Pagada":
             continue
-        if r["fecha"] + timedelta(days=dias_pago(r, prov, fac)) != dia:
+        dias = dias_pago(r, prov, fac)
+        # Solo facturas con días de pago configurados (> 0); las de contado o sin configurar no van.
+        if dias <= 0 or r["fecha"] + timedelta(days=dias) != dia:
             continue
         descuento = int("".join(ch for ch in str(nc.get(fid, "")) if ch.isdigit()) or 0)
         p = por_prov[r["razon"] or r["rut"]]
@@ -81,15 +84,21 @@ def vencen(rows, cloud, dia):
     return sorted(por_prov.items(), key=lambda kv: -kv[1]["monto"])
 
 
-def build_report(items, dia):
-    lines = [f"💸 Pagos que vencen hoy · {DOW[dia.weekday()]} {dia:%d-%m}", ""]
+def section(titulo, items, dia):
+    lines = [f"{titulo} · {DOW[dia.weekday()]} {dia:%d-%m}"]
     if not items:
-        lines.append("No hay facturas por pagar que venzan hoy.")
-        return "\n".join(lines)
+        return lines + ["Sin facturas por pagar."]
     for razon, p in items:
         n = p["facturas"]
         lines.append(f"• {razon} — {money(p['monto'])}" + (f" ({n} facturas)" if n > 1 else ""))
-    lines += ["", f"Total: {money(sum(p['monto'] for _, p in items))}"]
+    return lines + [f"Total: {money(sum(p['monto'] for _, p in items))}"]
+
+
+def build_report(rows, cloud, hoy):
+    manana = hoy + timedelta(days=1)
+    lines = ["💸 Pagos por vencer", ""]
+    lines += section("Hoy", vencen(rows, cloud, hoy), hoy)
+    lines += [""] + section("Mañana", vencen(rows, cloud, manana), manana)
     return "\n".join(lines)
 
 
@@ -102,8 +111,11 @@ def main():
         if recently_sent():
             print("El envío principal ya salió; el respaldo no hace nada.")
             return
-    dia = datetime.now(TZ).date()
-    body = build_report(vencen(load_rows(), load_cloud(), dia), dia)
+    # --fecha AAAA-MM-DD simula otro día (para probar); el mensaje lo indica.
+    fecha = next((a.split("=", 1)[1] for a in sys.argv if a.startswith("--fecha=") and a.split("=", 1)[1]), "")
+    body = build_report(load_rows(), load_cloud(), date.fromisoformat(fecha) if fecha else datetime.now(TZ).date())
+    if fecha:
+        body = f"🧪 Prueba con fecha {fecha}\n\n{body}"
     if "--dry-run" in sys.argv:
         print(body)
         return
