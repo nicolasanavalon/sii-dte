@@ -15,7 +15,7 @@ on:
     - cron: "13,43 13-23,0 * * *"
 
 permissions:
-  actions: read   # para que el respaldo vea si el envío principal ya salió
+  actions: write  # el respaldo revisa corridas anteriores; a las 08:03 dispara el reporte DTE
   contents: read
 
 concurrency:
@@ -28,6 +28,16 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
+
+      # El disparo de cron-job.org de las 08:03 hora Chile lanza el reporte diario de pagos DTE.
+      - name: Lanzar reporte DTE de las 08:00
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ "$(TZ=America/Santiago date +%H)" = "08" ] && [ "$(TZ=America/Santiago date +%M)" -lt 30 ]; then
+            gh workflow run dte_report.yml --ref main
+          fi
 
       - uses: actions/setup-python@v5
         with:
