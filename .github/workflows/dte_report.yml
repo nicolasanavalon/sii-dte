@@ -1,0 +1,36 @@
+name: Reporte diario pagos DTE
+
+# Disparo principal: cron-job.org llama a este workflow (workflow_dispatch) a las 08:00 hora Chile.
+# Respaldo: el cron de GitHub corre a las 08:15 y solo envía si el principal no salió.
+on:
+  workflow_dispatch: {}
+  schedule:
+    # UTC; cubre las 08:15 de Chile con y sin horario de verano. El script filtra por hora Chile.
+    - cron: "15 11,12 * * *"
+
+permissions:
+  actions: read   # para que el respaldo vea si el envío principal ya salió
+  contents: read
+
+concurrency:
+  group: dte-report
+  cancel-in-progress: false
+
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Enviar reporte
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          BACKUP_LOOKBACK_MIN: "30"
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python report_dte.py ${{ github.event_name == 'schedule' && '--backup' || '' }}
