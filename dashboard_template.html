@@ -96,6 +96,7 @@
   .viewtabs { display: flex; gap: 8px; flex-wrap: wrap; }
   .viewtabs button { padding: 9px 16px; border: 1px solid var(--line-strong); background: var(--panel); color: var(--ink-soft); border-radius: 8px; font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; }
   .credbadge { display:inline-block; margin-left:7px; min-width:18px; padding:0 6px; border-radius:9px; background:var(--crit); color:#fff; font-size:11px; line-height:18px; text-align:center; }
+  #viewCredito th, #viewCredito td { padding-left:8px; padding-right:8px; }
   .credbar { height:8px; border-radius:4px; background:var(--line); overflow:hidden; min-width:110px; }
   .credbar > i { display:block; height:100%; background:var(--accent); }
   tr.credalert td { background:var(--crit-soft); }
@@ -236,12 +237,11 @@
           <thead>
             <tr>
               <th>Proveedor</th>
-              <th class="n">% ocupación</th>
-              <th></th>
+              <th class="n">% ocupa</th>
               <th class="n">Disponible $</th>
               <th class="n">Crédito máx. $</th>
               <th class="n">Crédito usado $</th>
-              <th class="n">N° facturas impagas</th>
+              <th class="n">Fact. impagas</th>
             </tr>
           </thead>
           <tbody id="credBody"></tbody>
@@ -966,13 +966,12 @@ function renderCredito(){
     return `<tr class="${al?"credalert":""}">
       <td class="name">${esc(o.razon)}</td>
       <td class="n credpct">${(Math.round(o.pct*10)/10).toLocaleString("es-CL")}%${al?" ⚠":""}</td>
-      <td><div class="credbar"><i style="width:${Math.min(100,o.pct)}%"></i></div></td>
       <td class="n">${o.max-o.usado<0?"-":""}$${fmt(Math.abs(o.max-o.usado))}</td>
       <td class="n">$${fmt(o.max)}</td>
       <td class="n">$${fmt(o.usado)}</td>
       <td class="n">${o.n}</td>
     </tr>`;
-  }).join("") : '<tr><td colspan="7" style="color:var(--ink-faint)">Ningún proveedor tiene crédito máximo definido todavía.</td></tr>';
+  }).join("") : '<tr><td colspan="6" style="color:var(--ink-faint)">Ningún proveedor tiene crédito máximo definido todavía.</td></tr>';
 }
 function renderProv(){
   const arr = aggProveedores();
