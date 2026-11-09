@@ -236,11 +236,11 @@
           <thead>
             <tr>
               <th>Proveedor</th>
-              <th class="n">Crédito máx. $</th>
-              <th class="n">Crédito usado $</th>
-              <th class="n">Disponible $</th>
               <th class="n">% ocupación</th>
               <th></th>
+              <th class="n">Disponible $</th>
+              <th class="n">Crédito máx. $</th>
+              <th class="n">Crédito usado $</th>
               <th class="n">N° facturas impagas</th>
             </tr>
           </thead>
@@ -965,11 +965,11 @@ function renderCredito(){
     const al = o.pct >= CRED_ALERTA;
     return `<tr class="${al?"credalert":""}">
       <td class="name">${esc(o.razon)}</td>
-      <td class="n">$${fmt(o.max)}</td>
-      <td class="n">$${fmt(o.usado)}</td>
-      <td class="n">${o.max-o.usado<0?"-":""}$${fmt(Math.abs(o.max-o.usado))}</td>
       <td class="n credpct">${(Math.round(o.pct*10)/10).toLocaleString("es-CL")}%${al?" ⚠":""}</td>
       <td><div class="credbar"><i style="width:${Math.min(100,o.pct)}%"></i></div></td>
+      <td class="n">${o.max-o.usado<0?"-":""}$${fmt(Math.abs(o.max-o.usado))}</td>
+      <td class="n">$${fmt(o.max)}</td>
+      <td class="n">$${fmt(o.usado)}</td>
       <td class="n">${o.n}</td>
     </tr>`;
   }).join("") : '<tr><td colspan="7" style="color:var(--ink-faint)">Ningún proveedor tiene crédito máximo definido todavía.</td></tr>';
