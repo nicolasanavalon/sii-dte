@@ -95,6 +95,12 @@
 
   .viewtabs { display: flex; gap: 8px; flex-wrap: wrap; }
   .viewtabs button { padding: 9px 16px; border: 1px solid var(--line-strong); background: var(--panel); color: var(--ink-soft); border-radius: 8px; font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; }
+  .credbadge { display:inline-block; margin-left:7px; min-width:18px; padding:0 6px; border-radius:9px; background:var(--crit); color:#fff; font-size:11px; line-height:18px; text-align:center; }
+  .credbar { height:8px; border-radius:4px; background:var(--line); overflow:hidden; min-width:110px; }
+  .credbar > i { display:block; height:100%; background:var(--accent); }
+  tr.credalert td { background:var(--crit-soft); }
+  tr.credalert .credpct { color:var(--crit); font-weight:700; }
+  tr.credalert .credbar > i { background:var(--crit); }
   .viewtabs button[aria-selected="true"] { background: var(--accent); color: #fff; border-color: var(--accent); }
   .prov-input { width: 110px; padding: 6px 8px; font: inherit; font-size: 13px; background: var(--paper); border: 1px solid var(--line-strong); border-radius: 6px; color: var(--ink); text-align: right; font-variant-numeric: tabular-nums; }
   .prov-input:focus-visible, .cell-input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
@@ -150,6 +156,7 @@
 <main>
   <div class="viewtabs">
     <button data-view="facturas" aria-selected="true">Facturas</button>
+    <button data-view="credito" aria-selected="false">Status crédito<span id="credBadge" class="credbadge" hidden></span></button>
     <button data-view="proveedores" aria-selected="false">Proveedores · días de pago</button>
     <button data-view="transferencias" aria-selected="false">Transferencias</button>
   </div>
@@ -215,6 +222,36 @@
     aceptada que calza por <b>RUT + N° de factura</b>; en blanco si aún no hay pago. <b>Estado</b> lo escribes tú. Las Notas de Crédito van en rojo.
   </p>
   </div><!-- /viewFacturas -->
+
+  <div id="viewCredito" hidden>
+    <section class="card tablewrap">
+      <div class="tablebar">
+        <div>
+          <h2>Status crédito por proveedor</h2>
+          <span class="rowcount" id="credcount"></span>
+        </div>
+      </div>
+      <div class="scroll">
+        <table>
+          <thead>
+            <tr>
+              <th>Proveedor</th>
+              <th class="n">Crédito máx. $</th>
+              <th class="n">Crédito usado $</th>
+              <th class="n">Disponible $</th>
+              <th class="n">% ocupación</th>
+              <th></th>
+              <th class="n">N° facturas impagas</th>
+            </tr>
+          </thead>
+          <tbody id="credBody"></tbody>
+        </table>
+      </div>
+    </section>
+    <p class="note">
+      Aparecen los proveedores que tienen <b>Crédito máx.</b> definido en la pestaña Proveedores. <b>Crédito usado</b> = suma de las facturas que no están en estado <b>Pagada</b> (menos el $ NC que hayas anotado). Desde <b>80%</b> de ocupación se marca en rojo. Ordenado del más al menos ocupado.
+    </p>
+  </div>
 
   <div id="viewProveedores" hidden>
     <section class="card tablewrap">
@@ -654,11 +691,11 @@ function renderTable(rows) {
     const cell = document.querySelector('.fac-fpago[data-id="'+CSS.escape(id)+'"]');
     if (cell && r) cell.textContent = addDias(r.iso, diasEfectivos(r));
     saveFactura(id);
-    renderPayStrip();
+    renderPayStrip(); renderCredito();
   }));
   document.querySelectorAll("#tbody .fac-estado").forEach(inp=> inp.addEventListener("change", e=>{
     const id=e.target.dataset.id, v=e.target.value; if(!FAC[id]) FAC[id]={}; if(v==="") delete FAC[id].estado; else FAC[id].estado=v; saveFactura(id);
-    renderPayStrip();
+    renderPayStrip(); renderCredito();
   }));
   document.querySelectorAll("#tbody .fac-nc").forEach(inp=>{
     // Guardamos MIENTRAS se escribe (input), no solo al salir del campo (change): así el valor
@@ -666,7 +703,7 @@ function renderTable(rows) {
     const guardarNC = (e)=>{
       const id=e.target.dataset.id, v=soloDigitos(e.target.value);
       const m=getNC(); if(v==="") delete m[id]; else m[id]=v; setNC(m);
-      renderPayStrip();
+      renderPayStrip(); renderCredito();
     };
     inp.addEventListener("input", e=>{ e.target.value = fmtMiles(e.target.value); guardarNC(e); });
     inp.addEventListener("change", e=>{ guardarNC(e); toast("Guardado ✓"); });
@@ -678,7 +715,7 @@ function renderTable(rows) {
   });
 }
 
-function render(){ const rows = filtered(); renderKPIs(rows); renderTable(rows); renderPayStrip(); }
+function render(){ const rows = filtered(); renderKPIs(rows); renderTable(rows); renderPayStrip(); renderCredito(); }
 
 // ===== Filtros dinámicos, facetados estilo Excel =====
 // Cada filtro muestra solo los valores presentes en las filas que pasan LOS DEMÁS filtros,
@@ -893,6 +930,50 @@ function aggProveedores(){
   });
   return [...m.values()].sort((a,b)=> b.total - a.total);
 }
+const CRED_ALERTA = 80;
+function calcCredito(){
+  const ncMap = getNC(); const uso = {};
+  DATA.forEach(r=>{
+    if (r.tipoDoc==="61") return;
+    const f = FAC[facId(r)] || {};
+    if ((f.estado||"") === "Pagada") return;
+    const nc = parseInt(soloDigitos(ncMap[facId(r)]||""),10)||0;
+    const k = r.rut; if (!uso[k]) uso[k] = { usado:0, n:0, razon:r.razon };
+    uso[k].usado += r.total - nc; uso[k].n++;
+  });
+  const out = [];
+  Object.keys(CFG).forEach(rut=>{
+    if (rut.startsWith("__")) return;
+    const max = parseInt(soloDigitos((CFG[rut]||{}).credito||""),10)||0;
+    if (!max) return;
+    const u = uso[rut] || { usado:0, n:0 };
+    const razon = u.razon || (DATA.find(r=>r.rut===rut)||{}).razon || rut;
+    out.push({ rut, razon, max, usado:u.usado, n:u.n, pct: u.usado/max*100 });
+  });
+  return out.sort((a,b)=> b.pct - a.pct);
+}
+function renderCredito(){
+  const arr = calcCredito();
+  const alertas = arr.filter(o=> o.pct >= CRED_ALERTA).length;
+  const bd = document.getElementById("credBadge");
+  if (bd){ bd.hidden = !alertas; bd.textContent = alertas; }
+  const cc = document.getElementById("credcount");
+  if (cc) cc.textContent = arr.length + " proveedores con crédito · " + alertas + " en alerta (≥" + CRED_ALERTA + "%)";
+  const body = document.getElementById("credBody");
+  if (!body) return;
+  body.innerHTML = arr.length ? arr.map(o=>{
+    const al = o.pct >= CRED_ALERTA;
+    return `<tr class="${al?"credalert":""}">
+      <td class="name">${esc(o.razon)}</td>
+      <td class="n">$${fmt(o.max)}</td>
+      <td class="n">$${fmt(o.usado)}</td>
+      <td class="n">${o.max-o.usado<0?"-":""}$${fmt(Math.abs(o.max-o.usado))}</td>
+      <td class="n credpct">${(Math.round(o.pct*10)/10).toLocaleString("es-CL")}%${al?" ⚠":""}</td>
+      <td><div class="credbar"><i style="width:${Math.min(100,o.pct)}%"></i></div></td>
+      <td class="n">${o.n}</td>
+    </tr>`;
+  }).join("") : '<tr><td colspan="7" style="color:var(--ink-faint)">Ningún proveedor tiene crédito máximo definido todavía.</td></tr>';
+}
 function renderProv(){
   const arr = aggProveedores();
   const bank = getBank();
@@ -1034,8 +1115,10 @@ document.querySelectorAll(".viewtabs button").forEach(b=> b.addEventListener("cl
   document.querySelectorAll(".viewtabs button").forEach(x=> x.setAttribute("aria-selected", x===b));
   document.getElementById("viewFacturas").hidden = v!=="facturas";
   document.getElementById("viewProveedores").hidden = v!=="proveedores";
+  document.getElementById("viewCredito").hidden = v!=="credito";
   document.getElementById("viewTransferencias").hidden = v!=="transferencias";
   saveView();
+  if (v==="credito") { renderCredito(); await loadCfgRemote(); renderCredito(); }
   if (v==="proveedores") { renderProv(); setProvStatus("Cargando…"); await loadCfgRemote(); renderProv(); if (cfgLoaded) setProvStatus(""); }
   if (v==="transferencias") { renderTransf(); setTransfStatus("Cargando…"); await loadCfgRemote(); renderTransf(); if (cfgLoaded) setTransfStatus(""); }
 }));
