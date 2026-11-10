@@ -341,6 +341,26 @@ def mapear_onedrive(folios_set):
     print("OneDrive: %d facturas con imagen (de %d)." % (len(mapping), len(folios_set)))
     return mapping
 
+IMG_CACHE = "data/imagenes.json"
+
+def mapear_con_cache(folios_set):
+    """Mapea OneDrive; si falla (token vencido, error de red), conserva las últimas imágenes conocidas."""
+    prev = {}
+    try:
+        prev = json.load(open(IMG_CACHE, encoding="utf-8"))
+    except Exception:
+        pass
+    nuevo = mapear_onedrive(folios_set)
+    if not nuevo:
+        print("OneDrive: ¡sin resultados! Se conservan las %d imágenes previas (revisar MS_REFRESH_TOKEN)." % len(prev), file=sys.stderr)
+        return {f: u for f, u in prev.items() if f in folios_set} or prev
+    merged = dict(prev); merged.update(nuevo)
+    try:
+        json.dump(merged, open(IMG_CACHE, "w", encoding="utf-8"), ensure_ascii=False)
+    except Exception:
+        pass
+    return merged
+
 def folios_de(data):
     fol = set()
     for csv in data.values():
@@ -377,7 +397,7 @@ def main():
         data = cargar_csv_guardados()
         if not data:
             raise SystemExit("No hay CSV en data/. Corre sin --build-only para bajar del SII primero.")
-        construir_html(data, rut_display, mapear_onedrive(folios_de(data)))
+        construir_html(data, rut_display, mapear_con_cache(folios_de(data)))
         return
 
     clave = os.environ.get("SII_CLAVE", "")
@@ -391,7 +411,7 @@ def main():
     guardar_csv(resultados)
     # Combina lo recién bajado con lo previamente guardado (para conservar meses anteriores)
     data = cargar_csv_guardados()
-    construir_html(data, rut_display, mapear_onedrive(folios_de(data)))
+    construir_html(data, rut_display, mapear_con_cache(folios_de(data)))
 
 
 if __name__ == "__main__":
