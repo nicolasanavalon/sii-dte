@@ -1,0 +1,71 @@
+name: "Correo: sincronizar"
+
+# Cada 30 minutos: trae correos nuevos de Zoho, los resume con Claude y publica la página cifrada
+# en GitHub Pages (https://USUARIO.github.io/REPO/correo/). Si no hay correos nuevos, no publica nada.
+on:
+  schedule:
+    - cron: "7,37 * * * *"   # GitHub puede atrasarlo algunos minutos
+  workflow_dispatch:
+    inputs:
+      forzar:
+        description: "Republicar la página aunque no haya correos nuevos"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Mismo grupo que la publicación del DTE: así nunca se pisan al publicar en Pages.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    environment:
+      name: github-pages
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Instalar dependencias
+        run: pip install -r correo/requirements.txt
+
+      - name: Sincronizar y resumir
+        id: sync
+        env:
+          CORREO_CLAVE: ${{ secrets.CORREO_CLAVE }}
+          ZOHO_CLIENT_ID: ${{ secrets.ZOHO_CLIENT_ID }}
+          ZOHO_CLIENT_SECRET: ${{ secrets.ZOHO_CLIENT_SECRET }}
+          ZOHO_REFRESH_TOKEN: ${{ secrets.ZOHO_REFRESH_TOKEN }}
+          ZOHO_DC: ${{ vars.ZOHO_DC }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          CORREO_MODELO: ${{ vars.CORREO_MODELO }}
+          CORREO_DIAS_INICIALES: ${{ vars.CORREO_DIAS_INICIALES }}
+          CORREO_MAX_POR_CORRIDA: ${{ vars.CORREO_MAX_POR_CORRIDA }}
+          CORREO_URL: ${{ vars.CORREO_URL || format('https://{0}.github.io/{1}/correo/', github.repository_owner, github.event.repository.name) }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python correo/sync.py ${{ inputs.forzar && '--forzar' || '' }}
+
+      - name: Armar el sitio (DTE + correo)
+        if: steps.sync.outputs.cambio == 'true' || inputs.forzar
+        run: |
+          mkdir -p public/correo
+          cp index.html public/index.html
+          cp correo/index.html public/correo/index.html
+
+      - uses: actions/upload-pages-artifact@v3
+        if: steps.sync.outputs.cambio == 'true' || inputs.forzar
+        with:
+          path: public
+
+      - uses: actions/deploy-pages@v4
+        if: steps.sync.outputs.cambio == 'true' || inputs.forzar

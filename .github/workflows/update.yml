@@ -53,9 +53,19 @@ jobs:
           git push || echo "Nada que empujar"
 
       - name: Preparar artefacto de Pages
+        env:
+          CORREO_URL: ${{ vars.CORREO_URL || format('https://{0}.github.io/{1}/correo/', github.repository_owner, github.event.repository.name) }}
         run: |
-          mkdir -p public
+          mkdir -p public/correo
           cp index.html public/index.html
+          # Conserva la página de correo ya publicada (Pages reemplaza el sitio completo en cada publicación).
+          code=$(curl -sS -L --retry 3 -o public/correo/index.html -w "%{http_code}" "${CORREO_URL}?nocache=$(date +%s)" || echo 000)
+          if [ "$code" = "404" ]; then
+            rm -rf public/correo   # aún no existe la página de correo
+          elif [ "$code" != "200" ]; then
+            echo "::error::No pude leer la página de correo publicada (HTTP $code); no publico para no borrarla."
+            exit 1
+          fi
 
       - uses: actions/upload-pages-artifact@v3
         with:

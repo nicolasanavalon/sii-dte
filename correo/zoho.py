@@ -1,0 +1,162 @@
+"""Cliente mínimo de la API de Zoho Mail (solo lectura).
+
+Usa OAuth con un "refresh token" que se obtiene una sola vez (ver README, paso "Conectar Zoho").
+Documentación: https://www.zoho.com/mail/help/api/
+"""
+import html
+import json
+import os
+import re
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
+from email.utils import getaddresses
+from html.parser import HTMLParser
+
+SCOPES = "ZohoMail.accounts.READ,ZohoMail.folders.READ,ZohoMail.messages.READ"
+
+
+class ZohoError(RuntimeError):
+    pass
+
+
+def _dc():
+    # Centro de datos de tu cuenta: com (por defecto), eu, in, com.au, jp, ca, sa, com.cn
+    return os.environ.get("ZOHO_DC", "com").strip() or "com"
+
+
+def _post_token(params: dict) -> dict:
+    url = f"https://accounts.zoho.{_dc()}/oauth/v2/token"
+    req = urllib.request.Request(url, data=urllib.parse.urlencode(params).encode(), method="POST")
+    with urllib.request.urlopen(req, timeout=40) as r:
+        data = json.load(r)
+    if "error" in data:
+        raise ZohoError(f"Zoho rechazó la autorización: {data['error']}")
+    return data
+
+
+def canjear_codigo(client_id, client_secret, codigo) -> str:
+    """Canjea el código de un solo uso (Self Client) por un refresh token permanente."""
+    data = _post_token({
+        "grant_type": "authorization_code", "client_id": client_id,
+        "client_secret": client_secret, "code": codigo.strip(),
+    })
+    if "refresh_token" not in data:
+        raise ZohoError("Zoho no entregó refresh_token (¿el código ya se usó o venció?).")
+    return data["refresh_token"]
+
+
+class Zoho:
+    def __init__(self, client_id, client_secret, refresh_token):
+        self.client_id, self.client_secret, self.refresh_token = client_id, client_secret, refresh_token
+        self._token, self._vence = None, 0
+        self.base = f"https://mail.zoho.{_dc()}/api"
+
+    def _access(self):
+        if not self._token or time.time() > self._vence - 60:
+            data = _post_token({
+                "grant_type": "refresh_token", "client_id": self.client_id,
+                "client_secret": self.client_secret, "refresh_token": self.refresh_token,
+            })
+            self._token = data["access_token"]
+            self._vence = time.time() + int(data.get("expires_in", 3600))
+        return self._token
+
+    def get(self, ruta, **params):
+        q = urllib.parse.urlencode({k: v for k, v in params.items() if v is not None})
+        url = f"{self.base}{ruta}" + (f"?{q}" if q else "")
+        for intento in range(4):
+            req = urllib.request.Request(url, headers={
+                "Authorization": f"Zoho-oauthtoken {self._access()}", "Accept": "application/json"})
+            try:
+                with urllib.request.urlopen(req, timeout=60) as r:
+                    return json.load(r)
+            except urllib.error.HTTPError as e:
+                cuerpo = e.read().decode("utf-8", "replace")[:500]
+                if e.code in (429, 500, 502, 503, 504) and intento < 3:
+                    time.sleep(2 ** intento * 3)
+                    continue
+                if e.code in (401, 403):
+                    raise ZohoError(
+                        f"Zoho negó el acceso ({e.code}) a {ruta}. Si dice que tu plan no lo permite, "
+                        f"la API no está disponible en el plan gratis y hay que pasar a Mail Lite. "
+                        f"Detalle: {cuerpo}") from None
+                raise ZohoError(f"Error {e.code} en {ruta}: {cuerpo}") from None
+            except urllib.error.URLError:
+                if intento < 3:
+                    time.sleep(2 ** intento * 3)
+                    continue
+                raise
+
+    # --- endpoints ---
+    def cuenta(self):
+        datos = self.get("/accounts")["data"]
+        if not datos:
+            raise ZohoError("La API no devolvió ninguna cuenta de correo.")
+        c = datos[0]
+        correos = {c.get("primaryEmailAddress", "")} | {
+            (a.get("mailId") or "") for a in c.get("emailAddress", []) if isinstance(a, dict)}
+        if c.get("mailboxAddress"):
+            correos.add(c["mailboxAddress"])
+        return str(c["accountId"]), {x.lower() for x in correos if x}
+
+    def carpetas(self, account_id):
+        return self.get(f"/accounts/{account_id}/folders")["data"]
+
+    def listar(self, account_id, folder_id, start=1, limit=100):
+        return self.get(f"/accounts/{account_id}/messages/view", folderId=folder_id,
+                        start=start, limit=limit, sortorder="false", includeto="true").get("data", [])
+
+    def contenido(self, account_id, folder_id, message_id):
+        d = self.get(f"/accounts/{account_id}/folders/{folder_id}/messages/{message_id}/content")
+        return (d.get("data") or {}).get("content", "")
+
+
+# --- utilidades de texto ---
+
+class _Texto(HTMLParser):
+    BLOQUES = {"p", "div", "br", "tr", "li", "h1", "h2", "h3", "h4", "table", "blockquote"}
+
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.partes, self._saltar = [], 0
+
+    def handle_starttag(self, tag, attrs):
+        if tag in ("style", "script", "head"):
+            self._saltar += 1
+        elif tag in self.BLOQUES:
+            self.partes.append("\n")
+
+    def handle_endtag(self, tag):
+        if tag in ("style", "script", "head"):
+            self._saltar = max(0, self._saltar - 1)
+        elif tag in self.BLOQUES:
+            self.partes.append("\n")
+
+    def handle_data(self, data):
+        if not self._saltar:
+            self.partes.append(data)
+
+
+def html_a_texto(contenido: str) -> str:
+    p = _Texto()
+    try:
+        p.feed(contenido or "")
+        texto = "".join(p.partes)
+    except Exception:
+        texto = re.sub(r"<[^>]+>", " ", contenido or "")
+    texto = texto.replace("\xa0", " ")
+    texto = re.sub(r"[ \t]+", " ", texto)
+    texto = re.sub(r"\n\s*\n\s*\n+", "\n\n", texto)
+    return texto.strip()
+
+
+def direcciones(campo) -> list:
+    """'"Juan" <juan@x.cl>, ana@y.cl' -> [('Juan','juan@x.cl'), ('','ana@y.cl')]"""
+    if not campo:
+        return []
+    if isinstance(campo, list):
+        campo = ",".join(str(x) for x in campo)
+    campo = html.unescape(str(campo))
+    return [(n.strip().strip('"'), a.strip().lower()) for n, a in getaddresses([campo]) if "@" in a]

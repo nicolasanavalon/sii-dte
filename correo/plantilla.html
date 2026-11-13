@@ -1,0 +1,277 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>Mi correo</title>
+<style>
+:root{
+  --bg:#f6f5f2;--panel:#fff;--ink:#1d1d1b;--muted:#6b6a65;--line:#e4e2dc;--soft:#efede8;
+  --accent:#2f5d50;--accent-soft:#e3eee9;--alta:#b3401f;--alta-soft:#fbe9e2;--media:#8a6a12;--media-soft:#f7efd8;
+  --baja:#7a7a74;--baja-soft:#eeeeea;--radius:12px;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --bg:#151514;--panel:#1e1e1c;--ink:#ecebe6;--muted:#a09e97;--line:#33322f;--soft:#262624;
+  --accent:#8cc5b2;--accent-soft:#1f3530;--alta:#f08a68;--alta-soft:#3a2219;--media:#e0c070;--media-soft:#352d17;
+  --baja:#a09e97;--baja-soft:#2a2a28;}}
+:root[data-theme="dark"]{
+  --bg:#151514;--panel:#1e1e1c;--ink:#ecebe6;--muted:#a09e97;--line:#33322f;--soft:#262624;
+  --accent:#8cc5b2;--accent-soft:#1f3530;--alta:#f08a68;--alta-soft:#3a2219;--media:#e0c070;--media-soft:#352d17;
+  --baja:#a09e97;--baja-soft:#2a2a28;}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+button,input{font:inherit;color:inherit}
+a{color:var(--accent)}
+.wrap{max-width:1080px;margin:0 auto;padding:16px}
+h1{font-size:20px;margin:0}
+h2{font-size:16px;margin:0 0 10px}
+.muted{color:var(--muted)}
+.small{font-size:13px}
+/* bloqueo */
+#bloqueo{min-height:100vh;display:grid;place-items:center;padding:16px}
+#bloqueo form{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:28px;width:100%;max-width:360px}
+#bloqueo input[type=password]{width:100%;padding:11px 12px;border:1px solid var(--line);border-radius:8px;background:var(--bg);margin:14px 0 10px}
+.btn{background:var(--accent);color:var(--panel);border:0;border-radius:8px;padding:10px 14px;cursor:pointer;font-weight:600}
+.btn.full{width:100%}
+#error{color:var(--alta);min-height:20px;margin:6px 0 0}
+/* cabecera */
+header{display:flex;flex-wrap:wrap;gap:10px 16px;align-items:center;justify-content:space-between;margin-bottom:14px}
+.tabs{display:flex;gap:6px;flex-wrap:wrap}
+.tab{border:1px solid var(--line);background:var(--panel);border-radius:999px;padding:6px 14px;cursor:pointer}
+.tab[aria-selected="true"]{background:var(--accent);color:var(--panel);border-color:var(--accent)}
+.buscar{flex:1 1 220px;max-width:360px;padding:8px 12px;border:1px solid var(--line);border-radius:999px;background:var(--panel)}
+/* tarjetas */
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:14px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:16px;min-width:0}
+.item{padding:10px 0;border-top:1px solid var(--line)}
+.item:first-of-type{border-top:0;padding-top:0}
+.link{cursor:pointer}
+.link:hover .tit{text-decoration:underline}
+.tit{font-weight:600;overflow-wrap:anywhere}
+.chip{display:inline-block;font-size:12px;padding:1px 8px;border-radius:999px;margin-right:4px;white-space:nowrap}
+.chip.alta{background:var(--alta-soft);color:var(--alta)}
+.chip.media{background:var(--media-soft);color:var(--media)}
+.chip.baja{background:var(--baja-soft);color:var(--baja)}
+.chip.ok{background:var(--accent-soft);color:var(--accent)}
+.fecha{font-variant-numeric:tabular-nums}
+.vacio{color:var(--muted);font-style:italic}
+/* listas */
+.lista{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius)}
+.fila{padding:12px 16px;border-top:1px solid var(--line);cursor:pointer}
+.fila:first-child{border-top:0}
+.fila:hover{background:var(--soft)}
+.fila .top{display:flex;justify-content:space-between;gap:10px}
+.fila .top .tit{min-width:0}
+.cuerpo{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:12px;margin-top:10px;font-size:14px;max-height:480px;overflow:auto;cursor:auto}
+.filtros{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px}
+.filtro{border:1px solid var(--line);background:var(--panel);border-radius:999px;padding:4px 12px;cursor:pointer;font-size:13px}
+.filtro[aria-pressed="true"]{border-color:var(--accent);color:var(--accent);font-weight:600}
+/* contacto */
+.datos{display:grid;grid-template-columns:minmax(110px,auto) 1fr;gap:4px 14px;margin:0}
+.datos dt{color:var(--muted)}
+.datos dd{margin:0;overflow-wrap:anywhere}
+ul.puntos{margin:0;padding-left:18px}
+.volver{background:none;border:0;color:var(--accent);cursor:pointer;padding:0;margin-bottom:10px}
+.aviso{background:var(--media-soft);color:var(--media);border-radius:8px;padding:8px 12px;margin-bottom:12px;font-size:13px}
+@media (max-width:560px){.fila .top{flex-direction:column;gap:2px}.wrap{padding:12px 16px}}
+</style>
+</head>
+<body>
+<div id="bloqueo">
+  <form id="form">
+    <h1>Mi correo</h1>
+    <p class="muted small" style="margin:6px 0 0">Tus correos están cifrados. Ingresa tu contraseña para verlos.</p>
+    <input id="clave" type="password" autocomplete="current-password" placeholder="Contraseña" required>
+    <label class="small muted"><input type="checkbox" id="recordar"> Recordar en esta pestaña</label>
+    <p id="error"></p>
+    <button class="btn full" type="submit">Abrir</button>
+  </form>
+</div>
+<div id="app" class="wrap" hidden></div>
+
+<script>
+const CAJA = /*__DATOS__*/null;
+let D = null, vista = "claro", busqueda = "", filtro = "todos", abierto = null;
+
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const b64 = s => Uint8Array.from(atob(s), c => c.charCodeAt(0));
+const fmt = ms => { const d = new Date(+ms); return d.toLocaleDateString("es-CL",{day:"2-digit",month:"short"}) + " " + d.toLocaleTimeString("es-CL",{hour:"2-digit",minute:"2-digit"}); };
+const hoyISO = () => new Date().toLocaleDateString("sv-SE");
+const ss = { get(k){ try { return sessionStorage.getItem(k); } catch(e){ return null; } },
+             set(k,v){ try { sessionStorage.setItem(k,v); } catch(e){} } };
+
+async function abrir(clave){
+  const pw = await crypto.subtle.importKey("raw", new TextEncoder().encode(clave), "PBKDF2", false, ["deriveKey"]);
+  const key = await crypto.subtle.deriveKey({name:"PBKDF2", salt:b64(CAJA.salt), iterations:CAJA.iter, hash:"SHA-256"},
+                                            pw, {name:"AES-GCM", length:256}, false, ["decrypt"]);
+  const plano = await crypto.subtle.decrypt({name:"AES-GCM", iv:b64(CAJA.iv)}, key, b64(CAJA.ct));
+  const txt = await new Response(new Blob([plano]).stream().pipeThrough(new DecompressionStream("gzip"))).text();
+  return JSON.parse(txt);
+}
+
+document.getElementById("form").addEventListener("submit", async ev => {
+  ev.preventDefault();
+  const clave = document.getElementById("clave").value, err = document.getElementById("error");
+  err.textContent = "Abriendo…";
+  try { D = await abrir(clave); } catch(e) { err.textContent = "Contraseña incorrecta."; return; }
+  if (document.getElementById("recordar").checked) ss.set("correo_clave", clave);
+  iniciar();
+});
+
+function iniciar(){
+  document.getElementById("bloqueo").hidden = true;
+  document.getElementById("app").hidden = false;
+  D.mensajes = Object.values(D.mensajes).sort((a,b) => b.fecha - a.fecha);
+  D.porContacto = {};
+  for (const m of D.mensajes) (D.porContacto[m.contacto] ||= []).push(m);
+  window.addEventListener("hashchange", pintar);
+  pintar();
+}
+
+const ficha = c => D.contactos[c] || {email:c, nombre:c};
+const nombre = c => ficha(c).nombre || c;
+const an = m => m.analisis || {};
+const esRuido = m => ["publicidad","notificacion"].includes(ficha(m.contacto).tipo);
+
+function cabecera(){
+  const tabs = [["claro","Súper claro"],["contactos","Contactos"],["bandeja","Bandeja"]];
+  return `<header>
+    <div><h1>Mi correo</h1><div class="muted small">${esc(D.cuenta)} · actualizado ${esc(D.ultima_sync || "—")}</div></div>
+    <input class="buscar" id="buscar" type="search" placeholder="Buscar en correos y contactos…" value="${esc(busqueda)}">
+    <nav class="tabs" role="tablist">${tabs.map(([k,t]) => `<button class="tab" role="tab" data-tab="${k}" aria-selected="${vista===k && !location.hash}">${t}</button>`).join("")}</nav>
+  </header>${(D.errores||[]).length ? `<div class="aviso">Algunos correos no se pudieron resumir en la última corrida; se reintentará solo.</div>` : ""}`;
+}
+
+function pintar(){
+  const app = document.getElementById("app");
+  const h = decodeURIComponent(location.hash.slice(1));
+  let cuerpo;
+  if (h.startsWith("c=")) cuerpo = vistaContacto(h.slice(2));
+  else if (busqueda) cuerpo = vistaBusqueda();
+  else cuerpo = {claro:vistaClaro, contactos:vistaContactos, bandeja:vistaBandeja}[vista]();
+  app.innerHTML = cabecera() + cuerpo;
+  const b = document.getElementById("buscar");
+  b.addEventListener("input", () => { busqueda = b.value.trim(); const pos = b.selectionStart; if (location.hash) history.replaceState(null,"",location.pathname); pintar(); const nb = document.getElementById("buscar"); nb.focus(); nb.setSelectionRange(pos,pos); });
+}
+
+document.addEventListener("click", ev => {
+  const t = ev.target.closest("[data-tab],[data-c],[data-m],[data-f],.volver");
+  if (!t || ev.target.closest(".cuerpo")) return;
+  if (t.dataset.tab){ vista = t.dataset.tab; busqueda = ""; filtro = "todos"; abierto = null; history.replaceState(null,"",location.pathname); pintar(); }
+  else if (t.dataset.c){ location.hash = "c=" + encodeURIComponent(t.dataset.c); window.scrollTo(0,0); }
+  else if (t.dataset.m){ abierto = abierto === t.dataset.m ? null : t.dataset.m; pintar(); }
+  else if (t.dataset.f){ filtro = t.dataset.f; pintar(); }
+  else if (t.classList.contains("volver")){ history.back(); }
+});
+
+function chip(m){
+  const a = an(m), out = [];
+  if (a.importancia) out.push(`<span class="chip ${a.importancia}">${a.importancia}</span>`);
+  if (a.requiere_respuesta && !m.enviado) out.push(`<span class="chip alta">responder</span>`);
+  if (m.enviado) out.push(`<span class="chip ok">enviado</span>`);
+  if (m.adjuntos) out.push(`<span class="chip baja">adjunto</span>`);
+  if (!m.analisis) out.push(`<span class="chip baja">sin resumen aún</span>`);
+  return out.join("");
+}
+
+function filaCorreo(m, conContacto=true){
+  const a = an(m);
+  return `<div class="fila" data-m="${esc(m.id)}">
+    <div class="top"><div class="tit">${conContacto ? esc(nombre(m.contacto)) + " · " : ""}${esc(m.asunto)}</div>
+    <div class="muted small fecha">${fmt(m.fecha)}</div></div>
+    <div>${chip(m)} <span class="small">${esc(a.resumen || m.vista_previa)}</span></div>
+    ${a.accion ? `<div class="small">👉 ${esc(a.accion)}</div>` : ""}
+    ${abierto === m.id ? `<div class="small muted" style="margin-top:8px">De: ${esc(m.de_nombre)} &lt;${esc(m.de)}&gt; · Para: ${esc(m.para.join(", "))}${m.cc.length ? " · Cc: " + esc(m.cc.join(", ")) : ""}</div>
+      ${conContacto ? `<div class="small" style="margin-top:4px"><a href="#c=${encodeURIComponent(m.contacto)}">Ver ficha de ${esc(nombre(m.contacto))} →</a></div>` : ""}
+      <div class="cuerpo">${esc(m.texto || m.vista_previa || "(sin contenido)")}</div>` : ""}
+  </div>`;
+}
+
+function vistaClaro(){
+  const ahora = Date.now(), dia = 86400000;
+  const responder = D.mensajes.filter(m => !m.enviado && an(m).requiere_respuesta && ahora - m.fecha < 30*dia);
+  const importantes = D.mensajes.filter(m => !m.enviado && an(m).importancia === "alta" && ahora - m.fecha < 7*dia);
+  const hoy = hoyISO(), limite = new Date(ahora - 7*dia).toLocaleDateString("sv-SE");
+  const plazos = [], pend = [];
+  for (const [c, f] of Object.entries(D.contactos)) {
+    for (const p of f.plazos || []) if (!p.fecha || p.fecha >= limite) plazos.push({...p, c});
+    if ((f.pendientes || []).length && !["publicidad"].includes(f.tipo)) pend.push([c, f]);
+  }
+  plazos.sort((a,b) => (a.fecha || "9999").localeCompare(b.fecha || "9999"));
+  const ultimo = c => (D.porContacto[c] || [{fecha:0}])[0].fecha;
+  pend.sort((a,b) => ultimo(b[0]) - ultimo(a[0]));
+  const vacio = t => `<p class="vacio">${t}</p>`;
+  return `<div class="grid">
+    <section class="card"><h2>📅 Plazos y fechas</h2>${plazos.length ? plazos.slice(0,15).map(p => `
+      <div class="item link" data-c="${esc(p.c)}"><div class="tit">${p.fecha ? `<span class="fecha">${esc(p.fecha)}</span>${p.fecha < hoy ? ' <span class="chip alta">vencido</span>' : p.fecha === hoy ? ' <span class="chip alta">hoy</span>' : ""} · ` : ""}${esc(p.descripcion)}</div>
+      <div class="muted small">${esc(nombre(p.c))}</div></div>`).join("") : vacio("Sin plazos detectados.")}</section>
+    <section class="card"><h2>✉️ Por responder</h2>${responder.length ? responder.slice(0,15).map(m => `
+      <div class="item link" data-c="${esc(m.contacto)}"><div class="tit">${esc(nombre(m.contacto))} · ${esc(m.asunto)}</div>
+      <div class="small">${esc(an(m).accion || an(m).resumen)}</div><div class="muted small fecha">${fmt(m.fecha)}</div></div>`).join("") : vacio("Nada pendiente de respuesta. 🎉")}</section>
+    <section class="card"><h2>🔥 Importantes (últimos 7 días)</h2>${importantes.length ? importantes.slice(0,15).map(m => `
+      <div class="item link" data-c="${esc(m.contacto)}"><div class="tit">${esc(nombre(m.contacto))} · ${esc(m.asunto)}</div>
+      <div class="small">${esc(an(m).resumen)}</div><div class="muted small fecha">${fmt(m.fecha)}</div></div>`).join("") : vacio("Nada urgente esta semana.")}</section>
+    <section class="card"><h2>✅ Pendientes por contacto</h2>${pend.length ? pend.slice(0,12).map(([c,f]) => `
+      <div class="item link" data-c="${esc(c)}"><div class="tit">${esc(f.nombre || c)}</div>
+      <ul class="puntos small">${f.pendientes.map(p => `<li>${esc(p)}</li>`).join("")}</ul></div>`).join("") : vacio("Sin pendientes.")}</section>
+  </div>`;
+}
+
+function vistaContactos(){
+  const lista = Object.keys(D.porContacto).map(c => [c, ficha(c), D.porContacto[c]])
+    .filter(([c,f]) => filtro === "todos-c" || !["publicidad","notificacion"].includes(f.tipo))
+    .sort((a,b) => b[2][0].fecha - a[2][0].fecha);
+  return `<div class="filtros">
+      <button class="filtro" data-f="todos" aria-pressed="${filtro!=="todos-c"}">Personas y empresas</button>
+      <button class="filtro" data-f="todos-c" aria-pressed="${filtro==="todos-c"}">Incluir avisos y publicidad</button></div>
+    <div class="lista">${lista.map(([c,f,ms]) => `
+    <div class="fila" data-c="${esc(c)}"><div class="top"><div class="tit">${esc(f.nombre || c)} <span class="muted small">${esc(f.tipo || "")}</span></div>
+      <div class="muted small fecha">${ms.length} correo${ms.length>1?"s":""} · ${fmt(ms[0].fecha)}</div></div>
+      <div class="small">${esc(f.resumen || "Aún sin resumen.")}</div>
+      ${(f.pendientes||[]).length ? `<div class="small">👉 ${f.pendientes.length} pendiente${f.pendientes.length>1?"s":""}</div>` : ""}</div>`).join("") || '<p class="vacio fila">Sin contactos.</p>'}</div>`;
+}
+
+function vistaContacto(c){
+  const f = ficha(c), ms = D.porContacto[c] || [];
+  const datos = f.datos_clave || [], plazos = f.plazos || [], pend = f.pendientes || [];
+  return `<button class="volver">← Volver</button>
+  <div class="grid" style="margin-bottom:14px">
+    <section class="card" style="grid-column:1/-1"><h2>${esc(f.nombre || c)}</h2>
+      <div class="muted small" style="margin:-6px 0 10px">${esc(c)}${f.tipo ? " · " + esc(f.tipo) : ""}${f.actualizado ? " · ficha actualizada " + esc(f.actualizado.replace("T"," ")) : ""}</div>
+      <p style="margin:0">${esc(f.resumen || "Aún sin resumen.")}</p></section>
+    <section class="card"><h2>✅ Pendientes</h2>${pend.length ? `<ul class="puntos">${pend.map(p => `<li>${esc(p)}</li>`).join("")}</ul>` : '<p class="vacio">Sin pendientes.</p>'}</section>
+    <section class="card"><h2>📌 Datos clave</h2>${datos.length ? `<dl class="datos">${datos.map(d => `<dt>${esc(d.dato)}</dt><dd>${esc(d.valor)}</dd>`).join("")}</dl>` : '<p class="vacio">Sin datos clave.</p>'}</section>
+    <section class="card"><h2>📅 Plazos</h2>${plazos.length ? plazos.map(p => `<div class="item"><span class="fecha tit">${esc(p.fecha || "sin fecha")}</span> · ${esc(p.descripcion)}</div>`).join("") : '<p class="vacio">Sin plazos.</p>'}</section>
+  </div>
+  <h2>Correos (${ms.length})</h2><div class="lista">${ms.map(m => filaCorreo(m, false)).join("")}</div>`;
+}
+
+function vistaBandeja(){
+  const fs = [["todos","Todos"],["alta","Importantes"],["responder","Por responder"],["sinruido","Sin publicidad ni avisos"]];
+  let ms = D.mensajes;
+  if (filtro === "alta") ms = ms.filter(m => an(m).importancia === "alta");
+  if (filtro === "responder") ms = ms.filter(m => !m.enviado && an(m).requiere_respuesta);
+  if (filtro === "sinruido") ms = ms.filter(m => !esRuido(m));
+  return `<div class="filtros">${fs.map(([k,t]) => `<button class="filtro" data-f="${k}" aria-pressed="${filtro===k}">${t}</button>`).join("")}</div>
+    <div class="lista">${ms.slice(0,300).map(m => filaCorreo(m)).join("") || '<p class="vacio fila">Sin correos.</p>'}</div>
+    ${ms.length > 300 ? `<p class="muted small">Mostrando 300 de ${ms.length}. Usa el buscador para encontrar correos más antiguos.</p>` : ""}`;
+}
+
+function vistaBusqueda(){
+  const q = busqueda.toLowerCase();
+  const cs = Object.entries(D.contactos).filter(([c,f]) => (c + " " + (f.nombre||"") + " " + (f.resumen||"") + " " + JSON.stringify(f.datos_clave||[])).toLowerCase().includes(q));
+  const ms = D.mensajes.filter(m => (m.asunto + " " + m.de + " " + m.de_nombre + " " + m.texto + " " + (an(m).resumen||"")).toLowerCase().includes(q));
+  return `${cs.length ? `<h2>Contactos</h2><div class="lista" style="margin-bottom:14px">${cs.slice(0,20).map(([c,f]) => `<div class="fila" data-c="${esc(c)}"><div class="tit">${esc(f.nombre||c)}</div><div class="small">${esc(f.resumen||"")}</div></div>`).join("")}</div>` : ""}
+    <h2>Correos (${ms.length})</h2><div class="lista">${ms.slice(0,200).map(m => filaCorreo(m)).join("") || '<p class="vacio fila">Sin resultados.</p>'}</div>`;
+}
+
+(async () => {
+  if (!CAJA) { document.getElementById("error").textContent = "Aún no hay datos: corre la sincronización."; return; }
+  const guardada = ss.get("correo_clave");
+  if (guardada) { try { D = await abrir(guardada); iniciar(); } catch(e) {} }
+})();
+</script>
+</body>
+</html>
