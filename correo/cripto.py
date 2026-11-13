@@ -34,3 +34,44 @@ def descifrar(caja: dict, clave: str):
     llave = _llave(clave, d("salt"), int(caja.get("iter", ITERACIONES)))
     plano = AESGCM(llave).decrypt(d("iv"), d("ct"), None)
     return json.loads(gzip.decompress(plano).decode("utf-8"))
+
+
+# ---- Intercambio con la sesión programada de Claude -------------------------------------
+# La sesión de Claude genera una llave efímera por turno: GitHub Actions le sella los correos
+# pendientes con esa llave pública, y Claude le devuelve los resúmenes sellados con la llave
+# pública de Actions (derivada de CORREO_CLAVE). Así ninguna contraseña vive en la sesión.
+from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey, X25519PublicKey  # noqa: E402
+from cryptography.hazmat.primitives.kdf.hkdf import HKDF  # noqa: E402
+from cryptography.hazmat.primitives import serialization  # noqa: E402
+
+_RAW = dict(encoding=serialization.Encoding.Raw, format=serialization.PublicFormat.Raw)
+
+
+def _b64(b):
+    return base64.b64encode(b).decode()
+
+
+def llave_publica_b64(priv: X25519PrivateKey) -> str:
+    return _b64(priv.public_key().public_bytes(**_RAW))
+
+
+def llave_accion(clave: str) -> X25519PrivateKey:
+    """Llave fija de GitHub Actions, derivada de CORREO_CLAVE (nunca se guarda)."""
+    return X25519PrivateKey.from_private_bytes(_llave(clave, b"correo-intercambio-v1"))
+
+
+def sellar(obj, pub_b64: str) -> dict:
+    """Cifra para el dueño de la llave pública pub_b64 (X25519 + HKDF + AES-GCM)."""
+    eph = X25519PrivateKey.generate()
+    compartido = eph.exchange(X25519PublicKey.from_public_bytes(base64.b64decode(pub_b64)))
+    llave = HKDF(algorithm=hashes.SHA256(), length=32, salt=None, info=b"correo-sello-v1").derive(compartido)
+    iv = os.urandom(12)
+    ct = AESGCM(llave).encrypt(iv, gzip.compress(json.dumps(obj, ensure_ascii=False).encode()), None)
+    return {"v": 1, "para": pub_b64, "epk": llave_publica_b64(eph), "iv": _b64(iv), "ct": _b64(ct)}
+
+
+def abrir_sello(caja: dict, priv: X25519PrivateKey):
+    compartido = priv.exchange(X25519PublicKey.from_public_bytes(base64.b64decode(caja["epk"])))
+    llave = HKDF(algorithm=hashes.SHA256(), length=32, salt=None, info=b"correo-sello-v1").derive(compartido)
+    plano = AESGCM(llave).decrypt(base64.b64decode(caja["iv"]), base64.b64decode(caja["ct"]), None)
+    return json.loads(gzip.decompress(plano).decode("utf-8"))

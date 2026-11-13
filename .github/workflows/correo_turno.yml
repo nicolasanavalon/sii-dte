@@ -1,0 +1,93 @@
+name: "Correo: turno de Claude"
+
+# Lo dispara la sesión programada de Claude (ver correo/TURNO_CLAUDE.md), no se usa a mano.
+#  - preparar: sincroniza Zoho y sella los correos sin resumen con la llave efímera de Claude,
+#              en la rama 'correo-intercambio' (se reescribe en cada turno, no ensucia main).
+#  - aplicar:  toma los resúmenes sellados que dejó Claude en esa rama y publica la página.
+on:
+  workflow_dispatch:
+    inputs:
+      paso:
+        description: "preparar o aplicar"
+        required: true
+        type: choice
+        options: [preparar, aplicar]
+      clave_publica:
+        description: "Llave pública efímera de la sesión de Claude (solo para preparar)"
+        required: false
+        type: string
+        default: ""
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  turno:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment:
+      name: github-pages
+    env:
+      CORREO_CLAVE: ${{ secrets.CORREO_CLAVE }}
+      ZOHO_CLIENT_ID: ${{ secrets.ZOHO_CLIENT_ID }}
+      ZOHO_CLIENT_SECRET: ${{ secrets.ZOHO_CLIENT_SECRET }}
+      ZOHO_REFRESH_TOKEN: ${{ secrets.ZOHO_REFRESH_TOKEN }}
+      ZOHO_DC: ${{ vars.ZOHO_DC }}
+      CORREO_DIAS_INICIALES: ${{ vars.CORREO_DIAS_INICIALES }}
+      CORREO_MAX_POR_CORRIDA: ${{ vars.CORREO_MAX_POR_CORRIDA }}
+      CORREO_URL: ${{ vars.CORREO_URL || format('https://{0}.github.io/{1}/correo/', github.repository_owner, github.event.repository.name) }}
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+      CLAVE_PUBLICA: ${{ inputs.clave_publica }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Instalar dependencias
+        run: pip install -r correo/requirements.txt
+
+      - name: Preparar correos para Claude
+        id: preparar
+        if: inputs.paso == 'preparar'
+        run: |
+          python correo/sync.py --preparar "$CLAVE_PUBLICA" "$RUNNER_TEMP/ix/intercambio/pendientes.enc"
+          cd "$RUNNER_TEMP/ix"
+          git init -q -b correo-intercambio
+          git config user.name "correo-bot"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add intercambio/pendientes.enc
+          git commit -q -m "Turno de Claude: pendientes (cifrado)"
+          git push -q -f "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" correo-intercambio
+
+      - name: Aplicar resúmenes de Claude
+        id: aplicar
+        if: inputs.paso == 'aplicar'
+        run: |
+          git fetch -q origin correo-intercambio
+          git show origin/correo-intercambio:intercambio/respuesta.enc > "$RUNNER_TEMP/respuesta.enc"
+          python correo/sync.py --aplicar "$RUNNER_TEMP/respuesta.enc"
+
+      - name: Armar el sitio (DTE + correo)
+        id: sitio
+        if: steps.preparar.outputs.cambio == 'true' || steps.aplicar.outputs.cambio == 'true'
+        run: |
+          mkdir -p public/correo
+          cp index.html public/index.html
+          cp correo/index.html public/correo/index.html
+
+      - uses: actions/upload-pages-artifact@v3
+        if: steps.sitio.outcome == 'success'
+        with:
+          path: public
+
+      - uses: actions/deploy-pages@v4
+        if: steps.sitio.outcome == 'success'
