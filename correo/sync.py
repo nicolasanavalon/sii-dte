@@ -4,13 +4,16 @@ Uso:
   python correo/sync.py            # corrida normal (la usa GitHub Actions)
   python correo/sync.py --solo-html   # solo regenera la página (p. ej. tras cambiar el diseño)
   python correo/sync.py --demo        # datos de ejemplo, sin Zoho ni Claude (para probar la página)
+  python correo/sync.py --preparar LLAVE_PUBLICA ARCHIVO   # sincroniza y sella los pendientes para Claude
+  python correo/sync.py --aplicar ARCHIVO                  # aplica los resúmenes que devolvió Claude
 
 Variables de entorno:
   CORREO_CLAVE         contraseña con la que se cifra todo (la misma que usas para abrir la página)
   ZOHO_CLIENT_ID, ZOHO_CLIENT_SECRET   del "Self Client" en api-console.zoho.com
   ZOHO_REFRESH_TOKEN   opcional; si no está, se usa correo/data/zoho_token.enc (paso "Conectar")
   ZOHO_DC              com (por defecto), eu, in, com.au, ...
-  ANTHROPIC_API_KEY    para los resúmenes
+  ANTHROPIC_API_KEY    opcional: si está, GitHub resume con la API (pagada). Si no, los resúmenes los
+                       hace la sesión programada de Claude con tu plan (ver correo/TURNO_CLAUDE.md).
   CORREO_DIAS_INICIALES   cuántos días hacia atrás trae la primera vez (30)
   CORREO_MAX_POR_CORRIDA  tope de correos nuevos por corrida (150)
   TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID   opcional: aviso de correos importantes
@@ -209,6 +212,46 @@ def traer_nuevos(estado, clave):
 
 # ---------------------------------------------------------------- Claude
 
+TIPOS = {"persona", "empresa", "notificacion", "publicidad"}
+
+
+def _txt(x, n=2000):
+    return str(x or "").strip()[:n]
+
+
+def normalizar_ficha(c, contacto):
+    c = c if isinstance(c, dict) else {}
+    lista = lambda k: c.get(k) if isinstance(c.get(k), list) else []
+    return {
+        "nombre": _txt(c.get("nombre"), 200), "tipo": c.get("tipo") if c.get("tipo") in TIPOS else "persona",
+        "resumen": _txt(c.get("resumen")),
+        "pendientes": [_txt(p, 400) for p in lista("pendientes") if p][:15],
+        "datos_clave": [{"dato": _txt(d.get("dato"), 120), "valor": _txt(d.get("valor"), 400)}
+                        for d in lista("datos_clave") if isinstance(d, dict)][:15],
+        "plazos": [{"fecha": _txt(d.get("fecha"), 10), "descripcion": _txt(d.get("descripcion"), 400)}
+                   for d in lista("plazos") if isinstance(d, dict)][:15],
+    }
+
+
+def normalizar_analisis(a, m):
+    a = a if isinstance(a, dict) else {}
+    return {"resumen": _txt(a.get("resumen"), 600) or m.get("vista_previa", "")[:200],
+            "importancia": a.get("importancia") if a.get("importancia") in ("alta", "media", "baja") else "media",
+            "requiere_respuesta": bool(a.get("requiere_respuesta")), "accion": _txt(a.get("accion"), 300)}
+
+
+def aplicar_resultado(estado, contacto, r, lote):
+    """Guarda la ficha actualizada del contacto y el análisis de cada correo del lote."""
+    c = normalizar_ficha(r.get("contacto"), contacto)
+    c["nombre"] = c["nombre"] or next((m.get("nombre_contacto") for m in lote if m.get("nombre_contacto")), "") or contacto
+    estado["contactos"][contacto] = {**c, "email": contacto,
+                                     "actualizado": datetime.now(TZ).isoformat(timespec="minutes")}
+    por_id = {str(x.get("id")): x for x in r.get("correos") or [] if isinstance(x, dict)}
+    for m in lote:
+        m["analisis"] = normalizar_analisis(por_id.get(m["id"]), m)
+    return list(lote)
+
+
 def analizar_pendientes(estado):
     from analisis import analizar_contacto
 
@@ -216,7 +259,8 @@ def analizar_pendientes(estado):
     if not sin:
         return []
     if not env("ANTHROPIC_API_KEY"):
-        print("::warning::Falta ANTHROPIC_API_KEY: los correos se guardan, pero sin resumen todavía.")
+        # Sin API key: los resúmenes los hace la sesión programada de Claude (ver TURNO_CLAUDE.md).
+        print(f"{len(sin)} correos esperan resumen del turno de Claude.")
         return []
     grupos = defaultdict(list)
     for m in sorted(sin, key=lambda m: m["fecha"]):
@@ -235,20 +279,60 @@ def analizar_pendientes(estado):
                 estado.setdefault("errores", []).append(
                     {"cuando": datetime.now(TZ).isoformat(timespec="minutes"), "contacto": contacto, "error": str(e)[:300]})
                 break
-            c = r["contacto"]
-            nombre = c.get("nombre") or next((m.get("nombre_contacto") for m in lote if m.get("nombre_contacto")), "") or contacto
-            estado["contactos"][contacto] = {
-                **c, "email": contacto, "nombre": nombre,
-                "actualizado": datetime.now(TZ).isoformat(timespec="minutes"),
-            }
-            por_id = {x["id"]: x for x in r["correos"]}
-            for m in lote:
-                a = por_id.get(m["id"])
-                m["analisis"] = a or {"resumen": m["vista_previa"][:200], "importancia": "media",
-                                      "requiere_respuesta": False, "accion": ""}
-                analizados.append(m)
+            analizados += aplicar_resultado(estado, contacto, r, lote)
     estado["errores"] = estado.get("errores", [])[-20:]
     print(f"Claude: {len(analizados)} correos analizados en {len(grupos)} contactos.")
+    return analizados
+
+
+# ---------------------------------------------------------------- Turno de Claude (sin API key)
+
+MAX_TURNO = 40          # correos por turno de la sesión programada
+TEXTO_TURNO = 4000
+
+
+def preparar_turno(estado, clave, pub, salida):
+    from analisis import ESQUEMA, SISTEMA
+
+    sin = sorted((m for m in estado["mensajes"].values() if m.get("analisis") is None), key=lambda m: m["fecha"])
+    tanda = sin[:MAX_TURNO]
+    grupos = defaultdict(list)
+    for m in tanda:
+        grupos[m["contacto"]].append(m)
+    contactos = []
+    for c, msgs in grupos.items():
+        f = estado["contactos"].get(c)
+        contactos.append({
+            "email": c,
+            "ficha_actual": {k: f.get(k) for k in ("nombre", "tipo", "resumen", "pendientes", "datos_clave", "plazos")} if f else None,
+            "correos_nuevos": [{
+                "id": m["id"], "fecha": fecha_txt(m["fecha"]),
+                "direccion": "ENVIADO por la persona" if m["enviado"] else "RECIBIDO",
+                "de": f'{m["de_nombre"]} <{m["de"]}>', "para": m["para"], "asunto": m["asunto"],
+                "adjuntos": m.get("adjuntos", False), "texto": (m.get("texto") or m.get("vista_previa") or "")[:TEXTO_TURNO],
+            } for m in msgs]})
+    paquete = {
+        "turno": os.urandom(8).hex(), "hoy": datetime.now(TZ).strftime("%Y-%m-%d (%A)"),
+        "clave_accion": cripto.llave_publica_b64(cripto.llave_accion(clave)),
+        "instrucciones": SISTEMA, "esquema_por_contacto": ESQUEMA,
+        "quedan_despues": len(sin) - len(tanda), "contactos": contactos,
+    }
+    Path(salida).parent.mkdir(parents=True, exist_ok=True)
+    Path(salida).write_text(json.dumps(cripto.sellar(paquete, pub)))
+    print(f"Turno preparado: {len(tanda)} correos de {len(contactos)} contactos "
+          f"(quedan {paquete['quedan_despues']} para el próximo turno).")
+
+
+def aplicar_turno(estado, clave, archivo):
+    r = cripto.abrir_sello(json.loads(Path(archivo).read_text()), cripto.llave_accion(clave))
+    analizados = []
+    for item in r.get("resultados") or []:
+        contacto = str(item.get("email") or "")
+        ids = {str(x.get("id")) for x in item.get("correos") or [] if isinstance(x, dict)}
+        lote = [m for i, m in estado["mensajes"].items() if i in ids and m["contacto"] == contacto]
+        if lote:
+            analizados += aplicar_resultado(estado, contacto, item, lote)
+    print(f"Turno de Claude aplicado: {len(analizados)} correos resumidos.")
     return analizados
 
 
@@ -337,8 +421,19 @@ def main():
         marcar_cambio(True)
         return
 
+    if "--aplicar" in sys.argv:
+        analizados = aplicar_turno(estado, clave, sys.argv[sys.argv.index("--aplicar") + 1])
+        recortar(estado)
+        avisar(estado, analizados)
+        generar_html(estado, clave)
+        marcar_cambio(True)
+        return
+
     nuevos = traer_nuevos(estado, clave)
     analizados = analizar_pendientes(estado)
+    if "--preparar" in sys.argv:
+        i = sys.argv.index("--preparar")
+        preparar_turno(estado, clave, sys.argv[i + 1], sys.argv[i + 2])
     cambio = bool(nuevos or analizados) or not estado["ultima_sync"]
     estado["ultima_sync"] = datetime.now(TZ).strftime("%Y-%m-%d %H:%M")
     recortar(estado)

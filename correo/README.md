@@ -2,9 +2,10 @@
 
 Cada 30 minutos, **sin que tengas nada abierto**:
 
-1. Se traen los correos nuevos de tu Zoho Mail (bandeja de entrada y enviados).
-2. Claude los lee y mantiene una **ficha por contacto**: resumen de la relación, pendientes,
-   datos clave (montos, facturas, RUT, acuerdos) y plazos.
+1. Se traen los correos nuevos de tu Zoho Mail (bandeja de entrada y enviados), cada 30 minutos.
+2. Cada 2 horas, una **sesión programada de Claude** (con tu plan de Claude, sin costo extra) los lee
+   y mantiene una **ficha por contacto**: resumen de la relación, pendientes, datos clave (montos,
+   facturas, RUT, acuerdos) y plazos.
 3. Se publica tu página privada: `https://nicolasanavalon.github.io/sii-dte/correo/`
    - **Súper claro**: plazos, lo que tienes que responder, lo importante de la semana y los pendientes.
    - **Contactos**: la ficha de cada persona o empresa, con todos sus correos.
@@ -12,12 +13,17 @@ Cada 30 minutos, **sin que tengas nada abierto**:
 4. Si llega algo **importante**, te avisa por Telegram (el mismo bot de los reportes del DTE).
 
 ```
-GitHub Actions (cada 30 min)
+GitHub Actions (cada 30 min, gratis)
   └─ correo/sync.py ─ API de Zoho Mail (solo lectura)
-                    ─ Claude: resume y actualiza la ficha de cada contacto
                     ─ cifra todo con tu contraseña ─> GitHub Pages (/correo/)
-                    ─ aviso por Telegram si hay algo importante
+
+Sesión programada de Claude (cada 2 h, con tu plan)  ── ver TURNO_CLAUDE.md
+  └─ pide los correos sin resumen (llegan sellados con una llave que solo vive ese turno)
+  └─ los resume y devuelve sellado ─> GitHub los guarda, publica y avisa por Telegram
 ```
+
+La sesión de Claude **no guarda ninguna contraseña**: en cada turno crea una llave de un solo uso,
+y GitHub le entrega los correos cifrados con esa llave por la rama `correo-intercambio`.
 
 ## 🔒 Privacidad
 
@@ -47,7 +53,6 @@ Repo → **Settings** → **Secrets and variables** → **Actions** → **New re
 | `ZOHO_CLIENT_ID` | El Client ID del paso 1 |
 | `ZOHO_CLIENT_SECRET` | El Client Secret del paso 1 |
 | `CORREO_CLAVE` | **Una contraseña que inventes** (mínimo 8 caracteres). Con ella abrirás la página. ¡Anótala! |
-| `ANTHROPIC_API_KEY` | Tu API key de https://console.anthropic.com (Settings → API Keys) |
 
 `TELEGRAM_BOT_TOKEN` y `TELEGRAM_CHAT_ID` ya existen por los reportes del DTE: se reutilizan.
 
@@ -66,13 +71,11 @@ Repo → **Settings** → **Secrets and variables** → **Actions** → **New re
    - ❌ Si dice que tu plan no lo permite, la API no está disponible en el plan gratis: hay que pasar
      a **Zoho Mail Lite** (~US$1/mes) y repetir este paso. El resto queda igual.
 
-### 4. Primera sincronización
+### 4. Activar los resúmenes
 
-Repo → **Actions** → **Correo: sincronizar** → **Run workflow**. La primera vez trae los últimos
-30 días (máximo 150 correos por corrida; el resto entra en las siguientes). Cuando termine, abre
-`https://nicolasanavalon.github.io/sii-dte/correo/` e ingresa tu `CORREO_CLAVE`.
-
-Desde ahí corre sola cada 30 minutos.
+Claude crea la tarea programada cada 2 horas que sigue `correo/TURNO_CLAUDE.md`. La primera vez se
+traen los últimos 30 días; los resúmenes se completan en los primeros turnos (40 correos por vuelta).
+Abre `https://nicolasanavalon.github.io/sii-dte/correo/` e ingresa tu `CORREO_CLAVE`.
 
 ## Ajustes opcionales (Settings → Secrets and variables → Actions → **Variables**)
 
@@ -81,7 +84,6 @@ Desde ahí corre sola cada 30 minutos.
 | `ZOHO_DC` | Región de tu Zoho (`com`, `eu`, `in`, `com.au`, …) | `com` |
 | `CORREO_DIAS_INICIALES` | Días hacia atrás en la primera importación | `30` |
 | `CORREO_MAX_POR_CORRIDA` | Tope de correos nuevos por corrida | `150` |
-| `CORREO_MODELO` | Modelo de Claude | `claude-opus-5-5` |
 | `CORREO_URL` | Si usas un dominio propio para Pages | `https://USUARIO.github.io/REPO/correo/` |
 
 Para no recibir avisos por Telegram, crea la variable `CORREO_TELEGRAM` = `0`.
@@ -89,12 +91,10 @@ Para no recibir avisos por Telegram, crea la variable `CORREO_TELEGRAM` = `0`.
 ## Costos aproximados
 
 - **Zoho**: $0 si la API funciona con el plan gratis; si no, Mail Lite ~US$1/mes.
-- **GitHub Actions/Pages**: gratis si el repo es público. Si es privado, el plan gratis incluye
-  2.000 minutos al mes y esta sincronización usa ~1 minuto por corrida: cada 30 minutos son ~1.400
-  al mes, sumados a los reportes del DTE. Si se acercan al límite, baja la frecuencia en el `cron`
-  de `.github/workflows/correo_sync.yml` (por ejemplo, cada hora: `"7 * * * *"`).
-- **Claude**: se paga por uso. Una ficha se actualiza con unos pocos miles de tokens; para un volumen
-  normal de correo, del orden de US$5–15 al mes. Puedes ponerle un tope en console.anthropic.com.
+- **GitHub Actions/Pages**: gratis (el repo es público; los correos van cifrados).
+- **Claude**: $0 extra. Los resúmenes los hace una sesión programada con tu plan actual de Claude
+  (cuenta para los límites de uso de tu plan). Opcional: si algún día creas el secreto
+  `ANTHROPIC_API_KEY`, GitHub resume directamente con la API (pagada por uso) en cada sincronización.
 
 ## Probar sin conectar nada
 
