@@ -119,13 +119,31 @@ def recortar(estado):
 
 # ---------------------------------------------------------------- Zoho
 
-def refresh_token(clave):
-    rt = env("ZOHO_REFRESH_TOKEN")
+def refresh_token(clave, nombre="principal"):
+    sufijo = "" if nombre == "principal" else "_" + nombre.upper()
+    rt = env("ZOHO" + sufijo + "_REFRESH_TOKEN")
     if rt:
         return rt
-    if TOKEN.exists():
-        return cripto.descifrar(json.loads(TOKEN.read_text()), clave)["refresh_token"]
-    sys.exit("Falta conectar Zoho: corre el workflow 'Correo: conectar Zoho' (ver correo/README.md).")
+    archivo = TOKEN if nombre == "principal" else DATA / f"zoho_token_{nombre}.enc"
+    if archivo.exists():
+        return cripto.descifrar(json.loads(archivo.read_text()), clave)["refresh_token"]
+    if nombre == "principal":
+        sys.exit("Falta conectar Zoho: corre el workflow 'Correo: conectar Zoho' (ver correo/README.md).")
+    return ""
+
+
+CONEXIONES_EXTRA = ("taller",)   # otros usuarios de Zoho (cada uno con su propio "Self Client")
+
+
+def conexiones(clave):
+    """Permisos de Zoho configurados: el principal y, si existen, los extra (p. ej. el del taller)."""
+    out = [("principal", env("ZOHO_CLIENT_ID"), env("ZOHO_CLIENT_SECRET"), refresh_token(clave))]
+    for nombre in CONEXIONES_EXTRA:
+        cid, sec = env(f"ZOHO_{nombre.upper()}_CLIENT_ID"), env(f"ZOHO_{nombre.upper()}_CLIENT_SECRET")
+        rt = refresh_token(clave, nombre) if cid and sec else ""
+        if cid and sec and rt:
+            out.append((nombre, cid, sec, rt))
+    return out
 
 
 ASUNTO_PREFIJOS = re.compile(r"^\s*((re|rv|fw|fwd|reenviar|resp|r)\s*(\[\d+\])?\s*:\s*)+", re.I)
@@ -160,15 +178,43 @@ def leer_archivos(z, account_id, folder_id, mid):
 
 
 def traer_nuevos(estado, clave):
-    """Trae correos nuevos y completa los antiguos (cadena completa + adjuntos) que aún no la tengan."""
-    from zoho import Zoho, direcciones, html_a_texto
+    """Trae correos nuevos de TODAS las casillas configuradas y completa los antiguos que aún no tengan
+    la cadena y los adjuntos. Devuelve (nuevos, completados)."""
+    from zoho import Zoho
 
-    z = Zoho(env("ZOHO_CLIENT_ID"), env("ZOHO_CLIENT_SECRET"), refresh_token(clave))
-    account_id, propios = z.cuenta()
-    estado["propios"] = sorted(set(estado.get("propios", [])) | propios)
-    estado["cuenta"] = estado["cuenta"] or (sorted(propios)[0] if propios else "")
+    nuevos, completados, n_casillas = [], 0, 0
+    vistos = set()
+    for nombre, cid, sec, rt in conexiones(clave):
+        z = Zoho(cid, sec, rt)
+        try:
+            casillas = z.cuentas()
+        except Exception as e:
+            if nombre == "principal":
+                raise
+            print(f"::warning::No pude leer la conexión '{nombre}': {str(e)[:200]}")
+            continue
+        for acc_id, direcciones_acc, principal in casillas:
+            if acc_id in vistos:
+                continue
+            vistos.add(acc_id)
+            n_casillas += 1
+            estado["propios"] = sorted(set(estado.get("propios", [])) | direcciones_acc)
+            cuentas = estado.setdefault("cuentas", [])
+            if principal and principal not in cuentas:
+                cuentas.append(principal)
+            estado["cuenta"] = estado["cuenta"] or principal
+            n, c = _traer_casilla(z, acc_id, principal, estado, primera=(n_casillas == 1))
+            nuevos += n
+            completados += c
+    print(f"Zoho: {n_casillas} casilla(s) leída(s); {len(nuevos)} correos nuevos"
+          + (f", {completados} antiguos completados con cadena y adjuntos." if completados else "."))
+    return nuevos, completados
+
+
+def _traer_casilla(z, account_id, direccion, estado, primera):
+    from zoho import direcciones, html_a_texto
+
     propios = set(estado["propios"])
-
     carpetas = z.carpetas(account_id)
     def es(c, nombres):
         return (str(c.get("folderType", "")).lower() in nombres or
@@ -181,13 +227,18 @@ def traer_nuevos(estado, clave):
 
     dias = int(env("CORREO_DIAS_INICIALES", "30"))
     tope = int(env("CORREO_MAX_POR_CORRIDA", "150"))
-    # Correos guardados antes de que existiera la versión 2 (cadena completa + adjuntos): se completan.
-    viejos = {i for i, m in estado["mensajes"].items() if m.get("v") != 2 or (m.get("intentos_adj", 0) < 3 and any(
-        str(f.get("texto", "")).startswith("(no se pudo descargar") for f in m.get("archivos", [])))}
-    if estado["ultimo_ms"]:
-        desde = estado["ultimo_ms"] - 2 * 86400_000          # margen de 2 días
+    ultimos = estado.setdefault("ultimo_por_cuenta", {})
+    if account_id not in ultimos and primera and estado.get("ultimo_ms"):
+        ultimos[account_id] = estado["ultimo_ms"]          # casilla original (antes de haber varias)
+    # Correos de esta casilla guardados antes de la versión 2, o con adjuntos que fallaron: se completan.
+    viejos = {i for i, m in estado["mensajes"].items()
+              if (m.get("cuenta_id") == account_id or (primera and not m.get("cuenta_id")))
+              and (m.get("v") != 2 or (m.get("intentos_adj", 0) < 3 and any(
+                  str(f.get("texto", "")).startswith("(no se pudo descargar") for f in m.get("archivos", []))))}
+    if ultimos.get(account_id):
+        desde = ultimos[account_id] - 2 * 86400_000          # margen de 2 días
     else:
-        desde = int((time.time() - dias * 86400) * 1000)
+        desde = int((time.time() - dias * 86400) * 1000)    # casilla nueva: últimos N días
     if viejos:
         desde = min([desde] + [estado["mensajes"][i]["fecha"] for i in viejos]) - 60_000
 
@@ -211,7 +262,7 @@ def traer_nuevos(estado, clave):
 
     candidatos.sort(key=lambda x: x[2])
     if len(candidatos) > tope:
-        print(f"Hay {len(candidatos)} correos por traer; se procesan los {tope} más recientes ahora "
+        print(f"Hay {len(candidatos)} correos por traer en una casilla; se procesan los {tope} más recientes ahora "
               f"y el resto en las próximas corridas.")
         candidatos = candidatos[-tope:]
 
@@ -240,7 +291,8 @@ def traer_nuevos(estado, clave):
         asunto = (m.get("subject") or "(sin asunto)").strip()
         previo = estado["mensajes"].get(mid) or {}
         msg = {
-            "v": 2, "id": mid, "carpeta": fid, "thread_zoho": str(m.get("threadId") or ""),
+            "v": 2, "id": mid, "cuenta_id": account_id, "cuenta": direccion, "carpeta": fid,
+            "thread_zoho": str(m.get("threadId") or ""),
             "hilo": clave_hilo(str(m.get("threadId") or ""), asunto, contacto), "fecha": t,
             "de": de[0][1], "de_nombre": de_nombre, "para": para, "cc": cc, "asunto": asunto,
             "vista_previa": (m.get("summary") or "").strip(),
@@ -254,10 +306,9 @@ def traer_nuevos(estado, clave):
         estado["mensajes"][mid] = msg
         if not previo:
             nuevos.append(msg)
+        ultimos[account_id] = max(ultimos.get(account_id, 0), t)
         estado["ultimo_ms"] = max(estado["ultimo_ms"], t)
-    completados = len(candidatos) - len(nuevos)
-    print(f"Zoho: {len(nuevos)} correos nuevos" + (f", {completados} antiguos completados con cadena y adjuntos." if completados else "."))
-    return nuevos, completados
+    return nuevos, len(candidatos) - len(nuevos)
 
 
 # ---------------------------------------------------------------- Claude

@@ -45,6 +45,8 @@ jobs:
           ZOHO_CLIENT_ID: ${{ secrets.ZOHO_CLIENT_ID }}
           ZOHO_CLIENT_SECRET: ${{ secrets.ZOHO_CLIENT_SECRET }}
           ZOHO_REFRESH_TOKEN: ${{ secrets.ZOHO_REFRESH_TOKEN }}
+          ZOHO_TALLER_CLIENT_ID: ${{ secrets.ZOHO_TALLER_CLIENT_ID }}
+          ZOHO_TALLER_CLIENT_SECRET: ${{ secrets.ZOHO_TALLER_CLIENT_SECRET }}
           ZOHO_DC: ${{ vars.ZOHO_DC }}
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
           GROQ_MODELO: ${{ vars.GROQ_MODELO }}

@@ -17,16 +17,21 @@ from zoho import Zoho, ZohoError, canjear_codigo  # noqa: E402
 
 def main():
     e = lambda k: (os.environ.get(k) or "").strip()
-    falta = [k for k in ("ZOHO_CLIENT_ID", "ZOHO_CLIENT_SECRET", "ZOHO_CODIGO", "CORREO_CLAVE") if not e(k)]
+    conexion = e("ZOHO_CONEXION") or "principal"           # "principal" o "taller"
+    pre = "ZOHO_" if conexion == "principal" else f"ZOHO_{conexion.upper()}_"
+    cid, sec = e(pre + "CLIENT_ID"), e(pre + "CLIENT_SECRET")
+    falta = [k for k, v in ((pre + "CLIENT_ID", cid), (pre + "CLIENT_SECRET", sec), ("código", e("ZOHO_CODIGO")),
+                            ("CORREO_CLAVE", e("CORREO_CLAVE"))) if not v]
     if falta:
         sys.exit("Faltan: " + ", ".join(falta))
 
     try:
-        rt = canjear_codigo(e("ZOHO_CLIENT_ID"), e("ZOHO_CLIENT_SECRET"), e("ZOHO_CODIGO"))
+        rt = canjear_codigo(cid, sec, e("ZOHO_CODIGO"))
         print("✅ Código canjeado: Zoho entregó el acceso permanente.")
-        z = Zoho(e("ZOHO_CLIENT_ID"), e("ZOHO_CLIENT_SECRET"), rt)
-        account_id, correos = z.cuenta()
-        print(f"✅ Cuenta encontrada ({len(correos)} dirección(es)).")
+        z = Zoho(cid, sec, rt)
+        casillas = z.cuentas()
+        print(f"✅ {len(casillas)} casilla(s) de correo encontrada(s) con este permiso.")
+        account_id = casillas[0][0]
         carpetas = z.carpetas(account_id)
         print("✅ Carpetas: " + ", ".join(str(c.get("folderName")) for c in carpetas))
         inbox = next((c for c in carpetas if str(c.get("folderType", "")).lower() == "inbox"), carpetas[0])
@@ -39,7 +44,8 @@ def main():
         sys.exit(f"❌ {err}")
 
     (AQUI / "data").mkdir(exist_ok=True)
-    (AQUI / "data" / "zoho_token.enc").write_text(
+    nombre = "zoho_token.enc" if conexion == "principal" else f"zoho_token_{conexion}.enc"
+    (AQUI / "data" / nombre).write_text(
         json.dumps(cripto.cifrar({"refresh_token": rt}, e("CORREO_CLAVE"))))
     print("✅ Acceso guardado (cifrado). Ya puedes correr 'Correo: sincronizar'.")
 
