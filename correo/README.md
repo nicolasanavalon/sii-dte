@@ -1,5 +1,12 @@
 # Mi correo: Zoho Mail + resúmenes automáticos con Claude
 
+> **Bandeja Anasep** (la página principal, con IA para preguntar):
+> https://claude.ai/artifact/BntSRHPauRL2Lopk9Y4fnr
+> Muestra cada conversación con el resumen de **toda la cadena** y el texto de los **adjuntos** (PDF, Excel,
+> Word), y tiene una caja para preguntarle a una conversación o a todos tus correos. La IA usa tu plan de
+> Claude, sin costo extra. Los datos quedan en la base de datos privada de esa página: solo tú puedes leerlos.
+> La página cifrada de GitHub Pages (`…/correo/`) sigue funcionando como respaldo.
+
 Cada 30 minutos, **sin que tengas nada abierto**:
 
 1. Se traen los correos nuevos de tu Zoho Mail (bandeja de entrada y enviados), cada 30 minutos.
