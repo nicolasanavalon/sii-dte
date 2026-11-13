@@ -300,7 +300,26 @@ def marcar_cambio(valor):
             f.write(f"cambio={'true' if valor else 'false'}\n")
 
 
+def falta_configurar():
+    """Qué falta para poder sincronizar (lista vacía = todo listo)."""
+    falta = []
+    if len(env("CORREO_CLAVE")) < 8:
+        falta.append("secreto CORREO_CLAVE (mínimo 8 caracteres)")
+    if not (env("ZOHO_CLIENT_ID") and env("ZOHO_CLIENT_SECRET")):
+        falta.append("secretos ZOHO_CLIENT_ID y ZOHO_CLIENT_SECRET")
+    if not (env("ZOHO_REFRESH_TOKEN") or TOKEN.exists()):
+        falta.append("conectar Zoho (workflow 'Correo: conectar Zoho')")
+    return falta
+
+
 def main():
+    if "--demo" not in sys.argv:
+        falta = falta_configurar()
+        if falta:
+            # Aún no configurado: termina sin error para no llenar de avisos de falla cada 30 min.
+            print("::notice::Correo aún no configurado. Falta: " + "; ".join(falta) + ". Ver correo/README.md")
+            marcar_cambio(False)
+            return
     clave = env("CORREO_CLAVE")
     if len(clave) < 8:
         sys.exit("Falta CORREO_CLAVE (mínimo 8 caracteres): es la contraseña que protege tus correos.")
