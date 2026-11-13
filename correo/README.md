@@ -20,7 +20,6 @@ Cada 30 minutos, **sin que tengas nada abierto**:
    - **Súper claro**: plazos, lo que tienes que responder, lo importante de la semana y los pendientes.
    - **Contactos**: la ficha de cada persona o empresa, con todos sus correos.
    - **Bandeja**: todos los correos con su resumen; tócalos para leer el texto completo.
-4. Si llega algo **importante**, te avisa por Telegram (el mismo bot de los reportes del DTE).
 
 ```
 GitHub Actions (cada 30 min, gratis)
