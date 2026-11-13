@@ -63,3 +63,9 @@ El SII podría cambiar el formulario o pedir un **captcha** (que, por diseño, n
 resolver de forma automática). Si eso ocurre, la corrida falla y sube un artefacto
 `login_error.png` con una captura para diagnóstico. En ese caso, ajustamos los selectores
 del login o volvemos al modo semiautomático (botón + login manual).
+
+## 📬 Correo (Zoho Mail + resúmenes con Claude)
+
+En la carpeta [`correo/`](correo/README.md) está la plataforma que lee tu Zoho Mail cada 30 minutos,
+resume cada conversación y te muestra lo importante en `…/correo/` (cifrado con contraseña).
+Las instrucciones de puesta en marcha están en [`correo/README.md`](correo/README.md).

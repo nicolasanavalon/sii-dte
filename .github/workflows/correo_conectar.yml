@@ -1,0 +1,45 @@
+name: "Correo: conectar Zoho"
+
+# Se corre UNA vez (o si algún día Zoho pide reconectar). Canjea el código que genera Zoho
+# por un acceso permanente, prueba que la API funcione con tu plan y lo guarda cifrado.
+on:
+  workflow_dispatch:
+    inputs:
+      codigo:
+        description: "Código generado en api-console.zoho.com (Self Client → Generate Code). Vence en minutos."
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  conectar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Instalar dependencias
+        run: pip install -r correo/requirements.txt
+
+      - name: Canjear código y probar la API de Zoho
+        env:
+          ZOHO_CODIGO: ${{ inputs.codigo }}
+          ZOHO_CLIENT_ID: ${{ secrets.ZOHO_CLIENT_ID }}
+          ZOHO_CLIENT_SECRET: ${{ secrets.ZOHO_CLIENT_SECRET }}
+          ZOHO_DC: ${{ vars.ZOHO_DC }}
+          CORREO_CLAVE: ${{ secrets.CORREO_CLAVE }}
+        run: python correo/conectar.py
+
+      - name: Guardar el acceso (cifrado) en el repo
+        run: |
+          git config user.name "correo-bot"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add correo/data/zoho_token.enc
+          git commit -m "Correo: conecta Zoho (acceso cifrado)" || echo "Sin cambios"
+          for i in 1 2 3; do git pull --rebase && git push && break; sleep 5; done
