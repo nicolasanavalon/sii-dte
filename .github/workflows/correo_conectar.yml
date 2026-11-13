@@ -9,6 +9,11 @@ on:
         description: "Código generado en api-console.zoho.com (Self Client → Generate Code). Vence en minutos."
         required: true
         type: string
+      cuenta:
+        description: "Qué usuario de Zoho conectar"
+        type: choice
+        options: [principal, taller]
+        default: principal
 
 permissions:
   contents: write
@@ -30,8 +35,11 @@ jobs:
       - name: Canjear código y probar la API de Zoho
         env:
           ZOHO_CODIGO: ${{ inputs.codigo }}
+          ZOHO_CONEXION: ${{ inputs.cuenta }}
           ZOHO_CLIENT_ID: ${{ secrets.ZOHO_CLIENT_ID }}
           ZOHO_CLIENT_SECRET: ${{ secrets.ZOHO_CLIENT_SECRET }}
+          ZOHO_TALLER_CLIENT_ID: ${{ secrets.ZOHO_TALLER_CLIENT_ID }}
+          ZOHO_TALLER_CLIENT_SECRET: ${{ secrets.ZOHO_TALLER_CLIENT_SECRET }}
           ZOHO_DC: ${{ vars.ZOHO_DC }}
           CORREO_CLAVE: ${{ secrets.CORREO_CLAVE }}
         run: python correo/conectar.py
@@ -40,6 +48,6 @@ jobs:
         run: |
           git config user.name "correo-bot"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add correo/data/zoho_token.enc
+          git add correo/data/zoho_token*.enc
           git commit -m "Correo: conecta Zoho (acceso cifrado)" || echo "Sin cambios"
           for i in 1 2 3; do git pull --rebase && git push && break; sleep 5; done

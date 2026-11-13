@@ -92,16 +92,25 @@ class Zoho:
                 raise
 
     # --- endpoints ---
-    def cuenta(self):
+    def cuentas(self):
+        """Todas las casillas a las que da acceso este permiso: [(accountId, {direcciones}, dirección principal)]."""
         datos = self.get("/accounts")["data"]
         if not datos:
             raise ZohoError("La API no devolvió ninguna cuenta de correo.")
-        c = datos[0]
-        correos = {c.get("primaryEmailAddress", "")} | {
-            (a.get("mailId") or "") for a in c.get("emailAddress", []) if isinstance(a, dict)}
-        if c.get("mailboxAddress"):
-            correos.add(c["mailboxAddress"])
-        return str(c["accountId"]), {x.lower() for x in correos if x}
+        out = []
+        for c in datos:
+            correos = {c.get("primaryEmailAddress", "")} | {
+                (a.get("mailId") or "") for a in c.get("emailAddress", []) if isinstance(a, dict)}
+            if c.get("mailboxAddress"):
+                correos.add(c["mailboxAddress"])
+            correos = {x.lower() for x in correos if x}
+            principal = (c.get("primaryEmailAddress") or c.get("mailboxAddress") or (sorted(correos) or [""])[0]).lower()
+            out.append((str(c["accountId"]), correos, principal))
+        return out
+
+    def cuenta(self):
+        acc, correos, _ = self.cuentas()[0]
+        return acc, correos
 
     def carpetas(self, account_id):
         return self.get(f"/accounts/{account_id}/folders")["data"]
