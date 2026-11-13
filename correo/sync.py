@@ -152,7 +152,8 @@ def leer_archivos(z, account_id, folder_id, mid):
             try:
                 texto = texto_de(nombre, z.descargar_adjunto(account_id, folder_id, mid, a["attachmentId"]))
             except Exception as e:
-                texto = f"(no se pudo descargar: {type(e).__name__})"
+                texto = f"(no se pudo descargar: {type(e).__name__}: {str(e)[:200]})"
+                print(f"::warning::Adjunto {nombre} de {mid}: {str(e)[:300]}")
         archivos.append({"nombre": nombre, "tamano": tam, "texto": texto})
     return archivos
 
@@ -180,7 +181,8 @@ def traer_nuevos(estado, clave):
     dias = int(env("CORREO_DIAS_INICIALES", "30"))
     tope = int(env("CORREO_MAX_POR_CORRIDA", "150"))
     # Correos guardados antes de que existiera la versión 2 (cadena completa + adjuntos): se completan.
-    viejos = {i for i, m in estado["mensajes"].items() if m.get("v") != 2}
+    viejos = {i for i, m in estado["mensajes"].items() if m.get("v") != 2 or (m.get("intentos_adj", 0) < 3 and any(
+        str(f.get("texto", "")).startswith("(no se pudo descargar") for f in m.get("archivos", [])))}
     if estado["ultimo_ms"]:
         desde = estado["ultimo_ms"] - 2 * 86400_000          # margen de 2 días
     else:
@@ -244,6 +246,7 @@ def traer_nuevos(estado, clave):
             "texto": texto[:MAX_TEXTO_GUARDADO], "adjuntos": bool(tiene_adj), "archivos": archivos,
             "enviado": bool(enviado), "contacto": contacto,
             "analisis": previo.get("analisis"), "en_db": False,
+            "intentos_adj": previo.get("intentos_adj", 0) + (1 if previo else 0),
         }
         if not enviado and de_nombre:
             msg["nombre_contacto"] = de_nombre

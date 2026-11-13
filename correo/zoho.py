@@ -69,7 +69,8 @@ class Zoho:
         url = f"{self.base}{ruta}" + (f"?{q}" if q else "")
         for intento in range(4):
             req = urllib.request.Request(url, headers={
-                "Authorization": f"Zoho-oauthtoken {self._access()}", "Accept": "application/json"})
+                "Authorization": f"Zoho-oauthtoken {self._access()}",
+                "Accept": "application/octet-stream" if _crudo else "application/json"})
             try:
                 with urllib.request.urlopen(req, timeout=90) as r:
                     return r.read(MAX_ADJUNTO + 1) if _crudo else json.load(r)
