@@ -90,7 +90,17 @@ header{display:flex; flex-wrap:wrap; align-items:center; justify-content:space-b
 .file pre{white-space:pre-wrap; overflow-wrap:anywhere; font:12px/1.45 var(--f-mono); max-height:360px; overflow:auto; margin:8px 0 0}
 .hilo{display:flex; flex-direction:column; border:1px solid var(--line); border-radius:8px; overflow:hidden}
 .hilo .row{padding:8px 12px}
-.back{display:none; border:0; background:none; color:var(--accent); padding:0; cursor:pointer; align-self:flex-start; font-weight:500}
+.back{display:inline-flex; align-items:center; gap:6px; border:1px solid var(--line); background:var(--panel); color:var(--accent); padding:6px 12px; border-radius:8px; cursor:pointer; align-self:flex-start; font-weight:600}
+.back:hover{background:var(--accent-soft)}
+.casillas{display:flex; align-items:center; gap:6px; flex-wrap:wrap}
+.casillas .lbl{font-size:12.5px; color:var(--muted)}
+.seg{display:flex; gap:2px; background:var(--soft); padding:3px; border-radius:10px; flex-wrap:wrap}
+.seg button{border:0; background:none; padding:6px 12px; border-radius:8px; cursor:pointer; color:var(--muted); font-weight:500; font-size:14px}
+.seg button[aria-pressed="true"]{background:var(--panel); color:var(--ink); box-shadow:0 1px 2px rgba(0,0,0,.08)}
+.progreso{display:flex; flex-wrap:wrap; align-items:center; gap:6px 14px; font-size:12.5px; color:var(--muted)}
+.barra{width:140px; height:6px; background:var(--soft); border-radius:999px; overflow:hidden}
+.barra i{display:block; height:100%; background:var(--accent); border-radius:999px}
+.progreso b{color:var(--ink); font-weight:600; font-variant-numeric:tabular-nums}
 .vacio{color:var(--muted); text-align:center; padding:40px 16px; margin:0}
 
 /* Preguntar */
@@ -109,7 +119,6 @@ header{display:flex; flex-wrap:wrap; align-items:center; justify-content:space-b
   .split{grid-template-columns:minmax(0,1fr)}
   .split.abierto .list{display:none}
   .split:not(.abierto) .read{display:none}
-  .back{display:inline-block}
   .rows{max-height:none}
 }
 @media (prefers-reduced-motion: reduce){*{transition:none!important}}
@@ -129,7 +138,8 @@ header{display:flex; flex-wrap:wrap; align-items:center; justify-content:space-b
 
 <div id="appwrap" class="app" hidden>
   <header>
-    <div><h1>Bandeja Anasep</h1><div class="muted small" id="estado"></div></div>
+    <div style="display:flex;flex-direction:column;gap:4px"><h1>Bandeja Anasep</h1><div class="muted small" id="estado"></div><div class="progreso" id="progreso"></div></div>
+    <div class="casillas" id="casillas" hidden><span class="lbl">Casilla:</span><div class="seg" id="seg"></div></div>
     <nav class="tabs" role="tablist" aria-label="Vistas">
       <button class="tab" role="tab" id="tab-correos" data-v="correos">Correos</button>
       <button class="tab" role="tab" id="tab-preguntar" data-v="preguntar">Preguntar</button>
@@ -199,9 +209,19 @@ function construir(){
 function pintarFiltros(){
   const fs = [["todos","Todos"],["recibidos","Recibidos"],["enviados","Enviados"],["adjuntos","Con adjuntos"]];
   let h = fs.map(([k,t]) => `<button class="chip" data-f="${k}" aria-pressed="${filtro === k}">${t}</button>`).join("");
-  if (CUENTAS.length > 1) h += `<span style="width:8px"></span>` + [["", "Todas las casillas"], ...CUENTAS.map(c => [c, c.split("@")[0]])]
-    .map(([k,t]) => `<button class="chip" data-cu="${esc(k)}" aria-pressed="${cuentaSel === k}">${esc(t)}</button>`).join("");
   $("#filtros").innerHTML = h;
+  $("#casillas").hidden = CUENTAS.length < 2;
+  $("#seg").innerHTML = [["", "Todas"], ...CUENTAS.map(c => [c, c.split("@")[0]])]
+    .map(([k,t]) => `<button data-cu="${esc(k)}" aria-pressed="${cuentaSel === k}" title="${esc(k || "Todas las casillas")}">${esc(t)}</button>`).join("");
+  pintarProgreso();
+}
+
+function pintarProgreso(){
+  const ms = MSGS.filter(m => !cuentaSel || m.cuenta === cuentaSel);
+  const pct = arr => arr.length ? Math.round(100 * arr.filter(m => m.analisis).length / arr.length) : 100;
+  const rec = ms.filter(m => !m.enviado), env = ms.filter(m => m.enviado), total = pct(ms);
+  $("#progreso").innerHTML = `<span>Analizados por la IA: <b>${total}%</b></span><span class="barra" aria-hidden="true"><i style="width:${total}%"></i></span>
+    ${[["Recibidos", rec], ["Enviados", env]].map(([t, arr]) => `<span>${t} ${arr.length ? `<b>${pct(arr)}%</b> (${arr.filter(m => m.analisis).length}/${arr.length})` : "<b>—</b>"}</span>`).join("")}`;
 }
 
 const terminos = () => norm(busca).split(/\s+/).filter(Boolean);
@@ -262,7 +282,7 @@ function pintarCorreo(){
   if (!m) { $("#read").innerHTML = `<p class="vacio">Elige un correo de la lista para leerlo.</p>`; return; }
   const terms = terminos(), hilo = HILOS[m.hilo] || [m], h = (D.hilos || {})[m.hilo] || {}, a = m.analisis || {};
   const legible = f => f.texto && !String(f.texto).startsWith("(");
-  $("#read").innerHTML = `<button class="back" data-back>← Correos</button>
+  $("#read").innerHTML = `<button class="back" data-back>← Volver a la lista</button>
     <h2>${resaltar(m.asunto, terms)}</h2>
     <dl class="meta"><dt>De</dt><dd>${esc(m.de_nombre || "")} &lt;${esc(m.de)}&gt;</dd>
       <dt>Para</dt><dd>${esc(m.para.join(", "))}</dd>${m.cc.length ? `<dt>Cc</dt><dd>${esc(m.cc.join(", "))}</dd>` : ""}
@@ -309,8 +329,8 @@ function textoHilo(ms, limite){
 const VACIAS = new Set("que cual cuales cuanto cuanta cuando como donde para por los las del con una uno unos unas tengo debo hay sobre este esta ese esa algo dijo dice tiene".split(" "));
 function contextoGeneral(q){
   const terms = norm(q).split(/[^a-z0-9ñ]+/).filter(t => t.length > 2 && !VACIAS.has(t));
-  const puntaje = {};
-  for (const m of MSGS) {
+  const puntaje = {}, base = MSGS.filter(m => !cuentaSel || m.cuenta === cuentaSel);
+  for (const m of base) {
     let s = 0; for (const t of terms) { if (norm(m.asunto + " " + m.de_nombre + " " + m.de).includes(t)) s += 4; if (m._idx.includes(t)) s += 2; }
     if (s) puntaje[m.hilo] = Math.max(puntaje[m.hilo] || 0, s + m.fecha / 1e14);
   }
@@ -328,7 +348,7 @@ function contextoGeneral(q){
     if (texto.length + bloque.length > 17000) break;
     texto += bloque;
   }
-  const indice = MSGS.slice(0, 60).map(m => `- ${fmtL(m.fecha)} | ${m.enviado ? "enviado a " + (m.para[0] || "") : (m.de_nombre || m.de)} | ${m.asunto}`).join("\n");
+  const indice = base.slice(0, 60).map(m => `- ${fmtL(m.fecha)} | ${m.enviado ? "enviado a " + (m.para[0] || "") : (m.de_nombre || m.de)} | ${m.asunto}`).join("\n");
   return `ÚLTIMOS CORREOS (índice):\n${indice.slice(0, 5000)}\n\nCORREOS RELACIONADOS CON LA PREGUNTA:${texto || "\n(ninguno coincide con las palabras de la pregunta)"}`;
 }
 
@@ -389,8 +409,9 @@ document.addEventListener("click", ev => {
   if (t.dataset.v) irA(t.dataset.v);
   else if (t.dataset.m) { abierto = t.dataset.m; pintarLista(); pintarCorreo(); if (innerWidth <= 860) scrollTo(0, 0); }
   else if (t.dataset.f) { filtro = t.dataset.f; limite = 150; pintarFiltros(); pintarLista(); }
-  else if ("cu" in t.dataset) { cuentaSel = t.dataset.cu; limite = 150; pintarFiltros(); pintarLista(); }
-  else if ("back" in t.dataset) { abierto = null; pintarLista(); }
+  else if ("cu" in t.dataset) { cuentaSel = t.dataset.cu; limite = 150; abierto = null; pintarFiltros(); pintarLista(); pintarCorreo(); irA("correos"); }
+  else if ("back" in t.dataset) { const id = abierto; abierto = null; pintarLista(); pintarCorreo();
+    const fila = document.querySelector(`.row[data-m="${CSS.escape(id || "")}"]`); if (fila) fila.scrollIntoView({block: "center"}); }
   else if ("more" in t.dataset) { limite += 150; pintarLista(); }
   else if (t.dataset.askthread) { ctxHilo = t.dataset.askthread; irA("preguntar"); }
   else if ("noctx" in t.dataset) { ctxHilo = null; pintarCtx(); }
