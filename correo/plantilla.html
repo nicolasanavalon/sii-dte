@@ -227,7 +227,7 @@ async function preguntar(input, salida, boton){
   if (!ia || !ia.clave) { salida.hidden = false; salida.innerHTML = `<p class="muted">La IA todavía no está activada (falta la clave gratuita de Groq).</p>`; return; }
   boton.disabled = true; salida.hidden = false; salida.innerHTML = `<div class="answer muted">Buscando en los correos…</div>`;
   const [sistema, usuario] = input;
-  const modelos = [ia.modelo, ...MODELOS_QA].filter((m, i, a) => m && a.indexOf(m) === i);
+  const modelos = [ia.modelo, ...(ia.modelos || []), ...MODELOS_QA].filter((m, i, a) => m && a.indexOf(m) === i);
   let error = "";
   try {
     for (const modelo of modelos) {

@@ -566,7 +566,12 @@ def generar_html(estado, clave):
     # La clave de Groq viaja DENTRO de los datos cifrados: solo quien tiene tu contraseña puede usar la IA de la página.
     datos = {k: v for k, v in estado.items() if not k.startswith("_")}
     if env("GROQ_API_KEY"):
-        datos["_ia"] = {"proveedor": "groq", "clave": env("GROQ_API_KEY"), "modelo": env("GROQ_MODELO")}
+        try:
+            import ia
+            lista = ia.modelos()
+        except Exception:
+            lista = []
+        datos["_ia"] = {"proveedor": "groq", "clave": env("GROQ_API_KEY"), "modelo": env("GROQ_MODELO"), "modelos": lista}
     caja = cripto.cifrar(datos, clave)
     html = PLANTILLA.read_text(encoding="utf-8").replace("/*__DATOS__*/null", json.dumps(caja))
     SALIDA.parent.mkdir(parents=True, exist_ok=True)
