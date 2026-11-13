@@ -46,8 +46,6 @@ jobs:
       CORREO_DIAS_INICIALES: ${{ vars.CORREO_DIAS_INICIALES }}
       CORREO_MAX_POR_CORRIDA: ${{ vars.CORREO_MAX_POR_CORRIDA }}
       CORREO_URL: ${{ vars.CORREO_URL || format('https://{0}.github.io/{1}/correo/', github.repository_owner, github.event.repository.name) }}
-      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-      TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
       CLAVE_PUBLICA: ${{ inputs.clave_publica }}
     steps:
       - uses: actions/checkout@v4
