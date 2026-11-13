@@ -235,10 +235,16 @@ def _traer_casilla(z, account_id, direccion, estado, primera):
               if (m.get("cuenta_id") == account_id or (primera and not m.get("cuenta_id")))
               and (m.get("v") != 2 or (m.get("intentos_adj", 0) < 3 and any(
                   str(f.get("texto", "")).startswith("(no se pudo descargar") for f in m.get("archivos", []))))}
-    if ultimos.get(account_id):
+    inicio = int((time.time() - dias * 86400) * 1000)       # ventana de la primera importación
+    if estado.get("relleno") is None:                       # (una vez) revisar huecos de importaciones cortadas
+        estado["relleno"] = {}
+    relleno = estado["relleno"]
+    relleno.setdefault(account_id, not relleno.get("_revisado_" + account_id))
+    relleno["_revisado_" + account_id] = True
+    if ultimos.get(account_id) and not relleno.get(account_id):
         desde = ultimos[account_id] - 2 * 86400_000          # margen de 2 días
     else:
-        desde = int((time.time() - dias * 86400) * 1000)    # casilla nueva: últimos N días
+        desde = inicio      # casilla nueva, o importación que quedó a medias: revisar toda la ventana
     if viejos:
         desde = min([desde] + [estado["mensajes"][i]["fecha"] for i in viejos]) - 60_000
 
@@ -265,6 +271,9 @@ def _traer_casilla(z, account_id, direccion, estado, primera):
         print(f"Hay {len(candidatos)} correos por traer en una casilla; se procesan los {tope} más recientes ahora "
               f"y el resto en las próximas corridas.")
         candidatos = candidatos[-tope:]
+        relleno[account_id] = True          # la próxima corrida vuelve a revisar la ventana completa
+    else:
+        relleno[account_id] = False
 
     nuevos = []
     for carpeta, enviados_carpeta, t, m in candidatos:
