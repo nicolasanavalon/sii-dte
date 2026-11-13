@@ -43,20 +43,43 @@ def _pedir(ruta, cuerpo=None, timeout=120):
 
 
 _modelos = None
+_max_salida = {}
+NO_CHAT = ("guard", "whisper", "tts", "playai", "orpheus", "distil", "compound", "embed", "vision-preview")
+FUERTES = ("120b", "70b", "maverick", "kimi", "qwen3", "gpt-oss", "235b", "405b", "scout", "32b")
 
 
 def modelos():
-    """Modelos preferidos que la cuenta tiene disponibles (con override por GROQ_MODELO)."""
+    """Modelos de chat de la cuenta, ordenados: preferidos, luego los más capaces. Se descartan los que
+    solo permiten respuestas muy cortas (menos de 1.000 tokens)."""
     global _modelos
     if _modelos is None:
+        datos = []
         try:
-            ids = {m["id"] for m in _pedir("/models").get("data", [])}
-        except Exception:
-            ids = set(PREFERIDOS)
+            datos = _pedir("/models").get("data", [])
+        except Exception as e:
+            print(f"::warning::No pude listar los modelos de Groq: {e}")
+        utiles = {}
+        for m in datos:
+            mid = str(m.get("id", ""))
+            if not mid or m.get("active") is False or any(x in mid.lower() for x in NO_CHAT):
+                continue
+            salida = int(m.get("max_completion_tokens") or m.get("context_window") or 0)
+            if salida and salida < 1000:
+                continue
+            utiles[mid] = m
+            _max_salida[mid] = salida
         primero = (os.environ.get("GROQ_MODELO") or "").strip()
-        lista = ([primero] if primero else []) + [m for m in PREFERIDOS if m != primero]
-        _modelos = [m for m in lista if m in ids] or [m for m in ids if "llama" in m][:3]
+        orden = [x for x in ([primero] if primero else []) + PREFERIDOS if x in utiles]
+        resto = sorted((x for x in utiles if x not in orden),
+                       key=lambda x: (-sum(f in x.lower() for f in FUERTES), -int(utiles[x].get("context_window") or 0)))
+        _modelos = (orden + resto)[:6] or ([primero] if primero else PREFERIDOS[:2])
+        print("Groq: modelos a usar (en orden):", ", ".join(_modelos))
     return _modelos
+
+
+def max_salida(modelo, pedido):
+    tope = _max_salida.get(modelo) or pedido
+    return max(256, min(pedido, tope))
 
 
 _agotados = set()
@@ -68,7 +91,7 @@ def chat(sistema, usuario, max_tokens=1600, json_mode=True):
     for modelo in modelos():
         if modelo in _agotados:
             continue
-        cuerpo = {"model": modelo, "temperature": 0.2, "max_tokens": max_tokens,
+        cuerpo = {"model": modelo, "temperature": 0.2, "max_tokens": max_salida(modelo, max_tokens),
                   "messages": [{"role": "system", "content": sistema}, {"role": "user", "content": usuario}]}
         if json_mode:
             cuerpo["response_format"] = {"type": "json_object"}
@@ -86,10 +109,8 @@ def chat(sistema, usuario, max_tokens=1600, json_mode=True):
                         break
                     time.sleep(espera + 1)
                     continue
-                if e.code in (413, 400) and ("too large" in txt.lower() or "context" in txt.lower()):
-                    break                           # muy largo para este modelo: probar otro
-                if e.code in (404,):
-                    break
+                if e.code in (400, 404, 413):
+                    break                           # este modelo no sirve para esta petición: probar el siguiente
                 if e.code >= 500 and intento < 4:
                     time.sleep(5 * (intento + 1))
                     continue
