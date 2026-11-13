@@ -14,9 +14,12 @@ API = "https://api.groq.com/openai/v1"
 # Orden de preferencia (calidad en español primero). Se usan solo los que la cuenta tenga disponibles.
 PREFERIDOS = [
     "llama-3.3-70b-versatile",
+    "openai/gpt-oss-120b",
+    "moonshotai/kimi-k2-instruct",
     "meta-llama/llama-4-maverick-17b-128e-instruct",
     "meta-llama/llama-4-scout-17b-16e-instruct",
     "qwen/qwen3-32b",
+    "openai/gpt-oss-20b",
     "llama-3.1-8b-instant",
 ]
 
@@ -85,7 +88,7 @@ def max_salida(modelo, pedido):
 _agotados = set()
 
 
-def chat(sistema, usuario, max_tokens=1600, json_mode=True):
+def chat(sistema, usuario, max_tokens=3000, json_mode=True):
     """Devuelve (texto, modelo). Reintenta ante límites por minuto; cambia de modelo ante límites diarios."""
     ultimo = None
     for modelo in modelos():
@@ -95,6 +98,8 @@ def chat(sistema, usuario, max_tokens=1600, json_mode=True):
                   "messages": [{"role": "system", "content": sistema}, {"role": "user", "content": usuario}]}
         if json_mode:
             cuerpo["response_format"] = {"type": "json_object"}
+        if "gpt-oss" in modelo:
+            cuerpo["reasoning_effort"] = "low"     # menos razonamiento = respuestas más rápidas y livianas
         for intento in range(5):
             try:
                 r = _pedir("/chat/completions", cuerpo)
