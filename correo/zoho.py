@@ -15,6 +15,7 @@ from email.utils import getaddresses
 from html.parser import HTMLParser
 
 SCOPES = "ZohoMail.accounts.READ,ZohoMail.folders.READ,ZohoMail.messages.READ"
+MAX_ADJUNTO = 12 * 1024 * 1024   # no se descargan adjuntos de más de 12 MB
 
 
 class ZohoError(RuntimeError):
@@ -63,15 +64,15 @@ class Zoho:
             self._vence = time.time() + int(data.get("expires_in", 3600))
         return self._token
 
-    def get(self, ruta, **params):
+    def get(self, ruta, _crudo=False, **params):
         q = urllib.parse.urlencode({k: v for k, v in params.items() if v is not None})
         url = f"{self.base}{ruta}" + (f"?{q}" if q else "")
         for intento in range(4):
             req = urllib.request.Request(url, headers={
                 "Authorization": f"Zoho-oauthtoken {self._access()}", "Accept": "application/json"})
             try:
-                with urllib.request.urlopen(req, timeout=60) as r:
-                    return json.load(r)
+                with urllib.request.urlopen(req, timeout=90) as r:
+                    return r.read(MAX_ADJUNTO + 1) if _crudo else json.load(r)
             except urllib.error.HTTPError as e:
                 cuerpo = e.read().decode("utf-8", "replace")[:500]
                 if e.code in (429, 500, 502, 503, 504) and intento < 3:
@@ -109,8 +110,21 @@ class Zoho:
                         start=start, limit=limit, sortorder="false", includeto="true").get("data", [])
 
     def contenido(self, account_id, folder_id, message_id):
-        d = self.get(f"/accounts/{account_id}/folders/{folder_id}/messages/{message_id}/content")
+        """HTML del correo INCLUYENDO la cadena citada (historial de respuestas/reenvíos)."""
+        d = self.get(f"/accounts/{account_id}/folders/{folder_id}/messages/{message_id}/content",
+                     includeBlockContent="true")
         return (d.get("data") or {}).get("content", "")
+
+    def adjuntos(self, account_id, folder_id, message_id):
+        """[{attachmentId, attachmentName, attachmentSize}] de un correo."""
+        d = self.get(f"/accounts/{account_id}/folders/{folder_id}/messages/{message_id}/attachmentinfo")
+        data = d.get("data") or {}
+        lista = data.get("attachments") if isinstance(data, dict) else data
+        return [a for a in (lista or []) if isinstance(a, dict) and a.get("attachmentId")]
+
+    def descargar_adjunto(self, account_id, folder_id, message_id, attachment_id):
+        return self.get(f"/accounts/{account_id}/folders/{folder_id}/messages/{message_id}/attachments/{attachment_id}",
+                        _crudo=True)
 
 
 # --- utilidades de texto ---

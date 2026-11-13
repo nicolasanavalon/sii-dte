@@ -20,8 +20,10 @@ Variables de entorno:
   CORREO_URL           dirección de la página publicada. Ahí vive el estado (cifrado): cada corrida
                        la lee, agrega lo nuevo y la vuelve a publicar. Sin ella se usa correo/index.html.
 """
+import hashlib
 import json
 import os
+import re
 import sys
 import time
 import traceback
@@ -49,7 +51,7 @@ except Exception:
     TZ = timezone(timedelta(hours=-3))
 
 MAX_MENSAJES = 3000      # se guardan los últimos N correos
-MAX_TEXTO_GUARDADO = 15000
+MAX_TEXTO_GUARDADO = 40000   # el texto incluye la cadena citada completa
 LOTE = 12                # correos por llamada a Claude
 
 
@@ -63,7 +65,7 @@ def fecha_txt(ms):
 
 def estado_vacio():
     return {"version": 1, "cuenta": "", "propios": [], "ultimo_ms": 0, "ultima_sync": "",
-            "mensajes": {}, "contactos": {}, "errores": [], "avisados": []}
+            "mensajes": {}, "contactos": {}, "errores": [], "avisados": [], "hilos": {}, "db_versiones": {}}
 
 
 def _caja_de_html(html):
@@ -125,7 +127,38 @@ def refresh_token(clave):
     sys.exit("Falta conectar Zoho: corre el workflow 'Correo: conectar Zoho' (ver correo/README.md).")
 
 
+ASUNTO_PREFIJOS = re.compile(r"^\s*((re|rv|fw|fwd|reenviar|resp|r)\s*(\[\d+\])?\s*:\s*)+", re.I)
+
+
+def clave_hilo(thread_id, asunto, contacto):
+    """Id estable de la conversación: el hilo de Zoho, o el asunto sin 'RE:/RV:' + el contacto."""
+    base = f"z:{thread_id}" if thread_id else f"a:{ASUNTO_PREFIJOS.sub('', asunto or '').strip().lower()}|{contacto}"
+    return hashlib.sha1(base.encode()).hexdigest()[:16]
+
+
+def leer_archivos(z, account_id, folder_id, mid):
+    from extraer import texto_de
+    archivos = []
+    try:
+        lista = z.adjuntos(account_id, folder_id, mid)
+    except Exception as e:
+        print(f"::warning::No pude listar los adjuntos de {mid}: {e}")
+        return archivos
+    for a in lista[:10]:
+        nombre = str(a.get("attachmentName") or "archivo")
+        tam = int(float(a.get("attachmentSize") or 0))
+        texto = ""
+        if tam <= 12 * 1024 * 1024:
+            try:
+                texto = texto_de(nombre, z.descargar_adjunto(account_id, folder_id, mid, a["attachmentId"]))
+            except Exception as e:
+                texto = f"(no se pudo descargar: {type(e).__name__})"
+        archivos.append({"nombre": nombre, "tamano": tam, "texto": texto})
+    return archivos
+
+
 def traer_nuevos(estado, clave):
+    """Trae correos nuevos y completa los antiguos (cadena completa + adjuntos) que aún no la tengan."""
     from zoho import Zoho, direcciones, html_a_texto
 
     z = Zoho(env("ZOHO_CLIENT_ID"), env("ZOHO_CLIENT_SECRET"), refresh_token(clave))
@@ -146,11 +179,14 @@ def traer_nuevos(estado, clave):
 
     dias = int(env("CORREO_DIAS_INICIALES", "30"))
     tope = int(env("CORREO_MAX_POR_CORRIDA", "150"))
+    # Correos guardados antes de que existiera la versión 2 (cadena completa + adjuntos): se completan.
+    viejos = {i for i, m in estado["mensajes"].items() if m.get("v") != 2}
     if estado["ultimo_ms"]:
         desde = estado["ultimo_ms"] - 2 * 86400_000          # margen de 2 días
     else:
         desde = int((time.time() - dias * 86400) * 1000)
-    conocidos = set(estado["mensajes"])
+    if viejos:
+        desde = min([desde] + [estado["mensajes"][i]["fecha"] for i in viejos]) - 60_000
 
     candidatos = []
     for carpeta, enviados in elegidas:
@@ -163,26 +199,30 @@ def traer_nuevos(estado, clave):
                 if t and t < desde:
                     parar = True
                     break
-                if str(m["messageId"]) not in conocidos:
+                mid = str(m["messageId"])
+                if mid not in estado["mensajes"] or mid in viejos:
                     candidatos.append((carpeta, enviados, t, m))
-            if parar or len(pagina) < 100 or start > 2000:
+            if parar or len(pagina) < 100 or start > 3000:
                 break
             start += 100
 
     candidatos.sort(key=lambda x: x[2])
     if len(candidatos) > tope:
-        print(f"Hay {len(candidatos)} correos nuevos; se procesan los {tope} más recientes ahora "
-              f"y el resto queda fuera (sube CORREO_MAX_POR_CORRIDA si quieres todos).")
+        print(f"Hay {len(candidatos)} correos por traer; se procesan los {tope} más recientes ahora "
+              f"y el resto en las próximas corridas.")
         candidatos = candidatos[-tope:]
 
     nuevos = []
     for carpeta, enviados_carpeta, t, m in candidatos:
         mid = str(m["messageId"])
+        fid = str(carpeta["folderId"])
         try:
-            texto = html_a_texto(z.contenido(account_id, carpeta["folderId"], mid))
+            texto = html_a_texto(z.contenido(account_id, fid, mid))
         except Exception as e:
             print(f"::warning::No pude leer el contenido del correo {mid}: {e}")
             texto = ""
+        tiene_adj = m.get("hasAttachment") in (True, "1", 1)
+        archivos = leer_archivos(z, account_id, fid, mid) if tiene_adj else []
         de = direcciones(m.get("fromAddress")) or [("", "")]
         de_nombre = (m.get("sender") or de[0][0] or "").strip()
         para = [a for _, a in direcciones(m.get("toAddress"))]
@@ -193,21 +233,27 @@ def traer_nuevos(estado, clave):
             contacto = otros[0] if otros else (para[0] if para else de[0][1])
         else:
             contacto = de[0][1]
+        contacto = contacto or "(desconocido)"
+        asunto = (m.get("subject") or "(sin asunto)").strip()
+        previo = estado["mensajes"].get(mid) or {}
         msg = {
-            "id": mid, "hilo": str(m.get("threadId") or ""), "fecha": t,
-            "de": de[0][1], "de_nombre": de_nombre, "para": para, "cc": cc,
-            "asunto": (m.get("subject") or "(sin asunto)").strip(),
+            "v": 2, "id": mid, "carpeta": fid, "thread_zoho": str(m.get("threadId") or ""),
+            "hilo": clave_hilo(str(m.get("threadId") or ""), asunto, contacto), "fecha": t,
+            "de": de[0][1], "de_nombre": de_nombre, "para": para, "cc": cc, "asunto": asunto,
             "vista_previa": (m.get("summary") or "").strip(),
-            "texto": texto[:MAX_TEXTO_GUARDADO], "adjuntos": bool(m.get("hasAttachment") in (True, "1", 1)),
-            "enviado": bool(enviado), "contacto": contacto or "(desconocido)", "analisis": None,
+            "texto": texto[:MAX_TEXTO_GUARDADO], "adjuntos": bool(tiene_adj), "archivos": archivos,
+            "enviado": bool(enviado), "contacto": contacto,
+            "analisis": previo.get("analisis"), "en_db": False,
         }
         if not enviado and de_nombre:
             msg["nombre_contacto"] = de_nombre
         estado["mensajes"][mid] = msg
-        nuevos.append(msg)
+        if not previo:
+            nuevos.append(msg)
         estado["ultimo_ms"] = max(estado["ultimo_ms"], t)
-    print(f"Zoho: {len(nuevos)} correos nuevos.")
-    return nuevos
+    completados = len(candidatos) - len(nuevos)
+    print(f"Zoho: {len(nuevos)} correos nuevos" + (f", {completados} antiguos completados con cadena y adjuntos." if completados else "."))
+    return nuevos, completados
 
 
 # ---------------------------------------------------------------- Claude
@@ -287,40 +333,84 @@ def analizar_pendientes(estado):
 
 # ---------------------------------------------------------------- Turno de Claude (sin API key)
 
-MAX_TURNO = 40          # correos por turno de la sesión programada
-TEXTO_TURNO = 4000
+MAX_TURNO = 40          # correos (aprox.) por vuelta de la sesión programada
+TEXTO_ULTIMO = 12000    # el último correo de un hilo trae la cadena completa
+TEXTO_PREVIO = 1500
+TEXTO_ARCHIVO = 3000
+
+
+def hilos_de(estado):
+    h = defaultdict(list)
+    for m in estado["mensajes"].values():
+        h[m.get("hilo") or "m" + m["id"]].append(m)
+    for v in h.values():
+        v.sort(key=lambda m: m["fecha"])
+    return h
+
+
+def hilo_pendiente(estado, hid, msgs):
+    if any(m.get("v") != 2 for m in msgs):
+        return False          # aún no se completa con la cadena y los adjuntos
+    return hid not in estado.setdefault("hilos", {}) or any(
+        m.get("analisis") is None or not m.get("en_db") for m in msgs)
+
+
+def _msg_turno(m, ultimo):
+    return {
+        "id": m["id"], "nuevo": m.get("analisis") is None, "fecha": fecha_txt(m["fecha"]),
+        "direccion": "ENVIADO por la persona" if m["enviado"] else "RECIBIDO",
+        "de": f'{m["de_nombre"]} <{m["de"]}>', "para": m["para"], "cc": m.get("cc", []), "asunto": m["asunto"],
+        "texto": (m.get("texto") or m.get("vista_previa") or "")[:TEXTO_ULTIMO if ultimo else TEXTO_PREVIO],
+        "archivos": [{"nombre": f["nombre"], "texto": (f.get("texto") or "")[:TEXTO_ARCHIVO]} for f in m.get("archivos", [])],
+        "analisis": m.get("analisis"),
+    }
+
+
+def _msg_db(m):
+    return {k: m.get(k) for k in ("id", "fecha", "de", "de_nombre", "para", "cc", "asunto", "texto",
+                                  "vista_previa", "enviado", "contacto", "analisis")} | {
+        "archivos": [{"nombre": f["nombre"], "tamano": f.get("tamano", 0), "texto": f.get("texto", "")}
+                     for f in m.get("archivos", [])]}
 
 
 def preparar_turno(estado, clave, pub, salida):
-    from analisis import ESQUEMA, SISTEMA
+    from analisis import SISTEMA
 
-    sin = sorted((m for m in estado["mensajes"].values() if m.get("analisis") is None), key=lambda m: m["fecha"])
-    tanda = sin[:MAX_TURNO]
-    grupos = defaultdict(list)
-    for m in tanda:
-        grupos[m["contacto"]].append(m)
-    contactos = []
-    for c, msgs in grupos.items():
-        f = estado["contactos"].get(c)
-        contactos.append({
-            "email": c,
-            "ficha_actual": {k: f.get(k) for k in ("nombre", "tipo", "resumen", "pendientes", "datos_clave", "plazos")} if f else None,
-            "correos_nuevos": [{
-                "id": m["id"], "fecha": fecha_txt(m["fecha"]),
-                "direccion": "ENVIADO por la persona" if m["enviado"] else "RECIBIDO",
-                "de": f'{m["de_nombre"]} <{m["de"]}>', "para": m["para"], "asunto": m["asunto"],
-                "adjuntos": m.get("adjuntos", False), "texto": (m.get("texto") or m.get("vista_previa") or "")[:TEXTO_TURNO],
-            } for m in msgs]})
+    todos = hilos_de(estado)
+    pend = sorted(((hid, ms) for hid, ms in todos.items() if hilo_pendiente(estado, hid, ms)),
+                  key=lambda x: x[1][-1]["fecha"], reverse=True)       # lo más reciente primero
+    tanda, n = [], 0
+    for hid, ms in pend:
+        if tanda and n + len(ms) > MAX_TURNO:
+            break
+        tanda.append((hid, ms))
+        n += len(ms)
+
+    contactos = defaultdict(list)
+    for hid, ms in tanda:
+        for m in ms:
+            if m.get("analisis") is None:
+                contactos[m["contacto"]].append(m["id"])
+    fichas = {m["contacto"] for _, ms in tanda for m in ms}
+    campos = ("nombre", "tipo", "resumen", "pendientes", "datos_clave", "plazos")
     paquete = {
         "turno": os.urandom(8).hex(), "hoy": datetime.now(TZ).strftime("%Y-%m-%d (%A)"),
         "clave_accion": cripto.llave_publica_b64(cripto.llave_accion(clave)),
-        "instrucciones": SISTEMA, "esquema_por_contacto": ESQUEMA,
-        "quedan_despues": len(sin) - len(tanda), "contactos": contactos,
+        "instrucciones": SISTEMA, "quedan_despues": len(pend) - len(tanda),
+        "contactos": [{"email": c, "ficha_actual": {k: estado["contactos"].get(c, {}).get(k) for k in campos}
+                       if c in estado["contactos"] else None, "ids_nuevos": ids} for c, ids in contactos.items()],
+        "hilos": [{"hilo": hid, "asunto": ms[-1]["asunto"], "contacto": ms[-1]["contacto"],
+                   "resumen_actual": estado["hilos"].get(hid, {}).get("resumen"),
+                   "mensajes": [_msg_turno(m, i == len(ms) - 1) for i, m in enumerate(ms)]} for hid, ms in tanda],
+        # Datos completos para la base de datos de la página (no hace falta leerlos para resumir).
+        "db_hilos": {hid: [_msg_db(m) for m in ms] for hid, ms in tanda},
+        "db_fichas": {c: estado["contactos"].get(c, {}) for c in fichas},
+        "db_hilos_previos": {hid: estado["hilos"].get(hid, {}) for hid, _ in tanda},
+        "db_versiones": estado.get("db_versiones", {}),
     }
     Path(salida).parent.mkdir(parents=True, exist_ok=True)
     Path(salida).write_text(json.dumps(cripto.sellar(paquete, pub)))
-    print(f"Turno preparado: {len(tanda)} correos de {len(contactos)} contactos "
-          f"(quedan {paquete['quedan_despues']} para el próximo turno).")
+    print(f"Turno preparado: {len(tanda)} conversaciones ({n} correos); quedan {paquete['quedan_despues']}.")
 
 
 def aplicar_turno(estado, clave, archivo):
@@ -332,7 +422,22 @@ def aplicar_turno(estado, clave, archivo):
         lote = [m for i, m in estado["mensajes"].items() if i in ids and m["contacto"] == contacto]
         if lote:
             analizados += aplicar_resultado(estado, contacto, item, lote)
-    print(f"Turno de Claude aplicado: {len(analizados)} correos resumidos.")
+    hilos = estado.setdefault("hilos", {})
+    for h in r.get("hilos") or []:
+        if isinstance(h, dict) and h.get("hilo"):
+            hilos[str(h["hilo"])] = {"resumen": _txt(h.get("resumen"), 4000),
+                                     "puntos_clave": [_txt(x, 400) for x in (h.get("puntos_clave") or [])][:12],
+                                     "actualizado": datetime.now(TZ).isoformat(timespec="minutes")}
+    estado.setdefault("db_versiones", {}).update(
+        {str(k): int(v) for k, v in (r.get("versiones") or {}).items() if str(v).isdigit()})
+    exportados = {str(x) for x in r.get("exportados") or []}
+    marcados = 0
+    for m in estado["mensajes"].values():
+        if m.get("hilo") in exportados:
+            m["en_db"] = True
+            marcados += 1
+    print(f"Turno de Claude aplicado: {len(analizados)} correos resumidos, {len(r.get('hilos') or [])} conversaciones, "
+          f"{marcados} correos guardados en la página.")
     return analizados
 
 
@@ -429,12 +534,12 @@ def main():
         marcar_cambio(True)
         return
 
-    nuevos = traer_nuevos(estado, clave)
+    nuevos, completados = traer_nuevos(estado, clave)
     analizados = analizar_pendientes(estado)
     if "--preparar" in sys.argv:
         i = sys.argv.index("--preparar")
         preparar_turno(estado, clave, sys.argv[i + 1], sys.argv[i + 2])
-    cambio = bool(nuevos or analizados) or not estado["ultima_sync"]
+    cambio = bool(nuevos or completados or analizados) or not estado["ultima_sync"]
     estado["ultima_sync"] = datetime.now(TZ).strftime("%Y-%m-%d %H:%M")
     recortar(estado)
     avisar(estado, analizados)
