@@ -1,0 +1,49 @@
+name: "Correo: enviar respuesta"
+run-name: "Correo: enviar respuesta ${{ inputs.id }}"
+
+# Lo dispara la Bandeja (botón Enviar). La respuesta llega CIFRADA con tu contraseña: en este
+# registro público solo se ve texto cifrado, y el script no imprime direcciones ni contenido.
+on:
+  workflow_dispatch:
+    inputs:
+      paquete:
+        description: "Respuesta cifrada (la arma la página)"
+        required: true
+        type: string
+      id:
+        description: "Identificador del envío (para que la página siga el estado)"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: correo-enviar
+  cancel-in-progress: false
+
+jobs:
+  enviar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Instalar dependencias
+        run: pip install -q cryptography
+
+      - name: Enviar
+        env:
+          PAQUETE: ${{ inputs.paquete }}
+          CORREO_CLAVE: ${{ secrets.CORREO_CLAVE }}
+          ZOHO_CLIENT_ID: ${{ secrets.ZOHO_CLIENT_ID }}
+          ZOHO_CLIENT_SECRET: ${{ secrets.ZOHO_CLIENT_SECRET }}
+          ZOHO_REFRESH_TOKEN: ${{ secrets.ZOHO_REFRESH_TOKEN }}
+          ZOHO_TALLER_CLIENT_ID: ${{ secrets.ZOHO_TALLER_CLIENT_ID }}
+          ZOHO_TALLER_CLIENT_SECRET: ${{ secrets.ZOHO_TALLER_CLIENT_SECRET }}
+          ZOHO_DC: ${{ vars.ZOHO_DC }}
+        run: python correo/enviar.py

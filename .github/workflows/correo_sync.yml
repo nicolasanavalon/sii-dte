@@ -49,6 +49,7 @@ jobs:
           ZOHO_TALLER_CLIENT_SECRET: ${{ secrets.ZOHO_TALLER_CLIENT_SECRET }}
           ZOHO_DC: ${{ vars.ZOHO_DC }}
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          GH_TOKEN_ENVIO: ${{ secrets.GH_TOKEN_ENVIO }}
           GROQ_MODELO: ${{ vars.GROQ_MODELO }}
           CORREO_DIAS_INICIALES: ${{ vars.CORREO_DIAS_INICIALES }}
           CORREO_MAX_POR_CORRIDA: ${{ vars.CORREO_MAX_POR_CORRIDA }}
