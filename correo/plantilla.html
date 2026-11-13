@@ -233,8 +233,9 @@ async function preguntar(input, salida, boton){
     for (const modelo of modelos) {
       const r = await fetch("https://api.groq.com/openai/v1/chat/completions", { method: "POST",
         headers: { "Authorization": "Bearer " + ia.clave, "Content-Type": "application/json" },
-        body: JSON.stringify({ model: modelo, temperature: 0.2, max_tokens: 900,
-          messages: [{ role: "system", content: sistema }, { role: "user", content: usuario }] }) }).catch(e => ({ ok: false, status: 0, text: async () => String(e) }));
+        body: JSON.stringify(Object.assign({ model: modelo, temperature: 0.2, max_tokens: 1500,
+          messages: [{ role: "system", content: sistema }, { role: "user", content: usuario }] },
+          modelo.includes("gpt-oss") ? { reasoning_effort: "low" } : {})) }).catch(e => ({ ok: false, status: 0, text: async () => String(e) }));
       if (r.ok) { const j = await r.json(); const t = j.choices[0].message.content || ""; salida.innerHTML = `<div class="answer">${md(t.replace(/<think>[\s\S]*?<\/think>/g, ""))}</div>`; return t; }
       error = r.status === 429 ? "Se alcanzó el límite gratis de preguntas por ahora. Prueba en un minuto." : r.status === 0 ? "Sin conexión con la IA." : "La IA no pudo responder (" + r.status + ").";
       if (![404, 413, 429, 400].includes(r.status)) break;
