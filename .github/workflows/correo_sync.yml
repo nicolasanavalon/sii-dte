@@ -1,6 +1,6 @@
 name: "Correo: sincronizar"
 
-# Cada 30 minutos: trae correos nuevos de Zoho, los resume con Claude y publica la página cifrada
+# Cada 30 minutos: trae correos nuevos de Zoho, los resume con la IA gratuita de Groq y publica la página cifrada
 # en GitHub Pages (https://USUARIO.github.io/REPO/correo/). Si no hay correos nuevos, no publica nada.
 on:
   schedule:
@@ -46,8 +46,8 @@ jobs:
           ZOHO_CLIENT_SECRET: ${{ secrets.ZOHO_CLIENT_SECRET }}
           ZOHO_REFRESH_TOKEN: ${{ secrets.ZOHO_REFRESH_TOKEN }}
           ZOHO_DC: ${{ vars.ZOHO_DC }}
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          CORREO_MODELO: ${{ vars.CORREO_MODELO }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          GROQ_MODELO: ${{ vars.GROQ_MODELO }}
           CORREO_DIAS_INICIALES: ${{ vars.CORREO_DIAS_INICIALES }}
           CORREO_MAX_POR_CORRIDA: ${{ vars.CORREO_MAX_POR_CORRIDA }}
           CORREO_URL: ${{ vars.CORREO_URL || format('https://{0}.github.io/{1}/correo/', github.repository_owner, github.event.repository.name) }}

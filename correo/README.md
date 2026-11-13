@@ -1,11 +1,14 @@
 # Mi correo: Zoho Mail + resúmenes automáticos con Claude
 
-> **Bandeja Anasep** (la página principal, con IA para preguntar):
-> https://claude.ai/artifact/BntSRHPauRL2Lopk9Y4fnr
-> Muestra cada conversación con el resumen de **toda la cadena** y el texto de los **adjuntos** (PDF, Excel,
-> Word), y tiene una caja para preguntarle a una conversación o a todos tus correos. La IA usa tu plan de
-> Claude, sin costo extra. Los datos quedan en la base de datos privada de esa página: solo tú puedes leerlos.
-> La página cifrada de GitHub Pages (`…/correo/`) sigue funcionando como respaldo.
+> **Bandeja Anasep** → `https://nicolasanavalon.github.io/sii-dte/correo/` (se abre con tu `CORREO_CLAVE`).
+> Cada conversación trae el resumen de **toda la cadena** (incluidos los mensajes citados) y el texto de sus
+> **adjuntos** (PDF, Excel, Word), más un **buscador** y una caja para **preguntarle a la IA**.
+> La IA es **Groq, en su plan gratis** (no usa Claude ni cobra nada): resume en GitHub Actions cada 30 minutos y
+> responde las preguntas desde la página. Su clave viaja cifrada dentro de la página: solo funciona con tu contraseña.
+>
+> **Activar la IA gratis (una vez):** crea una cuenta en https://console.groq.com, ve a **API Keys** y crea una
+> clave. Guárdala como secreto `GROQ_API_KEY` en el repo (Settings → Secrets and variables → Actions). Si el
+> plan gratis llega a su límite del día, lo pendiente se resume en la siguiente corrida: nunca se cobra.
 
 Cada 30 minutos, **sin que tengas nada abierto**:
 

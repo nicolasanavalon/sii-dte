@@ -39,6 +39,8 @@ jobs:
       ZOHO_CLIENT_SECRET: ${{ secrets.ZOHO_CLIENT_SECRET }}
       ZOHO_REFRESH_TOKEN: ${{ secrets.ZOHO_REFRESH_TOKEN }}
       ZOHO_DC: ${{ vars.ZOHO_DC }}
+      GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+      GROQ_MODELO: ${{ vars.GROQ_MODELO }}
       CORREO_DIAS_INICIALES: ${{ vars.CORREO_DIAS_INICIALES }}
       CORREO_MAX_POR_CORRIDA: ${{ vars.CORREO_MAX_POR_CORRIDA }}
       CORREO_URL: ${{ vars.CORREO_URL || format('https://{0}.github.io/{1}/correo/', github.repository_owner, github.event.repository.name) }}
