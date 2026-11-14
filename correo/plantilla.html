@@ -110,6 +110,16 @@ header{display:flex; flex-wrap:wrap; align-items:center; justify-content:space-b
 .vacio{color:var(--muted); text-align:center; padding:40px 16px; margin:0}
 
 .sinc{display:flex; align-items:center; gap:8px; flex-wrap:wrap}
+.acciones{display:flex; align-items:center; gap:10px 18px; flex-wrap:wrap}
+.movil{display:none}
+/* Celular: botones, estado y salir en una sola fila. */
+@media (max-width:600px){
+  .acciones{width:100%; flex-wrap:nowrap; gap:6px}
+  .acciones .sinc{flex:1; min-width:0; flex-wrap:nowrap; gap:6px}
+  #sincTxt{min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; font-size:12px}
+  .acciones .pc{display:none} .acciones .movil{display:inline}
+  .acciones .chip, .acciones .btn{padding:7px 10px; flex:none}
+}
 .sinc .girando{display:inline-block; animation:girar 1s linear infinite}
 @keyframes girar{to{transform:rotate(360deg)}}
 
@@ -238,10 +248,12 @@ textarea{font:inherit}
       <button class="tab" role="tab" id="tab-correos" data-v="correos">Correos</button>
       <button class="tab" role="tab" id="tab-preguntar" data-v="preguntar">Preguntar</button>
     </nav>
-    <div class="sinc"><button class="chip" id="buscarAhora" title="Buscar correos nuevos en Zoho">🔄 Buscar ahora</button><span class="small muted" id="sincTxt"></span></div>
-    <button class="btn" id="nuevo" data-nuevo>✉️ Nuevo correo</button>
-    <button class="chip" id="avisos" hidden>🔔 Activar burbuja y avisos</button>
-    <button class="chip" id="salir" title="Olvidar la contraseña en este dispositivo">Cerrar sesión</button>
+    <div class="acciones">
+      <div class="sinc"><button class="chip" id="buscarAhora" title="Buscar correos nuevos en Zoho">🔄<span class="pc"> Buscar ahora</span></button><span class="small muted" id="sincTxt"></span></div>
+      <button class="btn" id="nuevo" data-nuevo>✉️<span class="pc"> Nuevo correo</span><span class="movil"> Nuevo</span></button>
+      <button class="chip" id="avisos" hidden title="Activar burbuja y avisos">🔔<span class="pc"> Activar burbuja y avisos</span></button>
+      <button class="chip" id="salir" title="Olvidar la contraseña en este dispositivo"><span class="pc">Cerrar sesión</span><span class="movil">Salir</span></button>
+    </div>
   </header>
 
   <section id="vCorreos">
@@ -1179,7 +1191,7 @@ $("#busca").addEventListener("input", ev => { clearTimeout(tBusca); tBusca = set
 // La página la revisa cada 30 segundos y, si hay algo nuevo, lo descarga y lo muestra sin recargar.
 let versionActual = null, buscando = false;
 const horaTxt = ms => new Date(ms || Date.now()).toLocaleTimeString("es-CL", {hour: "2-digit", minute: "2-digit"});
-function sinc(txt, gira){ $("#sincTxt").innerHTML = esc(txt); $("#buscarAhora").innerHTML = (gira ? '<span class="girando">🔄</span>' : "🔄") + " Buscar ahora"; }
+function sinc(txt, gira){ $("#sincTxt").innerHTML = esc(txt); $("#buscarAhora").innerHTML = (gira ? '<span class="girando">🔄</span>' : "🔄") + '<span class="pc"> Buscar ahora</span>'; }
 
 async function deDatos(archivo){
   const gh = (D && D._envio) || {}, repo = gh.repo || (D && D._repo) || "nicolasanavalon/sii-dte";
@@ -1209,8 +1221,8 @@ async function revisarZoho(manual){
     }
     const atraso = Date.now() - (v.ms || 0);
     sinc(n ? `${n} correo${n > 1 ? "s" : ""} nuevo${n > 1 ? "s" : ""} · ${horaTxt()}`
-           : atraso < 5 * 60000 ? `Al día · Zoho revisado ${horaTxt(v.ms)}` : `⚠️ Última revisión de Zoho: ${horaTxt(v.ms)}`);
-  } catch(e) { sinc(`⚠️ No pude conectarme para ver si hay correos nuevos (${e.message}); reintento en 30 s.`); }
+           : atraso < 5 * 60000 ? `Al día · revisado ${horaTxt(v.ms)}` : `⚠️ Revisado ${horaTxt(v.ms)}`);
+  } catch(e) { sinc(`⚠️ Sin conexión (${e.message}); reintento en 30 s`); }
   buscando = false;
 }
 $("#buscarAhora").addEventListener("click", () => { buscando = false; revisarZoho(true); });
