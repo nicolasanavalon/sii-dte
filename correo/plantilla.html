@@ -941,8 +941,10 @@ const MODELOS_QA = ["openai/gpt-oss-120b", "llama-3.3-70b-versatile", "openai/gp
 async function groq(sistema, usuario, json = false){
   const ia = D._ia;
   if (!ia || !ia.clave) throw new Error("La IA todavía no está activada (falta la clave gratuita de Groq).");
-  const modelos = [ia.modelo, ...(ia.modelos || []), ...MODELOS_QA].filter((m, i, a) => m && a.indexOf(m) === i);
-  let error = "La IA no pudo responder.";
+  // Primero el modelo reservado para ti (los resúmenes automáticos no gastan su cuota); solo modelos que tu cuenta tiene.
+  const cuenta = ia.modelos && ia.modelos.length ? ia.modelos : MODELOS_QA;
+  const modelos = [ia.modelo, ...(ia.reservados || []).filter(m => cuenta.includes(m)), ...cuenta].filter((m, i, a) => m && a.indexOf(m) === i);
+  let error = "La IA no pudo responder.", limite = false;
   for (const modelo of modelos) {
     const r = await fetch("https://api.groq.com/openai/v1/chat/completions", { method: "POST",
       headers: { "Authorization": "Bearer " + ia.clave, "Content-Type": "application/json" },
@@ -950,7 +952,12 @@ async function groq(sistema, usuario, json = false){
         messages: [{ role: "system", content: sistema }, { role: "user", content: usuario }] },
         modelo.includes("gpt-oss") ? { reasoning_effort: "low" } : {}, json ? { response_format: { type: "json_object" } } : {})) }).catch(() => null);
     if (r && r.ok) { const j = await r.json(); return (j.choices[0].message.content || "").replace(/<think>[\s\S]*?<\/think>/g, "").trim(); }
-    error = !r ? "Sin conexión con la IA." : r.status === 429 ? "Se alcanzó el límite gratis de preguntas por ahora. Prueba en un minuto." : `La IA no pudo responder (${r.status}).`;
+    if (r && r.status === 429) {
+      const txt = await r.text().catch(() => ""), dia = /per day|TPD|RPD/i.test(txt), m = txt.match(/try again in ([\dhms.]+)/);
+      const en = m ? m[1].replace(/\.$/, "").replace(/\.\d+s/, "s").replace(/(\d+)h/, "$1 h ").replace(/(\d+)m/, "$1 min ").replace(/(\d+)s/, "$1 s").trim() : "";
+      if (!limite || dia) error = dia ? `La IA gratuita llegó a su límite del día${en ? "; vuelve a estar disponible en " + en : ""}.` : "La IA gratuita está ocupada (límite por minuto). Prueba en un minuto.";
+      limite = true;
+    } else if (!limite) error = !r ? "Sin conexión con la IA." : `La IA no pudo responder (${r.status}).`;
     if (r && ![400, 404, 413, 429].includes(r.status)) break;
   }
   throw new Error(error);
