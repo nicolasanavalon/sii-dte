@@ -260,16 +260,24 @@ let D = null, MSGS = [], HILOS = {}, CUENTAS = [];
 let abierto = null, busca = "", filtro = "todos", cuentaSel = "", limite = 150, ctxHilo = null;
 let CLAVE = "", borrador = null;
 const LEIDOS = new Set((() => { try { return JSON.parse(localStorage.getItem("correo_leidos") || "[]"); } catch(e) { return []; } })());
-const noLeido = m => m.no_leido && !LEIDOS.has(m.id);
+const noLeido = m => NL[m.id] ? true : (m.no_leido && !LEIDOS.has(m.id));
 function marcarLeido(id){
+  if (NL[id]) { delete NL[id]; guardarPend(); }
   if (!LEIDOS.has(id)) { LEIDOS.add(id); try { localStorage.setItem("correo_leidos", JSON.stringify([...LEIDOS].slice(-3000))); } catch(e){} }
   if (!PEND[id]) { PEND[id] = [Date.now(), 0]; guardarPend(); programarLeidos(6000); }
 }
 // Leídos en línea: lo que abres aquí se marca leído en Zoho (y así en el celular y en el computador).
 // PEND = {id: [cuándo lo abriste, cuándo se pidió marcarlo]}. Se reintenta hasta que Zoho lo confirme.
+// NL = correos que marcaste como NO leídos: {id: [cuándo, cuándo se pidió a Zoho]}.
+const NL = (() => { try { return JSON.parse(localStorage.getItem("correo_pend_noleidos") || "{}") || {}; } catch(e) { return {}; } })();
+function marcarNoLeido(id){
+  LEIDOS.delete(id); delete PEND[id]; NL[id] = [Date.now(), 0];
+  try { localStorage.setItem("correo_leidos", JSON.stringify([...LEIDOS].slice(-3000))); } catch(e) {}
+  guardarPend(); programarLeidos(3000);
+}
 const PEND = (() => { try { const p = JSON.parse(localStorage.getItem("correo_pend_leidos") || "null"); if (p) return p; } catch(e) {}
   const p = {}; for (const id of LEIDOS) p[id] = [Date.now(), 0]; return p; })();
-function guardarPend(){ try { localStorage.setItem("correo_pend_leidos", JSON.stringify(PEND)); } catch(e) {} }
+function guardarPend(){ try { localStorage.setItem("correo_pend_leidos", JSON.stringify(PEND)); localStorage.setItem("correo_pend_noleidos", JSON.stringify(NL)); } catch(e) {} }
 let tLeidos = null;
 function programarLeidos(ms){ clearTimeout(tLeidos); tLeidos = setTimeout(sincLeidos, ms); }
 async function sincLeidos(){
@@ -281,14 +289,22 @@ async function sincLeidos(){
     if (ahora - e < 10 * 60000 || !m.cuenta_id || lote.length >= 300) continue;        // pedido hace poco: esperar
     (ids[m.cuenta_id] ||= []).push(id); lote.push(id);
   }
+  const ids_no = {}, loteNo = [];
+  for (const [id, [t, e]] of Object.entries(NL)) {
+    const m = D.mensajes[id];
+    if (!m || ahora - t > 7 * 864e5) { delete NL[id]; continue; }
+    if (m.no_leido && e && ahora - e > 30000) { delete NL[id]; continue; }      // Zoho ya lo tiene como no leído
+    if (ahora - e < 10 * 60000 || !m.cuenta_id) continue;
+    (ids_no[m.cuenta_id] ||= []).push(id); loteNo.push(id);
+  }
   guardarPend();
-  if (!lote.length) return;
+  if (!lote.length && !loteNo.length) return;
   try {
-    const paquete = await cifrar({ modo: "leidos", ids, ts: ahora });
+    const paquete = await cifrar({ modo: "leidos", ids, ids_no, ts: ahora });
     const r = await fetch(`https://api.github.com/repos/${gh.repo}/actions/workflows/correo_enviar.yml/dispatches`, { method: "POST",
       headers: { "Authorization": "Bearer " + gh.token, "Accept": "application/vnd.github+json" },
       body: JSON.stringify({ ref: "main", inputs: { paquete: JSON.stringify(paquete), id: "leidos-" + Math.random().toString(36).slice(2, 10) } }) });
-    if (r.ok) { for (const id of lote) if (PEND[id]) PEND[id][1] = ahora; guardarPend(); }
+    if (r.ok) { for (const id of lote) if (PEND[id]) PEND[id][1] = ahora; for (const id of loteNo) if (NL[id]) NL[id][1] = ahora; guardarPend(); }
   } catch(e) {}
 }   // borrador: {id, para, cc, asunto, texto, obs, confirmar, estado, clase, ocupado}
 
@@ -411,7 +427,7 @@ function pintarCorreo(){
   const legible = f => f.texto && !String(f.texto).startsWith("(");
   const nombre = m.de_nombre || m.de, conHtml = !!m.html && !verTexto;
   $("#read").innerHTML = `<div class="readbar"><button class="back" data-back>← Volver a la lista</button>
-      <div class="actions"><button class="btn" data-responder="uno">↩ Responder</button>${(m.cc.length || m.para.length > 1) ? '<button class="btn sec" data-responder="todos">↩ Responder a todos</button>' : ""}<button class="btn sec" data-responder="reenviar">↪ Reenviar</button>
+      <div class="actions"><button class="btn" data-responder="uno">↩ Responder</button>${(m.cc.length || m.para.length > 1) ? '<button class="btn sec" data-responder="todos">↩ Responder a todos</button>' : ""}<button class="btn sec" data-responder="reenviar">↪ Reenviar</button>${!m.enviado && !m.local ? '<button class="btn sec" data-noleido>✉️ Marcar como no leído</button>' : ""}
       <button class="btn sec" data-askthread="${esc(m.hilo)}">💬 Preguntar</button></div></div>
     <h2 class="asunto">${resaltar(m.asunto, terms)}</h2>
     <div class="remite">
@@ -823,7 +839,7 @@ function irA(v){
   if (v === "preguntar") { pintarCtx(); $("#qAsk").focus(); }
 }
 document.addEventListener("click", ev => {
-  const t = ev.target.closest("[data-v],[data-m],[data-f],[data-cu],[data-back],[data-more],[data-askthread],[data-noctx],[data-sug],[data-responder],[data-r],[data-adj],[data-vertexto],[data-ver],[data-bajar],[data-nuevo],[data-recuperar]");
+  const t = ev.target.closest("[data-v],[data-m],[data-f],[data-cu],[data-back],[data-more],[data-askthread],[data-noctx],[data-sug],[data-responder],[data-r],[data-adj],[data-vertexto],[data-ver],[data-bajar],[data-nuevo],[data-recuperar],[data-noleido]");
   if (!t) return;
   if (t.dataset.adj !== undefined) { const i = +t.dataset.adj; leerBorrador(); adjAbierto = adjAbierto === i ? null : i; pintarCorreo(); return; }
   if (t.dataset.ver !== undefined || t.dataset.bajar !== undefined) { const mm = MSGS.find(x => x.id === abierto); if (mm) abrirAdjunto(mm, +(t.dataset.ver ?? t.dataset.bajar), t.dataset.ver !== undefined); return; }
@@ -831,6 +847,8 @@ document.addEventListener("click", ev => {
   const m = MSGS.find(x => x.id === abierto);
   if ("recuperar" in t.dataset && recuperable) { borrador = recuperable.copia; abierto = recuperable.mid || "__nuevo__"; recuperable = null; $("#toast").hidden = true;
     irA("correos"); pintarLista(); pintarCorreo(); return; }
+  if ("noleido" in t.dataset && m) { marcarNoLeido(m.id); abierto = null; borrador = null; pintarFiltros(); pintarLista(); pintarCorreo();
+    aviso("✉️ Marcado como no leído (también en Zoho).", "bien", 4000); return; }
   if ("nuevo" in t.dataset) { irA("correos"); borrador = nuevoBorrador(null, "nuevo"); abierto = "__nuevo__"; pintarLista(); pintarCorreo(); setTimeout(() => $("#rPara") && $("#rPara").focus(), 0); if (innerWidth <= 860) scrollTo(0, 0); return; }
   if (t.dataset.responder && m) { const modo = t.dataset.responder; if (!borrador || borrador.id !== m.id || (borrador.modo === "reenviar") !== (modo === "reenviar")) borrador = nuevoBorrador(m, modo); pintarCorreo();
     setTimeout(() => { const e = modo === "reenviar" ? $("#rPara") : $("#rTexto"); if (e) { e.focus(); if (e.id === "rTexto") e.setSelectionRange(0, 0); } }, 0); return; }
