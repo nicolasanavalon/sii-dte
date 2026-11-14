@@ -890,10 +890,14 @@ def una_vuelta(estado, clave, rapido):
     global RAPIDO, LIMITE_VUELTA
     RAPIDO = rapido
     LIMITE_VUELTA = time.time() + 40
+    t0 = time.time()
     nuevos, completados = traer_nuevos(estado, clave)
     avisar(estado, [], nuevos)                       # aviso inmediato, sin esperar el resumen de la IA
+    t1 = time.time()
     estilo = not rapido and actualizar_estilo(estado)
+    t2 = time.time()
     analizados = analizar_pendientes(estado)
+    print(f"  tiempos: Zoho {t1 - t0:.0f} s · estilo {t2 - t1:.0f} s · resúmenes {time.time() - t2:.0f} s")
     cambio = bool(nuevos or completados or analizados or estilo or estado.pop("_hilos_actualizados", 0)
                   or estado.pop("_cambio_leidos", False)) or not estado["ultima_sync"]
     estado["ultima_sync"] = datetime.now(TZ).strftime("%Y-%m-%d %H:%M")
@@ -909,6 +913,7 @@ def vigilar(estado, clave, minutos):
     import subprocess
     import ia
     ia.MAX_ESPERA = 10                                   # sin esperas largas de la IA: se reintenta la vuelta siguiente
+    ia.TIMEOUT = 50                                      # una consulta lenta no puede trabar la revisión de correos
     os.environ.setdefault("CORREO_MAX_POR_CORRIDA", "15") # correos antiguos por vuelta (de a poco, sin atrasar lo nuevo)
     if not env("CORREO_MAX_POR_CORRIDA"):
         os.environ["CORREO_MAX_POR_CORRIDA"] = "15"
