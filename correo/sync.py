@@ -603,8 +603,8 @@ def actualizar_estilo(estado):
 
 
 def analizar_pendientes(estado):
-    if env("GROQ_API_KEY"):
-        return analizar_con_groq(estado)   # IA gratuita (Groq)
+    if env("GEMINI_API_KEY") or env("GROQ_API_KEY"):
+        return analizar_con_groq(estado)   # IA gratuita (Gemini y/o Groq)
     from analisis import analizar_contacto
 
     sin = [m for m in estado["mensajes"].values() if m.get("analisis") is None]
@@ -786,14 +786,15 @@ def avisar(estado, analizados, nuevos=()):
 def generar_html(estado, clave):
     # La clave de Groq viaja DENTRO de los datos cifrados: solo quien tiene tu contraseña puede usar la IA de la página.
     datos = {k: v for k, v in estado.items() if not k.startswith("_")}
-    if env("GROQ_API_KEY"):
+    if env("GEMINI_API_KEY") or env("GROQ_API_KEY"):
+        import ia
         try:
-            import ia
-            lista = ia.modelos()
+            lista, res = ia.modelos(), ia.reservados()
         except Exception:
-            lista = []
-        datos["_ia"] = {"proveedor": "groq", "clave": env("GROQ_API_KEY"), "modelo": env("GROQ_MODELO"), "modelos": lista,
-                        "reservados": sorted(ia.RESERVADOS)}
+            lista, res = [], []
+        datos["_ia"] = {"proveedor": "gemini" if env("GEMINI_API_KEY") else "groq", "clave": env("GROQ_API_KEY"),
+                        "clave_gemini": env("GEMINI_API_KEY"), "modelo": env("GROQ_MODELO"), "modelos": lista,
+                        "reservados": res}
     datos["_repo"] = env("GITHUB_REPOSITORY") or "nicolasanavalon/sii-dte"
     if env("GH_TOKEN_ENVIO"):
         # Llave de GitHub que SOLO puede lanzar el envío de respuestas (viaja cifrada, como la de Groq).

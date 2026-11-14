@@ -1,4 +1,5 @@
-"""Resúmenes con la IA gratuita de Groq (https://console.groq.com), sin usar Claude.
+"""Resúmenes con IA gratuita, sin usar Claude: Gemini de Google (principal, si existe GEMINI_API_KEY)
+y Groq (https://console.groq.com) como respaldo.
 
 Groq ofrece un plan gratis con límites por minuto y por día. Si se alcanza un límite, se prueba el
 siguiente modelo de la lista y, si todos están agotados, los correos quedan para la próxima corrida.
@@ -33,7 +34,7 @@ def _clave():
 
 
 def disponible():
-    return bool(_clave())
+    return bool(_clave() or _clave_gemini())
 
 
 def _pedir(ruta, cuerpo=None, timeout=120):
@@ -50,12 +51,63 @@ _max_salida = {}
 NO_CHAT = ("guard", "whisper", "tts", "playai", "orpheus", "distil", "compound", "embed", "vision-preview")
 FUERTES = ("120b", "70b", "maverick", "kimi", "qwen3", "gpt-oss", "235b", "405b", "scout", "32b")
 
+# ---- Gemini (Google AI Studio, plan gratis): IA principal si existe GEMINI_API_KEY ----
+GEMINI_API = "https://generativelanguage.googleapis.com/v1beta"
+NO_GEMINI = ("embed", "tts", "image", "live", "audio", "native", "robotics", "computer", "learnlm", "aqa", "veo", "imagen")
+
+
+def _clave_gemini():
+    return (os.environ.get("GEMINI_API_KEY") or "").strip()
+
+
+def es_gemini(modelo):
+    return str(modelo).startswith("gemini")
+
+
+def _orden_gemini(mid):
+    """Más nuevo primero; dentro de una versión: flash, pro, flash-lite; las versiones de prueba al final."""
+    import re
+    v = re.search(r"gemini-(\d+(?:\.\d+)?)", mid)
+    version = float(v.group(1)) if v else 0
+    nivel = 2 if "lite" in mid else 0 if "flash" in mid else 1
+    prueba = 1 if re.search(r"preview|exp|\d{2}-\d{2}", mid) else 0
+    return (prueba, -version, nivel)
+
+
+def _modelos_gemini():
+    if not _clave_gemini():
+        return []
+    try:
+        req = urllib.request.Request(f"{GEMINI_API}/models?pageSize=200",
+                                     headers={"x-goog-api-key": _clave_gemini(), "User-Agent": "correo-resumenes/1.0"})
+        with urllib.request.urlopen(req, timeout=60) as r:
+            datos = json.load(r).get("models", [])
+    except Exception as e:
+        print(f"::warning::No pude listar los modelos de Gemini: {e}")
+        return []
+    out = []
+    for m in datos:
+        mid = str(m.get("name", "")).replace("models/", "")
+        if (es_gemini(mid) and "generateContent" in (m.get("supportedGenerationMethods") or [])
+                and not any(x in mid.lower() for x in NO_GEMINI) and "latest" not in mid):
+            out.append(mid)
+            _max_salida[mid] = int(m.get("outputTokenLimit") or 8192)
+    return sorted(set(out), key=_orden_gemini)[:6]
+
 
 def modelos():
-    """Modelos de chat de la cuenta, ordenados: preferidos, luego los más capaces. Se descartan los que
-    solo permiten respuestas muy cortas (menos de 1.000 tokens)."""
+    """Modelos de chat disponibles: primero Gemini (si hay clave), después Groq como respaldo."""
     global _modelos
     if _modelos is None:
+        _modelos = _modelos_gemini() + (_modelos_groq() if _clave() else [])
+        print("IA: modelos a usar (en orden):", ", ".join(_modelos) or "(ninguno)")
+    return _modelos
+
+
+def _modelos_groq():
+    """Modelos de chat de Groq, ordenados: preferidos, luego los más capaces. Se descartan los que
+    solo permiten respuestas muy cortas (menos de 1.000 tokens)."""
+    if True:
         datos = []
         try:
             datos = _pedir("/models").get("data", [])
@@ -77,14 +129,30 @@ def modelos():
         orden = [x for x in ([primero] if primero else []) + PREFERIDOS if x in utiles]
         resto = sorted((x for x in utiles if x not in orden),
                        key=lambda x: (-sum(f in x.lower() for f in FUERTES), -int(utiles[x].get("context_window") or 0)))
-        _modelos = (orden + resto)[:6] or ([primero] if primero else PREFERIDOS[:2])
-        print("Groq: modelos a usar (en orden):", ", ".join(_modelos))
-    return _modelos
+        return (orden + resto)[:6] or ([primero] if primero else PREFERIDOS[:2])
 
 
 def max_salida(modelo, pedido):
     tope = _max_salida.get(modelo) or pedido
     return max(256, min(pedido, tope))
+
+
+def _gemini_chat(modelo, sistema, usuario, max_tokens, json_mode):
+    cuerpo = {"systemInstruction": {"parts": [{"text": sistema}]},
+              "contents": [{"role": "user", "parts": [{"text": usuario}]}],
+              "generationConfig": {"temperature": 0.2, "maxOutputTokens": max(4096, max_tokens * 2)}}
+    if json_mode:
+        cuerpo["generationConfig"]["responseMimeType"] = "application/json"
+    req = urllib.request.Request(f"{GEMINI_API}/models/{modelo}:generateContent", data=json.dumps(cuerpo).encode(),
+                                 headers={"x-goog-api-key": _clave_gemini(), "Content-Type": "application/json",
+                                          "User-Agent": "correo-resumenes/1.0"}, method="POST")
+    with urllib.request.urlopen(req, timeout=180) as r:
+        d = json.load(r)
+    partes = ((d.get("candidates") or [{}])[0].get("content") or {}).get("parts") or []
+    texto = "".join(p.get("text", "") for p in partes if not p.get("thought"))
+    if not texto.strip():
+        raise urllib.error.HTTPError("", 400, "respuesta vacía", {}, None)
+    return texto
 
 
 _agotados = {}       # modelo -> hasta cuándo (time.time()) no se vuelve a intentar
@@ -94,16 +162,23 @@ MAX_ESPERA = 600     # segundos máximos de espera ante un límite por minuto
 RESERVADOS = {x.strip() for x in (os.environ.get("GROQ_RESERVADO") or "openai/gpt-oss-120b").split(",") if x.strip()}
 
 
+def reservados():
+    """Para la página: Gemini flash/pro (no los "lite") y el mejor de Groq."""
+    return [m for m in modelos() if (es_gemini(m) and "lite" not in m) or m in RESERVADOS]
+
+
 def modelos_fondo():
+    """Para los resúmenes automáticos: los modelos que NO están reservados para la página."""
     lista = modelos()
-    fondo = [m for m in lista if m not in RESERVADOS]
+    res = set(reservados())
+    fondo = [m for m in lista if m not in res]
     return fondo or lista
 
 
 def _espera_de(txt, cabecera):
     """Segundos hasta que se libera el límite (Groq lo dice en el texto: 'try again in 12m10.5s')."""
     import re
-    m = re.search(r"try again in (?:(\d+)h)?(?:(\d+)m)?(?:([\d.]+)s)?", txt)
+    m = re.search(r"(?:try again|retry) in (?:(\d+)h)?(?:(\d+)m)?(?:([\d.]+)s)?", txt)
     if m and any(m.groups()):
         h, mi, se = (float(x or 0) for x in m.groups())
         return h * 3600 + mi * 60 + se
@@ -130,15 +205,18 @@ def chat(sistema, usuario, max_tokens=3000, json_mode=True, reservado=False):
             cuerpo["reasoning_effort"] = "low"     # menos razonamiento = respuestas más rápidas y livianas
         for intento in range(5):
             try:
+                if es_gemini(modelo):
+                    return _gemini_chat(modelo, sistema, usuario, max_tokens, json_mode), modelo
                 r = _pedir("/chat/completions", cuerpo)
                 return r["choices"][0]["message"]["content"], modelo
             except urllib.error.HTTPError as e:
-                txt = e.read().decode("utf-8", "replace")[:600]
+                txt = (e.read().decode("utf-8", "replace") if e.fp else str(e.msg))[:1500]
                 ultimo = f"{e.code}: {txt}"
                 if e.code == 429:
                     espera = _espera_de(txt, e.headers.get("retry-after"))
-                    if espera > 90 or "per day" in txt.lower() or "(rpd)" in txt.lower() or "(tpd)" in txt.lower():
-                        _agotados[modelo] = time.time() + max(espera, 60)   # límite diario: no insistir hasta que se libere
+                    if espera > 90 or any(x in txt.lower() for x in ("per day", "(rpd)", "(tpd)", "perday")):
+                        diario = any(x in txt.lower() for x in ("per day", "(rpd)", "(tpd)", "perday"))
+                        _agotados[modelo] = time.time() + max(espera, 1800 if diario else 60)   # no insistir hasta que se libere
                         break
                     if espera > MAX_ESPERA:
                         break                       # (vigilante) no esperar: probar otro modelo o la próxima vuelta
