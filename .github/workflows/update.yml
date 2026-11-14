@@ -62,6 +62,9 @@ jobs:
           code=$(curl -sS -L --retry 3 -o public/correo/index.html -w "%{http_code}" "${CORREO_URL}?nocache=$(date +%s)" || echo 000)
           curl -sS -L --retry 3 -o public/correo/version.json "${CORREO_URL}version.json?nocache=$(date +%s)" || true
           curl -sSf -L --retry 3 -o public/correo/pagina.json "${CORREO_URL}pagina.json?nocache=$(date +%s)" || rm -f public/correo/pagina.json
+          for f in manifest.json sw.js icono-180.png icono-192.png icono-512.png; do
+            curl -sSf -L --retry 3 -o "public/correo/$f" "${CORREO_URL}$f" || rm -f "public/correo/$f"
+          done
           if [ "$code" = "404" ]; then
             rm -rf public/correo   # aún no existe la página de correo
           elif [ "$code" != "200" ]; then

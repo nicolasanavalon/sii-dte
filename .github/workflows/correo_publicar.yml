@@ -8,6 +8,9 @@ on:
     branches: [main]
     paths:
       - "correo/plantilla.html"
+      - "correo/sw.js"
+      - "correo/manifest.json"
+      - "correo/icono-*.png"
       - ".github/workflows/correo_publicar.yml"
   workflow_dispatch: {}
 
@@ -52,6 +55,7 @@ jobs:
           open("public/correo/pagina.json", "w").write(json.dumps({"v": version}))
           PY
             cp "$RUNNER_TEMP/datos/version.json" public/correo/version.json || true
+            cp correo/manifest.json correo/sw.js correo/icono-*.png public/correo/
           else
             # Aún no hay rama de datos: conservar la página publicada.
             curl -sSfL "${CORREO_URL}?nocache=$(date +%s)" -o public/correo/index.html
