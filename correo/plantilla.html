@@ -945,7 +945,7 @@ async function revisarZoho(manual){
     const atraso = Date.now() - (v.ms || 0);
     sinc(n ? `${n} correo${n > 1 ? "s" : ""} nuevo${n > 1 ? "s" : ""} · ${horaTxt()}`
            : atraso < 5 * 60000 ? `Al día · Zoho revisado ${horaTxt(v.ms)}` : `⚠️ Última revisión de Zoho: ${horaTxt(v.ms)}`);
-  } catch(e) { sinc(manual ? "No se pudo revisar; reintento en 30 s." : ($("#sincTxt").textContent || "")); }
+  } catch(e) { sinc(`⚠️ No pude conectarme para ver si hay correos nuevos (${e.message}); reintento en 30 s.`); }
   buscando = false;
 }
 $("#buscarAhora").addEventListener("click", () => { buscando = false; revisarZoho(true); });

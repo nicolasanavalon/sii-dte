@@ -206,6 +206,7 @@ def falta_archivo(m):
 
 
 _ZOHO = {}
+LIMITE_VUELTA = 0.0      # en el vigilante: hora tope de cada vuelta (para revisar Zoho siempre cada minuto)
 CARPETAS_EXTRA = {"newsletter", "newsletters", "notification", "notifications", "notificaciones", "boletines"}
 
 
@@ -298,7 +299,6 @@ def _traer_casilla(z, account_id, direccion, estado, primera):
             relleno[account_id] = True
             desde, rapido = inicio, False
             viejos = viejos or set()
-            tope = max(tope, 150)
         elegidas = elegidas + extra
     if viejos:
         desde = min([desde] + [estado["mensajes"][i]["fecha"] for i in viejos]) - 60_000
@@ -495,6 +495,8 @@ def analizar_con_groq(estado):
     analizados, hechos = [], 0
     hoy = datetime.now(TZ).strftime("%Y-%m-%d (%A)")
     for hid, ms in pend[:MAX_GROQ_HILOS]:
+        if LIMITE_VUELTA and time.time() > LIMITE_VUELTA:
+            break                # vigilante: el resto se resume en las próximas vueltas (no atrasar lo nuevo)
         contacto = ms[-1]["contacto"]
         f = estado["contactos"].get(contacto)
         ficha = json.dumps({k: f.get(k) for k in ("nombre", "tipo", "resumen", "pendientes", "datos_clave", "plazos")},
@@ -526,7 +528,7 @@ def analizar_con_groq(estado):
         if nuevos:
             analizados += aplicar_resultado(estado, contacto, {"contacto": r.get("contacto"), "correos": r.get("correos")}, nuevos)
         hechos += 1
-        time.sleep(1 if RAPIDO else 3)
+        time.sleep(0 if LIMITE_VUELTA else 1 if RAPIDO else 3)
     estado["errores"] = estado.get("errores", [])[-20:]
     quedan = len(pend) - hechos
     print(f"Groq: {hechos} conversaciones resumidas ({len(analizados)} correos nuevos); quedan {quedan}.")
@@ -817,8 +819,9 @@ def main():
 
 def una_vuelta(estado, clave, rapido):
     """Una revisión de Zoho. Devuelve True si cambió algo (y en ese caso deja los datos nuevos escritos)."""
-    global RAPIDO
+    global RAPIDO, LIMITE_VUELTA
     RAPIDO = rapido
+    LIMITE_VUELTA = time.time() + 40
     nuevos, completados = traer_nuevos(estado, clave)
     avisar(estado, [], nuevos)                       # aviso inmediato, sin esperar el resumen de la IA
     analizados = analizar_pendientes(estado)
@@ -835,11 +838,16 @@ def vigilar(estado, clave, minutos):
     """Queda revisando Zoho cada minuto durante `minutos` (lo usa el workflow "Correo: sincronizar").
     Después de cada vuelta corre CORREO_GUARDAR (guarda los datos cifrados en la rama correo-datos)."""
     import subprocess
+    import ia
+    ia.MAX_ESPERA = 10                                   # sin esperas largas de la IA: se reintenta la vuelta siguiente
+    os.environ.setdefault("CORREO_MAX_POR_CORRIDA", "15") # correos antiguos por vuelta (de a poco, sin atrasar lo nuevo)
+    if not env("CORREO_MAX_POR_CORRIDA"):
+        os.environ["CORREO_MAX_POR_CORRIDA"] = "15"
     fin = time.time() + minutos * 60
-    ultima_completa, vuelta = 0.0, 0
+    ultima_completa, ultima_pub, pendiente_pub, vuelta = 0.0, time.time(), False, 0
     while time.time() < fin:
         inicio = time.time()
-        completa = inicio - ultima_completa > 3600          # una vez por hora: completar antiguos y resumir más
+        completa = inicio - ultima_completa > 600           # cada 10 min: completar antiguos (de a poco)
         try:
             cambio = una_vuelta(estado, clave, rapido=not completa)
             if completa:
@@ -857,8 +865,12 @@ def vigilar(estado, clave, minutos):
             v = hashlib.sha1(caja.read_bytes()).hexdigest()[:16] if caja.exists() else ""
             (Path(datos_dir) / "version.json").write_text(json.dumps(
                 {"v": v, "t": datetime.now(TZ).strftime("%Y-%m-%d %H:%M"), "ms": int(time.time() * 1000)}))
+        pendiente_pub = pendiente_pub or cambio
+        publicar = pendiente_pub and time.time() - ultima_pub > 3600    # la página publicada se renueva cada hora
+        if publicar:
+            ultima_pub, pendiente_pub = time.time(), False
         if env("CORREO_GUARDAR"):
-            subprocess.run(["bash", env("CORREO_GUARDAR"), "1" if cambio else "0", "1" if completa else "0"], check=False)
+            subprocess.run(["bash", env("CORREO_GUARDAR"), "1" if cambio else "0", "1" if publicar else "0"], check=False)
         vuelta += 1
         print(f"Vuelta {vuelta} ({'completa' if completa else 'rápida'}) en {time.time() - inicio:.0f} s"
               + (" · con cambios" if cambio else ""), flush=True)
