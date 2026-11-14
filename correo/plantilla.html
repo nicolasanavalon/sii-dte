@@ -1015,13 +1015,12 @@ function ponerBurbuja(){
 }
 let registroSW = null;
 async function prepararAvisos(){
-  const b = $("#avisos");
-  if (/iPhone|iPad/.test(navigator.userAgent) && !enPantallaInicio()) { b.hidden = false; return; }   // explica cómo instalarla
+  // La campana se ve siempre, salvo cuando los avisos ya están activos en este dispositivo.
+  const b = $("#avisos"); b.hidden = false;
   if (!("serviceWorker" in navigator)) return;
-  try { registroSW = await navigator.serviceWorker.register("sw.js"); } catch(e) { return; }
-  if (!("PushManager" in window) || !("Notification" in window) || !(D.push || {}).publica) { b.hidden = true; return; }
-  const sub = await registroSW.pushManager.getSubscription().catch(() => null);
-  b.hidden = !!(sub && Notification.permission === "granted");
+  try { registroSW = registroSW || await navigator.serviceWorker.register("sw.js"); } catch(e) { return; }
+  const sub = registroSW.pushManager ? await registroSW.pushManager.getSubscription().catch(() => null) : null;
+  if (sub && "Notification" in window && Notification.permission === "granted") b.hidden = true;
 }
 const b64aBytes = s => { s = s.replace(/-/g, "+").replace(/_/g, "/"); const t = atob(s + "=".repeat((4 - s.length % 4) % 4)); return Uint8Array.from(t, c => c.charCodeAt(0)); };
 $("#avisos").addEventListener("click", async () => {
@@ -1029,6 +1028,10 @@ $("#avisos").addEventListener("click", async () => {
   if (/iPhone|iPad/.test(navigator.userAgent) && !enPantallaInicio()) {
     aviso("Para la burbuja y los avisos, primero agrega esta página a la pantalla de inicio: botón Compartir → «Agregar a inicio». Después ábrela desde ese ícono y aprieta 🔔.", "", 12000); return;
   }
+  if (!("serviceWorker" in navigator) || !("PushManager" in window) || !("Notification" in window)) {
+    aviso("Este navegador no permite avisos. En iPhone se necesita iOS 16.4 o más nuevo y abrir la app desde el ícono de la pantalla de inicio.", "mal", 12000); return;
+  }
+  if (!(D.push || {}).publica) { aviso("El vigilante aún está preparando los avisos. Espera un minuto y vuelve a apretar 🔔.", "", 8000); revisarZoho(true); return; }
   try {
     if (await Notification.requestPermission() !== "granted") { aviso("No diste permiso para avisos. Puedes activarlo en Configuración → Notificaciones.", "mal", 8000); return; }
     registroSW = registroSW || await navigator.serviceWorker.register("sw.js");
