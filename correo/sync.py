@@ -497,7 +497,7 @@ def analizar_con_groq(estado):
     analizados, hechos = [], 0
     hoy = datetime.now(TZ).strftime("%Y-%m-%d (%A)")
     for hid, ms in pend[:MAX_GROQ_HILOS]:
-        if LIMITE_VUELTA and time.time() > LIMITE_VUELTA:
+        if LIMITE_VUELTA and time.time() + 15 > LIMITE_VUELTA:
             break                # vigilante: el resto se resume en las próximas vueltas (no atrasar lo nuevo)
         contacto = ms[-1]["contacto"]
         f = estado["contactos"].get(contacto)
@@ -913,7 +913,7 @@ def vigilar(estado, clave, minutos):
     import subprocess
     import ia
     ia.MAX_ESPERA = 10                                   # sin esperas largas de la IA: se reintenta la vuelta siguiente
-    ia.TIMEOUT = 50                                      # una consulta lenta no puede trabar la revisión de correos
+    ia.TIMEOUT = 40                                      # una consulta lenta no puede trabar la revisión de correos
     os.environ.setdefault("CORREO_MAX_POR_CORRIDA", "15") # correos antiguos por vuelta (de a poco, sin atrasar lo nuevo)
     if not env("CORREO_MAX_POR_CORRIDA"):
         os.environ["CORREO_MAX_POR_CORRIDA"] = "15"
