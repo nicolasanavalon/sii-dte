@@ -75,3 +75,13 @@ def abrir_sello(caja: dict, priv: X25519PrivateKey):
     llave = HKDF(algorithm=hashes.SHA256(), length=32, salt=None, info=b"correo-sello-v1").derive(compartido)
     plano = AESGCM(llave).decrypt(base64.b64decode(caja["iv"]), base64.b64decode(caja["ct"]), None)
     return json.loads(gzip.decompress(plano).decode("utf-8"))
+
+
+# ---- Archivos adjuntos cifrados (formato binario: salt[16] | iv[12] | datos cifrados) -------------
+def cifrar_bytes(datos: bytes, clave: str) -> bytes:
+    salt, iv = os.urandom(16), os.urandom(12)
+    return salt + iv + AESGCM(_llave(clave, salt)).encrypt(iv, datos, None)
+
+
+def descifrar_bytes(caja: bytes, clave: str) -> bytes:
+    return AESGCM(_llave(clave, caja[:16])).decrypt(caja[16:28], caja[28:], None)

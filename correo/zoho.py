@@ -78,6 +78,30 @@ class Zoho:
                                 f"con el permiso ZohoMail.messages.CREATE. Detalle: {cuerpo_err}") from None
             raise ZohoError(f"Error {e.code} al enviar: {cuerpo_err}") from None
 
+    def enviar_nuevo(self, account_id, desde, para, cc, asunto, texto, adjuntos=()):
+        """Correo nuevo (o reenvío). `adjuntos`: lista de lo que devuelve subir_adjunto()."""
+        cuerpo = {"fromAddress": desde, "toAddress": ",".join(para), "subject": asunto,
+                  "content": texto, "mailFormat": "plaintext"}
+        if cc:
+            cuerpo["ccAddress"] = ",".join(cc)
+        if adjuntos:
+            cuerpo["attachments"] = list(adjuntos)
+        return self.post(f"/accounts/{account_id}/messages", cuerpo)
+
+    def subir_adjunto(self, account_id, nombre, datos: bytes):
+        url = f"{self.base}/accounts/{account_id}/messages/attachments?" + urllib.parse.urlencode(
+            {"fileName": nombre, "isInline": "false"})
+        req = urllib.request.Request(url, data=datos, method="POST", headers={
+            "Authorization": f"Zoho-oauthtoken {self._access()}", "Accept": "application/json",
+            "Content-Type": "application/octet-stream"})
+        try:
+            with urllib.request.urlopen(req, timeout=120) as r:
+                d = json.load(r).get("data") or {}
+        except urllib.error.HTTPError as e:
+            raise ZohoError(f"Error {e.code} al subir un adjunto: {e.read().decode('utf-8', 'replace')[:300]}") from None
+        d = d[0] if isinstance(d, list) else d
+        return {k: d.get(k) for k in ("storeName", "attachmentPath", "attachmentName")}
+
     def responder(self, account_id, message_id, desde, para, cc, asunto, texto):
         """Responde un correo (queda en la conversación y en Enviados de Zoho)."""
         cuerpo = {"fromAddress": desde, "toAddress": ",".join(para), "subject": asunto,
