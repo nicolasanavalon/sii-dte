@@ -179,6 +179,18 @@ textarea{font:inherit}
   .split:not(.abierto) .read{display:none}
   .rows{max-height:none}
 }
+/* Computador: toda la pantalla, como Outlook (lista y correo a lo alto, cada uno con su scroll). */
+@media (min-width:861px){
+  .app{max-width:none; height:100vh; height:100dvh; padding-block:12px 12px}
+  #vCorreos{flex:1; min-height:0; display:flex; flex-direction:column}
+  #vPreguntar{flex:1; min-height:0; overflow:auto}
+  .split{flex:1; min-height:0; grid-template-columns:minmax(340px, 32%) minmax(0, 1fr); align-items:stretch}
+  .list{display:flex; flex-direction:column; min-height:0}
+  .rows{flex:1; min-height:0; max-height:none}
+  .read{min-height:0; overflow:auto}
+  .read > *{flex-shrink:0}
+}
+@media (min-width:1700px){ .split{grid-template-columns:minmax(420px, 28%) minmax(0, 1fr)} }
 @media (prefers-reduced-motion: reduce){*{transition:none!important}}
 </style>
 </head>
@@ -248,7 +260,36 @@ let abierto = null, busca = "", filtro = "todos", cuentaSel = "", limite = 150, 
 let CLAVE = "", borrador = null;
 const LEIDOS = new Set((() => { try { return JSON.parse(localStorage.getItem("correo_leidos") || "[]"); } catch(e) { return []; } })());
 const noLeido = m => m.no_leido && !LEIDOS.has(m.id);
-function marcarLeido(id){ if (LEIDOS.has(id)) return; LEIDOS.add(id); try { localStorage.setItem("correo_leidos", JSON.stringify([...LEIDOS].slice(-3000))); } catch(e){} }   // borrador: {id, para, cc, asunto, texto, obs, confirmar, estado, clase, ocupado}
+function marcarLeido(id){
+  if (!LEIDOS.has(id)) { LEIDOS.add(id); try { localStorage.setItem("correo_leidos", JSON.stringify([...LEIDOS].slice(-3000))); } catch(e){} }
+  if (!PEND[id]) { PEND[id] = [Date.now(), 0]; guardarPend(); programarLeidos(6000); }
+}
+// Leídos en línea: lo que abres aquí se marca leído en Zoho (y así en el celular y en el computador).
+// PEND = {id: [cuándo lo abriste, cuándo se pidió marcarlo]}. Se reintenta hasta que Zoho lo confirme.
+const PEND = (() => { try { const p = JSON.parse(localStorage.getItem("correo_pend_leidos") || "null"); if (p) return p; } catch(e) {}
+  const p = {}; for (const id of LEIDOS) p[id] = [Date.now(), 0]; return p; })();
+function guardarPend(){ try { localStorage.setItem("correo_pend_leidos", JSON.stringify(PEND)); } catch(e) {} }
+let tLeidos = null;
+function programarLeidos(ms){ clearTimeout(tLeidos); tLeidos = setTimeout(sincLeidos, ms); }
+async function sincLeidos(){
+  const gh = D && D._envio; if (!gh || !gh.token || !D.mensajes) return;
+  const ahora = Date.now(), ids = {}, lote = [];
+  for (const [id, [t, e]] of Object.entries(PEND)) {
+    const m = D.mensajes[id];
+    if (!m || !m.no_leido || ahora - t > 7 * 864e5) { delete PEND[id]; continue; }   // Zoho ya lo tiene leído
+    if (ahora - e < 10 * 60000 || !m.cuenta_id || lote.length >= 300) continue;        // pedido hace poco: esperar
+    (ids[m.cuenta_id] ||= []).push(id); lote.push(id);
+  }
+  guardarPend();
+  if (!lote.length) return;
+  try {
+    const paquete = await cifrar({ modo: "leidos", ids, ts: ahora });
+    const r = await fetch(`https://api.github.com/repos/${gh.repo}/actions/workflows/correo_enviar.yml/dispatches`, { method: "POST",
+      headers: { "Authorization": "Bearer " + gh.token, "Accept": "application/vnd.github+json" },
+      body: JSON.stringify({ ref: "main", inputs: { paquete: JSON.stringify(paquete), id: "leidos-" + Math.random().toString(36).slice(2, 10) } }) });
+    if (r.ok) { for (const id of lote) if (PEND[id]) PEND[id][1] = ahora; guardarPend(); }
+  } catch(e) {}
+}   // borrador: {id, para, cc, asunto, texto, obs, confirmar, estado, clase, ocupado}
 
 /* ---------- descifrar ---------- */
 const b64 = s => Uint8Array.from(atob(s), c => c.charCodeAt(0));
@@ -275,6 +316,7 @@ function construir(refresco = false){
   $("#hintIA").textContent = D._ia && D._ia.clave ? "Responde la IA gratuita de Groq usando tus correos y adjuntos. Puede equivocarse: revisa el correo citado." : "La IA se activa cuando guardes la clave gratuita de Groq (GROQ_API_KEY).";
   pintarFiltros(); pintarLista();
   if (!refresco || !abierto) pintarCorreo();
+  programarLeidos(3000);
 }
 
 /* ---------- vista Correos ---------- */

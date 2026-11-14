@@ -14,7 +14,8 @@ import urllib.request
 from email.utils import getaddresses
 from html.parser import HTMLParser
 
-SCOPES = "ZohoMail.accounts.READ,ZohoMail.folders.READ,ZohoMail.messages.READ"
+SCOPES = ("ZohoMail.accounts.READ,ZohoMail.folders.READ,ZohoMail.messages.READ,"
+          "ZohoMail.messages.CREATE,ZohoMail.messages.UPDATE")
 MAX_ADJUNTO = 12 * 1024 * 1024   # no se descargan adjuntos de más de 12 MB
 
 
@@ -64,8 +65,16 @@ class Zoho:
             self._vence = time.time() + int(data.get("expires_in", 3600))
         return self._token
 
-    def post(self, ruta, cuerpo):
-        req = urllib.request.Request(f"{self.base}{ruta}", data=json.dumps(cuerpo).encode(), method="POST", headers={
+    def marcar_leidos(self, account_id, ids):
+        """Marca correos como leídos en Zoho (así quedan leídos en el celular, el computador y Zoho)."""
+        ids = [int(x) for x in ids if str(x).isdigit()]
+        for i in range(0, len(ids), 100):
+            self.post(f"/accounts/{account_id}/updatemessage", {"mode": "markAsRead", "messageId": ids[i:i + 100]},
+                      metodo="PUT", permiso="ZohoMail.messages.UPDATE")
+        return len(ids)
+
+    def post(self, ruta, cuerpo, metodo="POST", permiso="ZohoMail.messages.CREATE"):
+        req = urllib.request.Request(f"{self.base}{ruta}", data=json.dumps(cuerpo).encode(), method=metodo, headers={
             "Authorization": f"Zoho-oauthtoken {self._access()}", "Accept": "application/json",
             "Content-Type": "application/json"})
         try:
@@ -74,8 +83,8 @@ class Zoho:
         except urllib.error.HTTPError as e:
             cuerpo_err = e.read().decode("utf-8", "replace")[:400]
             if e.code in (401, 403):
-                raise ZohoError(f"Zoho no dio permiso para enviar ({e.code}). Hay que volver a conectar la cuenta "
-                                f"con el permiso ZohoMail.messages.CREATE. Detalle: {cuerpo_err}") from None
+                raise ZohoError(f"Zoho no dio permiso ({e.code}). Hay que volver a conectar la cuenta "
+                                f"con el permiso {permiso}. Detalle: {cuerpo_err}") from None
             raise ZohoError(f"Error {e.code} al enviar: {cuerpo_err}") from None
 
     def enviar_nuevo(self, account_id, desde, para, cc, asunto, texto, adjuntos=()):

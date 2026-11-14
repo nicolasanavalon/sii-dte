@@ -1,5 +1,5 @@
 name: "Correo: enviar respuesta"
-run-name: "Correo: enviar respuesta ${{ inputs.id }}"
+run-name: "Correo: ${{ startsWith(inputs.id, 'leidos') && 'marcar leídos' || 'enviar respuesta' }} ${{ inputs.id }}"
 
 # Lo dispara la Bandeja (botón Enviar). La respuesta llega CIFRADA con tu contraseña: en este
 # registro público solo se ve texto cifrado, y el script no imprime direcciones ni contenido.
@@ -18,8 +18,10 @@ on:
 permissions:
   contents: read
 
+# Cada envío corre por su cuenta (ninguno se cancela). Marcar leídos va en su propio grupo: si se junta
+# más de uno, basta el último (la página reintenta lo que falte).
 concurrency:
-  group: correo-enviar
+  group: correo-${{ startsWith(inputs.id, 'leidos') && 'leidos' || inputs.id }}
   cancel-in-progress: false
 
 jobs:
