@@ -66,8 +66,10 @@ def main():
 
 def marcar_leidos(p, clave):
     """p["ids"] = {cuenta_id: [message_id, ...]}: los correos abiertos en la página se marcan leídos en Zoho."""
-    pedidos = {str(k): [str(x) for x in v][:500] for k, v in (p.get("ids") or {}).items() if isinstance(v, list)}
-    hechos, fallas = 0, []
+    def lista(clave_ids):
+        return {str(k): [str(x) for x in v][:500] for k, v in (p.get(clave_ids) or {}).items() if isinstance(v, list)}
+    pedidos, pedidos_no = lista("ids"), lista("ids_no")
+    hechos, hechos_no, fallas = 0, 0, []
     for nombre, cid, sec, rt in sync.conexiones(clave):
         z = Zoho(cid, sec, rt)
         try:
@@ -76,12 +78,14 @@ def marcar_leidos(p, clave):
             fallas.append(f"{nombre}: {str(e)[:200]}")
             continue
         for acc_id, _, _ in casillas:
-            if pedidos.get(str(acc_id)):
-                try:
+            try:
+                if pedidos.get(str(acc_id)):
                     hechos += z.marcar_leidos(acc_id, pedidos.pop(str(acc_id)))
-                except ZohoError as e:
-                    fallas.append(f"{nombre}: {e}")
-    print(f"✅ {hechos} correo(s) marcados como leídos en Zoho.")
+                if pedidos_no.get(str(acc_id)):
+                    hechos_no += z.marcar_leidos(acc_id, pedidos_no.pop(str(acc_id)), leidos=False)
+            except ZohoError as e:
+                fallas.append(f"{nombre}: {e}")
+    print(f"✅ En Zoho: {hechos} marcado(s) como leídos y {hechos_no} como no leídos.")
     for f in fallas:     # sin marcar la tarea como fallida: la página reintenta sola más tarde
         print(f"::warning::No pude marcar leídos en {f[:300]}")
 

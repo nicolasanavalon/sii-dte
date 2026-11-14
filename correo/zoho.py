@@ -65,11 +65,12 @@ class Zoho:
             self._vence = time.time() + int(data.get("expires_in", 3600))
         return self._token
 
-    def marcar_leidos(self, account_id, ids):
-        """Marca correos como leídos en Zoho (así quedan leídos en el celular, el computador y Zoho)."""
+    def marcar_leidos(self, account_id, ids, leidos=True):
+        """Marca correos como leídos (o no leídos) en Zoho: así queda igual en el celular, el computador y Zoho."""
         ids = [int(x) for x in ids if str(x).isdigit()]
         for i in range(0, len(ids), 100):
-            self.post(f"/accounts/{account_id}/updatemessage", {"mode": "markAsRead", "messageId": ids[i:i + 100]},
+            self.post(f"/accounts/{account_id}/updatemessage",
+                      {"mode": "markAsRead" if leidos else "markAsUnread", "messageId": ids[i:i + 100]},
                       metodo="PUT", permiso="ZohoMail.messages.UPDATE")
         return len(ids)
 
