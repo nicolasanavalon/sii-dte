@@ -83,6 +83,10 @@ def cargar_estado(clave):
 
     Con CORREO_URL se lee la página publicada; sin ella, el archivo local correo/index.html.
     """
+    datos = env("CORREO_DATOS_DIR")
+    if datos and (Path(datos) / "caja.json").exists():
+        caja = json.loads((Path(datos) / "caja.json").read_text(encoding="utf-8"))
+        return _abrir_estado(caja, clave)
     url = env("CORREO_URL")
     if url:
         try:
@@ -99,7 +103,10 @@ def cargar_estado(clave):
         html = SALIDA.read_text(encoding="utf-8")
     else:
         return estado_vacio()
-    caja = _caja_de_html(html)
+    return _abrir_estado(_caja_de_html(html), clave)
+
+
+def _abrir_estado(caja, clave):
     if not caja:
         return estado_vacio()
     try:
@@ -107,7 +114,8 @@ def cargar_estado(clave):
     except Exception:
         raise RuntimeError("No pude descifrar los datos guardados: ¿cambiaste CORREO_CLAVE? "
                            "Se aborta para no sobrescribir tus datos.")
-    estado.pop("_ia", None)
+    for k in [k for k in estado if k.startswith("_")]:
+        estado.pop(k)
     return {**estado_vacio(), **estado}
 
 
@@ -197,6 +205,9 @@ def falta_archivo(m):
         not f.get("ref") and f.get("tamano", 0) <= 12 * 1024 * 1024 for f in m.get("archivos", []))
 
 
+_ZOHO = {}
+
+
 def traer_nuevos(estado, clave):
     """Trae correos nuevos de TODAS las casillas configuradas y completa los antiguos que aún no tengan
     la cadena y los adjuntos. Devuelve (nuevos, completados)."""
@@ -205,7 +216,7 @@ def traer_nuevos(estado, clave):
     nuevos, completados, n_casillas = [], 0, 0
     vistos = set()
     for nombre, cid, sec, rt in conexiones(clave):
-        z = Zoho(cid, sec, rt)
+        z = _ZOHO.get(cid) or _ZOHO.setdefault(cid, Zoho(cid, sec, rt))
         try:
             casillas = z.cuentas()
         except Exception as e:
@@ -672,31 +683,15 @@ def avisar(estado, analizados, nuevos=()):
     lista = [m for m in lista if not m.get("enviado") and m["fecha"] >= limite and m["id"] not in ya]
     if not lista:
         return
-    etiquetas = estado.get("etiquetas", {})
+    def de(m):
+        return m.get("de_nombre") or m["de"]
 
-    def bloque(m):
-        a = m.get("analisis") or {}
-        casilla = etiquetas.get(m.get("cuenta", ""), "")
-        resumen = a.get("resumen") or (m.get("vista_previa") or m.get("texto") or "").strip().replace("\n", " ")[:280]
-        lineas = [f"📩 Nuevo correo{' · ' + casilla if casilla else ''}{' ⚠️ IMPORTANTE' if a.get('importancia') == 'alta' else ''}",
-                  f"De: {m.get('de_nombre') or m['de']} <{m['de']}>", f"Asunto: {m['asunto']}"]
-        if m.get("archivos"):
-            lineas.append(f"📎 {len(m['archivos'])} adjunto(s): " + ", ".join(f["nombre"] for f in m["archivos"][:3]))
-        if resumen:
-            lineas.append(f"\n{resumen}")
-        if a.get("accion"):
-            lineas.append(f"👉 {a['accion']}")
-        return "\n".join(lineas)
-
-    url = env("CORREO_URL")
     try:
         if len(lista) <= 5:
             for m in lista:
-                _telegram(bloque(m) + (f"\n\nAbrir: {url}" if url else ""))
+                _telegram(f"📩 {de(m)}\n{m['asunto'] or '(sin asunto)'}")
         else:
-            txt = f"📬 {len(lista)} correos nuevos:\n" + "\n".join(
-                f"• {etiquetas.get(m.get('cuenta', ''), '')} · {m.get('de_nombre') or m['de']} — {m['asunto']}" for m in lista[:25])
-            _telegram(txt + (f"\n\nAbrir: {url}" if url else ""))
+            _telegram("\n\n".join(f"📩 {de(m)}\n{m['asunto'] or '(sin asunto)'}" for m in lista[:30]))
         estado["avisados"] = (estado.get("avisados", []) + [m["id"] for m in lista])[-500:]
         print(f"Telegram: aviso de {len(lista)} correo(s) nuevo(s).")
     except Exception as e:
@@ -726,6 +721,10 @@ def generar_html(estado, clave):
     # Archivo pequeño para que la página sepa si hay datos nuevos sin descargar todo (no contiene datos de correos).
     (SALIDA.parent / "version.json").write_text(json.dumps(
         {"v": hashlib.sha1(caja["ct"].encode()).hexdigest()[:16], "t": estado.get("ultima_sync", "")}))
+    datos_dir = env("CORREO_DATOS_DIR")
+    if datos_dir:
+        Path(datos_dir).mkdir(parents=True, exist_ok=True)
+        (Path(datos_dir) / "caja.json").write_text(json.dumps(caja), encoding="utf-8")
     print(f"Página generada: {SALIDA} ({len(html) // 1024} KB)")
 
 
@@ -781,6 +780,9 @@ def main():
         marcar_cambio(True)
         return
 
+    if "--vigilar" in sys.argv:
+        return vigilar(estado, clave, float(sys.argv[sys.argv.index("--vigilar") + 1]))
+
     nuevos, completados = traer_nuevos(estado, clave)
     analizados = analizar_pendientes(estado)
     if "--preparar" in sys.argv:
@@ -796,6 +798,56 @@ def main():
     else:
         print("Sin correos nuevos: la página publicada queda igual.")
     marcar_cambio(cambio)
+
+
+def una_vuelta(estado, clave, rapido):
+    """Una revisión de Zoho. Devuelve True si cambió algo (y en ese caso deja los datos nuevos escritos)."""
+    global RAPIDO
+    RAPIDO = rapido
+    nuevos, completados = traer_nuevos(estado, clave)
+    avisar(estado, [], nuevos)                       # aviso inmediato, sin esperar el resumen de la IA
+    analizados = analizar_pendientes(estado)
+    cambio = bool(nuevos or completados or analizados or estado.pop("_hilos_actualizados", 0)
+                  or estado.pop("_cambio_leidos", False)) or not estado["ultima_sync"]
+    estado["ultima_sync"] = datetime.now(TZ).strftime("%Y-%m-%d %H:%M")
+    recortar(estado)
+    if cambio:
+        generar_html(estado, clave)
+    return cambio
+
+
+def vigilar(estado, clave, minutos):
+    """Queda revisando Zoho cada minuto durante `minutos` (lo usa el workflow "Correo: sincronizar").
+    Después de cada vuelta corre CORREO_GUARDAR (guarda los datos cifrados en la rama correo-datos)."""
+    import subprocess
+    fin = time.time() + minutos * 60
+    ultima_completa, vuelta = 0.0, 0
+    while time.time() < fin:
+        inicio = time.time()
+        completa = inicio - ultima_completa > 3600          # una vez por hora: completar antiguos y resumir más
+        try:
+            cambio = una_vuelta(estado, clave, rapido=not completa)
+            if completa:
+                ultima_completa = inicio
+        except Exception as e:
+            cambio = False
+            print(f"::warning::Vuelta con error (se reintenta en un minuto): {str(e)[:300]}")
+            traceback.print_exc()
+        datos_dir = env("CORREO_DATOS_DIR")
+        if datos_dir:
+            caja = Path(datos_dir) / "caja.json"
+            if not caja.exists():
+                generar_html(estado, clave)
+                cambio = True
+            v = hashlib.sha1(caja.read_bytes()).hexdigest()[:16] if caja.exists() else ""
+            (Path(datos_dir) / "version.json").write_text(json.dumps(
+                {"v": v, "t": datetime.now(TZ).strftime("%Y-%m-%d %H:%M"), "ms": int(time.time() * 1000)}))
+        if env("CORREO_GUARDAR"):
+            subprocess.run(["bash", env("CORREO_GUARDAR"), "1" if cambio else "0", "1" if completa else "0"], check=False)
+        vuelta += 1
+        print(f"Vuelta {vuelta} ({'completa' if completa else 'rápida'}) en {time.time() - inicio:.0f} s"
+              + (" · con cambios" if cambio else ""), flush=True)
+        time.sleep(max(5.0, 60 - (time.time() - inicio)))
 
 
 if __name__ == "__main__":

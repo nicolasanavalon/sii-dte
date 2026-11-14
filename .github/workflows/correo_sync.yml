@@ -1,41 +1,42 @@
 name: "Correo: sincronizar"
 
-# Cada 5 minutos (modo rápido: solo correos nuevos) y una vez por hora (completo: completa correos antiguos y
-# resume más conversaciones): trae correos de Zoho, los resume con la IA gratuita de Groq y publica la página cifrada
-# en GitHub Pages (https://USUARIO.github.io/REPO/correo/). Si no hay correos nuevos, no publica nada.
+# VIGILANTE: queda encendido ~5 horas y 45 minutos revisando Zoho CADA MINUTO (los horarios programados de GitHub
+# se atrasan horas, por eso no se usan para esto). Al terminar se relanza solo; el horario cada 30 minutos es
+# solo un respaldo por si la cadena se corta (si ya hay uno encendido, el nuevo espera su turno).
+#
+# Cada vuelta guarda los datos CIFRADOS en la rama correo-datos (la página los lee de ahí cada 30 segundos)
+# y, una vez por hora, completa correos antiguos, resume más conversaciones y republica la página.
 on:
   schedule:
-    - cron: "*/5 * * * *"    # rápido (GitHub puede atrasarlo algunos minutos)
-    - cron: "23 * * * *"     # completo
+    - cron: "*/30 * * * *"
   workflow_dispatch:
     inputs:
       forzar:
-        description: "Republicar la página aunque no haya correos nuevos"
+        description: "(sin uso, se mantiene por compatibilidad)"
         type: boolean
         default: false
       rapido:
-        description: "Solo correos nuevos (lo usa la página al abrirse y cada 2 minutos)"
+        description: "(sin uso, se mantiene por compatibilidad)"
         type: boolean
         default: false
 
 permissions:
-  contents: write   # para guardar los adjuntos CIFRADOS en la rama correo-adjuntos
-  pages: write
-  id-token: write
+  contents: write   # rama correo-datos y correo-adjuntos (todo cifrado)
+  actions: write    # relanzarse y pedir la publicación de la página
 
-# Mismo grupo que la publicación del DTE: así nunca se pisan al publicar en Pages.
+# Uno solo a la vez. Ojo: NO usa el grupo "pages", para no bloquear la publicación del DTE.
 concurrency:
-  group: pages
+  group: correo-vigilante
   cancel-in-progress: false
 
 jobs:
-  sync:
+  vigilar:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
-    environment:
-      name: github-pages
+    timeout-minutes: 355
     steps:
       - uses: actions/checkout@v4
+
+      - run: echo "INICIO=$(date +%s)" >> "$GITHUB_ENV"
 
       - uses: actions/setup-python@v5
         with:
@@ -48,18 +49,38 @@ jobs:
           sudo apt-get install -y -qq tesseract-ocr tesseract-ocr-spa >/dev/null
           pip install -r correo/requirements.txt
 
-      - name: Traer los adjuntos ya guardados (cifrados)
-        run: |
-          git clone -q --depth 1 --branch correo-adjuntos "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" "$RUNNER_TEMP/adj" \
-            || { mkdir -p "$RUNNER_TEMP/adj" && git -C "$RUNNER_TEMP/adj" init -q; }
-          mkdir -p "$RUNNER_TEMP/adj/adj"
-
-      - name: Sincronizar y resumir
-        id: sync
+      - name: Traer datos y adjuntos guardados (cifrados)
         env:
+          REPO_URL: https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git
+        run: |
+          for r in datos adjuntos; do
+            git clone -q --depth 1 --branch "correo-$r" "$REPO_URL" "$RUNNER_TEMP/$r" \
+              || { mkdir -p "$RUNNER_TEMP/$r" && git -C "$RUNNER_TEMP/$r" init -q; }
+          done
+          mkdir -p "$RUNNER_TEMP/adjuntos/adj"
+          cat > "$RUNNER_TEMP/guardar.sh" <<'EOS'
+          # $1 = 1 si cambiaron los datos; $2 = 1 si fue la vuelta completa (cada hora)
+          subir() {   # rama de un solo commit (sin historial): no llena el repo
+            cd "$RUNNER_TEMP/$1" || return
+            git checkout -q --orphan "n$(date +%s)" 2>/dev/null
+            git add -A . && git -c user.name=correo-bot -c user.email=41898282+github-actions[bot]@users.noreply.github.com \
+              commit -q -m "$2" || return 0
+            for i in 1 2 3; do git push -q -f "$REPO_URL" "HEAD:correo-$1" && return 0; sleep 5; done
+          }
+          subir datos "Correo: datos cifrados"
+          if [ "$1" = 1 ]; then subir adjuntos "Adjuntos cifrados"; fi
+          if [ "$2" = 1 ] && [ "$1" = 1 ]; then gh workflow run correo_publicar.yml --ref main -R "$GITHUB_REPOSITORY" || true; fi
+          EOS
+
+      - name: Revisar Zoho cada minuto
+        env:
+          REPO_URL: https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git
+          GH_TOKEN: ${{ github.token }}
+          CORREO_GUARDAR: ${{ runner.temp }}/guardar.sh
+          CORREO_DATOS_DIR: ${{ runner.temp }}/datos
+          CORREO_ADJ_DIR: ${{ runner.temp }}/adjuntos/adj
+          CORREO_SALIDA: ${{ runner.temp }}/index.html
           CORREO_CLAVE: ${{ secrets.CORREO_CLAVE }}
-          CORREO_ADJ_DIR: ${{ runner.temp }}/adj/adj
-          CORREO_RAPIDO: ${{ github.event.schedule == '*/5 * * * *' || inputs.rapido }}
           GITHUB_REPOSITORY: ${{ github.repository }}
           ZOHO_CLIENT_ID: ${{ secrets.ZOHO_CLIENT_ID }}
           ZOHO_CLIENT_SECRET: ${{ secrets.ZOHO_CLIENT_SECRET }}
@@ -75,29 +96,11 @@ jobs:
           CORREO_DIAS_INICIALES: ${{ vars.CORREO_DIAS_INICIALES }}
           CORREO_MAX_POR_CORRIDA: ${{ vars.CORREO_MAX_POR_CORRIDA }}
           CORREO_URL: ${{ vars.CORREO_URL || format('https://{0}.github.io/{1}/correo/', github.repository_owner, github.event.repository.name) }}
-        run: python correo/sync.py ${{ inputs.forzar && '--forzar' || '' }}
+        run: python correo/sync.py --vigilar 340
 
-      - name: Guardar los adjuntos (cifrados) en la rama correo-adjuntos
+      - name: Relanzar el vigilante
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          cd "$RUNNER_TEMP/adj"
-          git checkout -q --orphan nuevo
-          git add -A adj
-          git -c user.name=correo-bot -c user.email=41898282+github-actions[bot]@users.noreply.github.com \
-            commit -q -m "Adjuntos cifrados" || exit 0
-          git push -q -f "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" HEAD:correo-adjuntos
-
-      - name: Armar el sitio (DTE + correo)
-        if: steps.sync.outputs.cambio == 'true' || inputs.forzar
-        run: |
-          mkdir -p public/correo
-          cp index.html public/index.html
-          cp correo/index.html public/correo/index.html
-          cp correo/version.json public/correo/version.json 2>/dev/null || true
-
-      - uses: actions/upload-pages-artifact@v3
-        if: steps.sync.outputs.cambio == 'true' || inputs.forzar
-        with:
-          path: public
-
-      - uses: actions/deploy-pages@v4
-        if: steps.sync.outputs.cambio == 'true' || inputs.forzar
+          # Solo si estuvo encendido un buen rato (si falló al partir, el respaldo de cada 30 min lo reintenta).
+          if [ $(( $(date +%s) - INICIO )) -gt 1800 ]; then gh workflow run correo_sync.yml --ref main -R "$GITHUB_REPOSITORY"; fi
