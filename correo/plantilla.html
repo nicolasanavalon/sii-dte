@@ -120,6 +120,10 @@ header{display:flex; flex-wrap:wrap; align-items:center; justify-content:space-b
 .adj-acc{display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin-bottom:8px}
 .adj-acc strong{margin-right:auto; overflow-wrap:anywhere}
 .visor-img{display:block; max-width:100%; border-radius:6px; margin:6px 0}
+.visor-xls{overflow:auto; max-height:75vh; border:1px solid var(--line); border-radius:6px; margin:6px 0; background:#fff}
+.visor-xls table{border-collapse:collapse; font-size:12.5px; font-variant-numeric:tabular-nums}
+.visor-xls td{border:1px solid #e3e6ec; padding:3px 7px; white-space:nowrap; vertical-align:top}
+.visor-xls tr:first-child td{background:#f4f6f9; font-weight:600; position:sticky; top:0}
 .visor-doc{display:block; width:100%; height:75vh; border:1px solid var(--line); border-radius:6px; background:#fff; margin:6px 0}
 .adj-texto pre{white-space:pre-wrap; overflow-wrap:anywhere; font:12px/1.45 var(--f-mono); max-height:360px; overflow:auto; margin:6px 0 0}
 .hoja{background:#fff; color:#1f2328; border:1px solid var(--line); border-radius:8px; overflow:hidden}
@@ -350,7 +354,7 @@ function pintarFiltros(){
 }
 
 function pintarProgreso(){
-  const ms = MSGS.filter(m => !cuentaSel || m.cuenta === cuentaSel);
+  const ms = MSGS.filter(m => (!cuentaSel || m.cuenta === cuentaSel) && !m.boletin);   // boletines: no se resumen
   const pct = arr => arr.length ? Math.round(100 * arr.filter(m => m.analisis).length / arr.length) : 100;
   const rec = ms.filter(m => !m.enviado), env = ms.filter(m => m.enviado), total = pct(ms);
   $("#progreso").innerHTML = `<span>Analizados por la IA: <b>${total}%</b></span><span class="barra" aria-hidden="true"><i style="width:${total}%"></i></span>
@@ -399,7 +403,7 @@ function fila(m, terms = []){
     <div class="r1"><span class="who">${resaltar(quien, terms)}</span><span class="when">${fmtL(m.fecha)}</span></div>
     <div class="subj">${resaltar(m.asunto, terms)}</div>
     <div class="snip">${fragmento(m, terms)}</div>
-    <div class="tags">${m.local ? (m.estadoLocal === "enviando" ? '<span class="tag acc">enviando…</span>' : '<span class="tag ok">✓ enviado</span>') : m.enviado ? '<span class="tag ok">enviado</span>' : ""}${m.archivos.length ? `<span class="tag acc">📎 ${m.archivos.length}</span>` : ""}${n > 1 ? `<span class="tag">${n} en la conversación</span>` : ""}${CUENTAS.length > 1 ? `<span class="tag">${esc(etiqueta(m.cuenta))}</span>` : ""}${(m.analisis || {}).importancia === "alta" && !m.enviado ? '<span class="tag alta">importante</span>' : ""}</div>
+    <div class="tags">${m.local ? (m.estadoLocal === "enviando" ? '<span class="tag acc">enviando…</span>' : '<span class="tag ok">✓ enviado</span>') : m.enviado ? '<span class="tag ok">enviado</span>' : ""}${m.boletin ? `<span class="tag">${esc(m.carpeta_nombre || "Newsletter")}</span>` : ""}${m.archivos.length ? `<span class="tag acc">📎 ${m.archivos.length}</span>` : ""}${n > 1 ? `<span class="tag">${n} en la conversación</span>` : ""}${CUENTAS.length > 1 ? `<span class="tag">${esc(etiqueta(m.cuenta))}</span>` : ""}${(m.analisis || {}).importancia === "alta" && !m.enviado ? '<span class="tag alta">importante</span>' : ""}</div>
   </button>`;
 }
 
@@ -455,7 +459,27 @@ const MIME = {pdf:"application/pdf", jpg:"image/jpeg", jpeg:"image/jpeg", png:"i
   xlsx:"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", xls:"application/vnd.ms-excel", csv:"text/csv",
   docx:"application/vnd.openxmlformats-officedocument.wordprocessingml.document", doc:"application/msword", txt:"text/plain", xml:"text/xml", zip:"application/zip"};
 const tipoDe = n => MIME[(String(n).split(".").pop() || "").toLowerCase()] || "application/octet-stream";
-const sePuedeVer = n => /^(application\/pdf|image\/|text\/)/.test(tipoDe(n));
+const esPlanilla = n => /\.(xlsx|xlsm|xls|ods)$/i.test(String(n));
+const sePuedeVer = n => esPlanilla(n) || /^(application\/pdf|image\/|text\/)/.test(tipoDe(n));
+// Planillas Excel: se muestran como tabla con SheetJS (se carga solo la primera vez que abres una).
+let _xlsx = null;
+function cargarXLSX(){
+  return _xlsx ||= new Promise((ok, mal) => { const sc = document.createElement("script");
+    sc.src = "https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js";
+    sc.onload = () => ok(window.XLSX); sc.onerror = () => { _xlsx = null; mal(new Error("No se pudo cargar el lector de Excel; usa Descargar.")); };
+    document.head.appendChild(sc); });
+}
+async function hojasExcel(blob){
+  const X = await cargarXLSX();
+  const wb = X.read(new Uint8Array(await blob.arrayBuffer()), {type: "array", cellDates: true});
+  return wb.SheetNames.map(nombre => {
+    const ws = wb.Sheets[nombre];
+    if (!ws["!ref"]) return {nombre, html: '<p class="small muted">Hoja vacía.</p>'};
+    const r = X.utils.decode_range(ws["!ref"]), corte = r.e.r > 1500;
+    if (corte) { r.e.r = 1500; ws["!ref"] = X.utils.encode_range(r); }
+    return {nombre, html: X.utils.sheet_to_html(ws, {header: "", footer: ""}) + (corte ? '<p class="small muted">Se muestran las primeras 1.500 filas; descarga el archivo para verlo completo.</p>' : "")};
+  });
+}
 
 function panelAdjunto(m, i, terms){
   const f = m.archivos[i], legible = f.texto && !String(f.texto).startsWith("(");
@@ -465,7 +489,8 @@ function panelAdjunto(m, i, terms){
       ${f.ref ? `${sePuedeVer(f.nombre) ? `<button class="btn sec" data-ver="${i}">👁 Ver aquí</button>` : ""}<button class="btn" data-bajar="${i}">⬇ Descargar / abrir</button>`
               : `<span class="small muted">El archivo original se está guardando; estará disponible en la próxima sincronización.</span>`}</div>
     ${v.cargando ? `<p class="small muted">Abriendo el archivo…</p>` : ""}${v.error ? `<p class="small" style="color:var(--alta)">${esc(v.error)}</p>` : ""}
-    ${v.url && v.ver ? (v.tipo.startsWith("image/") ? `<img class="visor-img" src="${v.url}" alt="${esc(f.nombre)}">` : `<iframe class="visor-doc" src="${v.url}" title="${esc(f.nombre)}"></iframe>`) : ""}
+    ${v.url && v.ver && v.hojas ? `${v.hojas.length > 1 ? `<div class="chips">${v.hojas.map((h, k) => `<button class="chip" data-hoja="${k}" aria-pressed="${k === (v.hoja || 0)}">${esc(h.nombre)}</button>`).join("")}</div>` : ""}<div class="visor-xls">${v.hojas[v.hoja || 0].html}</div>`
+      : v.url && v.ver ? (v.tipo.startsWith("image/") ? `<img class="visor-img" src="${v.url}" alt="${esc(f.nombre)}">` : `<iframe class="visor-doc" src="${v.url}" title="${esc(f.nombre)}"></iframe>`) : ""}
     <details ${!(v.url && v.ver) ? "open" : ""}><summary class="small muted">Texto leído del archivo (lo que usa la IA)</summary>
       <pre>${legible ? resaltar(f.texto, terms) : "No se encontró texto en este archivo."}</pre></details></div>`;
 }
@@ -482,12 +507,14 @@ async function archivo(f){
 
 async function abrirAdjunto(m, i, ver){
   const f = m.archivos[i];
-  if (visor.url && visor.ref === f.ref) { if (ver) { visor.ver = true; pintarCorreo(); } else descargar(visor.url, f.nombre); return; }
+  if (visor.url && visor.ref === f.ref) { if (ver) { visor.ver = true; if (esPlanilla(f.nombre) && !visor.hojas) { visor.hojas = await hojasExcel(await (await fetch(visor.url)).blob()).catch(() => null); visor.hoja = 0; } pintarCorreo(); } else descargar(visor.url, f.nombre); return; }
   if (visor.url) URL.revokeObjectURL(visor.url);
   visor = {ref: f.ref, cargando: true}; pintarCorreo();
   try {
     const blob = await archivo(f);
     visor = {ref: f.ref, url: URL.createObjectURL(blob), tipo: blob.type, ver};
+    if (esPlanilla(f.nombre)) try { visor.hojas = await hojasExcel(blob); visor.hoja = 0; }
+      catch (e) { visor.hojas = [{nombre: "", html: `<p class="small" style="color:var(--alta)">No pude mostrar esta planilla (${esc(e.message)}). Usa “Descargar / abrir”.</p>`}]; }
     if (!ver) descargar(visor.url, f.nombre);
   } catch (e) { visor = {ref: f.ref, error: e.message}; }
   pintarCorreo();
@@ -839,10 +866,11 @@ function irA(v){
   if (v === "preguntar") { pintarCtx(); $("#qAsk").focus(); }
 }
 document.addEventListener("click", ev => {
-  const t = ev.target.closest("[data-v],[data-m],[data-f],[data-cu],[data-back],[data-more],[data-askthread],[data-noctx],[data-sug],[data-responder],[data-r],[data-adj],[data-vertexto],[data-ver],[data-bajar],[data-nuevo],[data-recuperar],[data-noleido]");
+  const t = ev.target.closest("[data-v],[data-m],[data-f],[data-cu],[data-back],[data-more],[data-askthread],[data-noctx],[data-sug],[data-responder],[data-r],[data-adj],[data-vertexto],[data-ver],[data-bajar],[data-nuevo],[data-recuperar],[data-noleido],[data-hoja]");
   if (!t) return;
   if (t.dataset.adj !== undefined) { const i = +t.dataset.adj; leerBorrador(); adjAbierto = adjAbierto === i ? null : i; pintarCorreo(); return; }
   if (t.dataset.ver !== undefined || t.dataset.bajar !== undefined) { const mm = MSGS.find(x => x.id === abierto); if (mm) abrirAdjunto(mm, +(t.dataset.ver ?? t.dataset.bajar), t.dataset.ver !== undefined); return; }
+  if (t.dataset.hoja !== undefined) { visor.hoja = +t.dataset.hoja; pintarCorreo(); return; }
   if ("vertexto" in t.dataset) { leerBorrador(); verTexto = !verTexto; pintarCorreo(); return; }
   const m = MSGS.find(x => x.id === abierto);
   if ("recuperar" in t.dataset && recuperable) { borrador = recuperable.copia; abierto = recuperable.mid || "__nuevo__"; recuperable = null; $("#toast").hidden = true;
