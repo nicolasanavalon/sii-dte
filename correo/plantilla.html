@@ -255,6 +255,7 @@ textarea{font:inherit}
 
 <script>
 const CAJA = /*__DATOS__*/null;
+const VERSION_PAGINA = /*__VERSION__*/"";   // commit de la plantilla con que se publicó esta página
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const norm = s => String(s || "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
@@ -1071,8 +1072,25 @@ async function revisarZoho(manual){
   buscando = false;
 }
 $("#buscarAhora").addEventListener("click", () => { buscando = false; revisarZoho(true); });
-setInterval(() => { if (D && document.visibilityState === "visible") revisarZoho(false); }, 30000);
-document.addEventListener("visibilitychange", () => { if (D && document.visibilityState === "visible") revisarZoho(false); });
+
+// Página nueva publicada (cambios de diseño o funciones): se recarga sola, sin esperar que el celular olvide la antigua.
+let ultimaVersionVista = 0;
+async function revisarVersionPagina(){
+  if (!VERSION_PAGINA || !D || Date.now() - ultimaVersionVista < 5 * 60000) return;
+  ultimaVersionVista = Date.now();
+  try {
+    const r = await fetch(`pagina.json?t=${Date.now()}`, {cache: "no-store"});
+    const sha = r.ok ? (await r.json()).v : "";
+    if (!sha || sha === VERSION_PAGINA) return;
+    try { if (sessionStorage.getItem("correo_recarga") === sha) return; sessionStorage.setItem("correo_recarga", sha); } catch(e) {}   // una sola vez por versión
+    leerBorrador();
+    if (borrador || (document.activeElement && /INPUT|TEXTAREA/.test(document.activeElement.tagName))) {
+      aviso(`Hay una versión nueva de la página. <button class="btn sec" onclick="location.replace(location.pathname + '?v=${sha.slice(0, 10)}')">Actualizar</button>`, "", 0);
+    } else location.replace(location.pathname + "?v=" + sha.slice(0, 10));
+  } catch(e) {}
+}
+setInterval(() => { if (D && document.visibilityState === "visible") { revisarZoho(false); revisarVersionPagina(); } }, 30000);
+document.addEventListener("visibilitychange", () => { if (D && document.visibilityState === "visible") { revisarZoho(false); revisarVersionPagina(); } });
 
 /* ---------- entrar ---------- */
 async function entrar(clave, recordar){

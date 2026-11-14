@@ -28,6 +28,8 @@ jobs:
       name: github-pages
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0     # para saber la versión (commit) de la plantilla
 
       - name: Armar el sitio (DTE + correo)
         env:
@@ -41,8 +43,13 @@ jobs:
           import json, sys
           caja = open(sys.argv[1], encoding="utf-8").read().strip()
           json.loads(caja)
-          html = open("correo/plantilla.html", encoding="utf-8").read().replace("/*__DATOS__*/null", caja)
+          import subprocess
+          version = subprocess.run(["git", "log", "-1", "--format=%H", "--", "correo/plantilla.html"],
+                                   capture_output=True, text=True).stdout.strip()
+          html = (open("correo/plantilla.html", encoding="utf-8").read().replace("/*__DATOS__*/null", caja)
+                  .replace('/*__VERSION__*/""', json.dumps(version)))
           open("public/correo/index.html", "w", encoding="utf-8").write(html)
+          open("public/correo/pagina.json", "w").write(json.dumps({"v": version}))
           PY
             cp "$RUNNER_TEMP/datos/version.json" public/correo/version.json || true
           else
