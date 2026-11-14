@@ -87,15 +87,40 @@ def max_salida(modelo, pedido):
     return max(256, min(pedido, tope))
 
 
-_agotados = set()
+_agotados = {}       # modelo -> hasta cuándo (time.time()) no se vuelve a intentar
 MAX_ESPERA = 600     # segundos máximos de espera ante un límite por minuto
+# Modelo reservado para lo que pides TÚ en la página (Preguntar, Sugerir, Mejorar): los resúmenes automáticos
+# no lo usan, así nunca se gastan su cuota gratis del día.
+RESERVADOS = {x.strip() for x in (os.environ.get("GROQ_RESERVADO") or "openai/gpt-oss-120b").split(",") if x.strip()}
 
 
-def chat(sistema, usuario, max_tokens=3000, json_mode=True):
-    """Devuelve (texto, modelo). Reintenta ante límites por minuto; cambia de modelo ante límites diarios."""
+def modelos_fondo():
+    lista = modelos()
+    fondo = [m for m in lista if m not in RESERVADOS]
+    return fondo or lista
+
+
+def _espera_de(txt, cabecera):
+    """Segundos hasta que se libera el límite (Groq lo dice en el texto: 'try again in 12m10.5s')."""
+    import re
+    m = re.search(r"try again in (?:(\d+)h)?(?:(\d+)m)?(?:([\d.]+)s)?", txt)
+    if m and any(m.groups()):
+        h, mi, se = (float(x or 0) for x in m.groups())
+        return h * 3600 + mi * 60 + se
+    return float(cabecera or 20)
+
+
+def _agotado(modelo):
+    return _agotados.get(modelo, 0) > time.time()
+
+
+def chat(sistema, usuario, max_tokens=3000, json_mode=True, reservado=False):
+    """Devuelve (texto, modelo). Reintenta ante límites por minuto; cambia de modelo ante límites diarios.
+    reservado=True permite usar también el modelo reservado (solo para tareas cortas y poco frecuentes)."""
     ultimo = None
-    for modelo in modelos():
-        if modelo in _agotados:
+    lista = modelos() if reservado else modelos_fondo()
+    for modelo in lista:
+        if _agotado(modelo):
             continue
         cuerpo = {"model": modelo, "temperature": 0.2, "max_tokens": max_salida(modelo, max_tokens),
                   "messages": [{"role": "system", "content": sistema}, {"role": "user", "content": usuario}]}
@@ -111,12 +136,12 @@ def chat(sistema, usuario, max_tokens=3000, json_mode=True):
                 txt = e.read().decode("utf-8", "replace")[:600]
                 ultimo = f"{e.code}: {txt}"
                 if e.code == 429:
-                    espera = float(e.headers.get("retry-after") or 20)
+                    espera = _espera_de(txt, e.headers.get("retry-after"))
+                    if espera > 90 or "per day" in txt.lower() or "(rpd)" in txt.lower() or "(tpd)" in txt.lower():
+                        _agotados[modelo] = time.time() + max(espera, 60)   # límite diario: no insistir hasta que se libere
+                        break
                     if espera > MAX_ESPERA:
                         break                       # (vigilante) no esperar: probar otro modelo o la próxima vuelta
-                    if espera > 90 or "per day" in txt.lower() or "(rpd)" in txt.lower() or "(tpd)" in txt.lower():
-                        _agotados.add(modelo)       # límite diario: probar el siguiente modelo
-                        break
                     time.sleep(espera + 1)
                     continue
                 if e.code in (400, 404, 413):
@@ -128,7 +153,7 @@ def chat(sistema, usuario, max_tokens=3000, json_mode=True):
             except (urllib.error.URLError, TimeoutError) as e:
                 ultimo = str(e)
                 time.sleep(5 * (intento + 1))
-    if modelos() and all(m in _agotados for m in modelos()):
+    if lista and all(_agotado(m) for m in lista):
         raise LimiteDiario("Se alcanzó el límite gratis del día en todos los modelos de Groq.")
     raise RuntimeError(f"Groq no respondió: {ultimo}")
 

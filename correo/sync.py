@@ -492,6 +492,8 @@ def analizar_con_groq(estado):
     pend.sort(key=lambda x: (any(m.get("analisis") is None for m in x[1]), x[1][-1]["fecha"]), reverse=True)
     if RAPIDO:
         pend = pend[:3]          # primero las que tienen correos nuevos (ya vienen ordenadas así)
+    if all(ia._agotado(m) for m in ia.modelos_fondo()):
+        return []            # cuota gratis del día agotada: se sigue cuando se libere
     analizados, hechos = [], 0
     hoy = datetime.now(TZ).strftime("%Y-%m-%d (%A)")
     for hid, ms in pend[:MAX_GROQ_HILOS]:
@@ -589,7 +591,7 @@ def actualizar_estilo(estado):
     if len(muestra) < 3:
         return False
     try:
-        texto, modelo = ia.chat(SISTEMA_ESTILO, "CORREOS ESCRITOS POR NICOLÁS:\n\n" + "\n\n".join(muestra), max_tokens=2000)
+        texto, modelo = ia.chat(SISTEMA_ESTILO, "CORREOS ESCRITOS POR NICOLÁS:\n\n" + "\n\n".join(muestra), max_tokens=2000, reservado=True)
         perfil = ia.json_de(texto)
     except Exception as e:
         print(f"::warning::No pude actualizar el estilo de escritura: {str(e)[:200]}")
@@ -790,7 +792,8 @@ def generar_html(estado, clave):
             lista = ia.modelos()
         except Exception:
             lista = []
-        datos["_ia"] = {"proveedor": "groq", "clave": env("GROQ_API_KEY"), "modelo": env("GROQ_MODELO"), "modelos": lista}
+        datos["_ia"] = {"proveedor": "groq", "clave": env("GROQ_API_KEY"), "modelo": env("GROQ_MODELO"), "modelos": lista,
+                        "reservados": sorted(ia.RESERVADOS)}
     datos["_repo"] = env("GITHUB_REPOSITORY") or "nicolasanavalon/sii-dte"
     if env("GH_TOKEN_ENVIO"):
         # Llave de GitHub que SOLO puede lanzar el envío de respuestas (viaja cifrada, como la de Groq).
