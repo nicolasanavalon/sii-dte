@@ -632,6 +632,9 @@ def generar_html(estado, clave):
         except Exception:
             lista = []
         datos["_ia"] = {"proveedor": "groq", "clave": env("GROQ_API_KEY"), "modelo": env("GROQ_MODELO"), "modelos": lista}
+    if env("GH_TOKEN_ENVIO"):
+        # Llave de GitHub que SOLO puede lanzar el envío de respuestas (viaja cifrada, como la de Groq).
+        datos["_envio"] = {"token": env("GH_TOKEN_ENVIO"), "repo": env("GITHUB_REPOSITORY") or "nicolasanavalon/sii-dte"}
     caja = cripto.cifrar(datos, clave)
     html = PLANTILLA.read_text(encoding="utf-8").replace("/*__DATOS__*/null", json.dumps(caja))
     SALIDA.parent.mkdir(parents=True, exist_ok=True)

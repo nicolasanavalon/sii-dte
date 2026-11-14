@@ -64,6 +64,28 @@ class Zoho:
             self._vence = time.time() + int(data.get("expires_in", 3600))
         return self._token
 
+    def post(self, ruta, cuerpo):
+        req = urllib.request.Request(f"{self.base}{ruta}", data=json.dumps(cuerpo).encode(), method="POST", headers={
+            "Authorization": f"Zoho-oauthtoken {self._access()}", "Accept": "application/json",
+            "Content-Type": "application/json"})
+        try:
+            with urllib.request.urlopen(req, timeout=90) as r:
+                return json.load(r)
+        except urllib.error.HTTPError as e:
+            cuerpo_err = e.read().decode("utf-8", "replace")[:400]
+            if e.code in (401, 403):
+                raise ZohoError(f"Zoho no dio permiso para enviar ({e.code}). Hay que volver a conectar la cuenta "
+                                f"con el permiso ZohoMail.messages.CREATE. Detalle: {cuerpo_err}") from None
+            raise ZohoError(f"Error {e.code} al enviar: {cuerpo_err}") from None
+
+    def responder(self, account_id, message_id, desde, para, cc, asunto, texto):
+        """Responde un correo (queda en la conversación y en Enviados de Zoho)."""
+        cuerpo = {"fromAddress": desde, "toAddress": ",".join(para), "subject": asunto,
+                  "content": texto, "action": "reply", "mailFormat": "plaintext"}
+        if cc:
+            cuerpo["ccAddress"] = ",".join(cc)
+        return self.post(f"/accounts/{account_id}/messages/{message_id}", cuerpo)
+
     def get(self, ruta, _crudo=False, **params):
         q = urllib.parse.urlencode({k: v for k, v in params.items() if v is not None})
         url = f"{self.base}{ruta}" + (f"?{q}" if q else "")
