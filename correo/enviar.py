@@ -34,6 +34,7 @@ def main():
     if not para or not texto:
         sys.exit("❌ Falta el destinatario o el texto.")
 
+    modo = p.get("modo") or "responder"            # responder | nuevo | reenviar
     for nombre, cid, sec, rt in sync.conexiones(clave):
         z = Zoho(cid, sec, rt)
         try:
@@ -43,11 +44,20 @@ def main():
         for acc_id, _, principal in casillas:
             if acc_id == str(p.get("cuenta_id")) or (not p.get("cuenta_id") and principal == p.get("cuenta")):
                 try:
-                    z.responder(acc_id, str(p["message_id"]), principal, para, cc, asunto, texto)
+                    if modo == "responder":
+                        z.responder(acc_id, str(p["message_id"]), principal, para, cc, asunto, texto)
+                    else:
+                        adjuntos = []
+                        if modo == "reenviar" and p.get("con_adjuntos") and p.get("message_id") and p.get("carpeta"):
+                            for a in z.adjuntos(acc_id, str(p["carpeta"]), str(p["message_id"]))[:10]:
+                                datos = z.descargar_adjunto(acc_id, str(p["carpeta"]), str(p["message_id"]), a["attachmentId"])
+                                adjuntos.append(z.subir_adjunto(acc_id, str(a.get("attachmentName") or "archivo"), datos))
+                        z.enviar_nuevo(acc_id, principal, para, cc, asunto, texto, adjuntos)
                 except ZohoError as e:
                     sys.exit(f"❌ {e}")
-                print(f"✅ Respuesta enviada desde la casilla '{nombre}' a {len(para)} destinatario(s)"
-                      + (f" y {len(cc)} en copia." if cc else "."))
+                que = {"responder": "Respuesta enviada", "nuevo": "Correo enviado", "reenviar": "Correo reenviado"}[modo]
+                print(f"✅ {que} desde la casilla '{nombre}' a {len(para)} destinatario(s)"
+                      + (f" y {len(cc)} en copia" if cc else "") + (f", con {len(adjuntos)} adjunto(s)." if modo == "reenviar" else "."))
                 return
     sys.exit("❌ No encontré la casilla de Zoho de ese correo.")
 

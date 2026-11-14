@@ -155,6 +155,13 @@ def clave_hilo(thread_id, asunto, contacto):
     return hashlib.sha1(base.encode()).hexdigest()[:16]
 
 
+ADJ_DIR = os.environ.get("CORREO_ADJ_DIR", "").strip()   # carpeta de la rama correo-adjuntos (solo en la sincronización)
+
+
+def ref_adjunto(mid, att_id):
+    return hashlib.sha1(f"{mid}:{att_id}".encode()).hexdigest()[:24]
+
+
 def leer_archivos(z, account_id, folder_id, mid):
     from extraer import texto_de
     archivos = []
@@ -166,15 +173,27 @@ def leer_archivos(z, account_id, folder_id, mid):
     for a in lista[:10]:
         nombre = str(a.get("attachmentName") or "archivo")
         tam = int(float(a.get("attachmentSize") or 0))
-        texto = ""
+        texto, ref = "", None
         if tam <= 12 * 1024 * 1024:
             try:
-                texto = texto_de(nombre, z.descargar_adjunto(account_id, folder_id, mid, a["attachmentId"]))
+                datos = z.descargar_adjunto(account_id, folder_id, mid, a["attachmentId"])
+                texto = texto_de(nombre, datos)
+                if ADJ_DIR and datos:
+                    # Se guarda el archivo CIFRADO con tu contraseña, para abrirlo y descargarlo desde la página.
+                    ref = ref_adjunto(mid, a["attachmentId"])
+                    Path(ADJ_DIR).mkdir(parents=True, exist_ok=True)
+                    (Path(ADJ_DIR) / f"{ref}.bin").write_bytes(cripto.cifrar_bytes(datos, env("CORREO_CLAVE")))
             except Exception as e:
                 texto = f"(no se pudo descargar: {type(e).__name__}: {str(e)[:200]})"
                 print(f"::warning::Adjunto {nombre} de {mid}: {str(e)[:300]}")
-        archivos.append({"nombre": nombre, "tamano": tam, "texto": texto})
+        archivos.append({"nombre": nombre, "tamano": tam, "texto": texto, "ref": ref})
     return archivos
+
+
+def falta_archivo(m):
+    """El correo tiene adjuntos cuyo archivo (cifrado) todavía no está guardado para abrirlo desde la página."""
+    return bool(ADJ_DIR) and m.get("intentos_archivo", 0) < 3 and any(
+        not f.get("ref") and f.get("tamano", 0) <= 12 * 1024 * 1024 for f in m.get("archivos", []))
 
 
 def traer_nuevos(estado, clave):
@@ -203,9 +222,16 @@ def traer_nuevos(estado, clave):
             if principal and principal not in cuentas:
                 cuentas.append(principal)
             estado["cuenta"] = estado["cuenta"] or principal
+            estado.setdefault("etiquetas", {})[principal] = {"principal": "Platón", "taller": "Gary"}.get(nombre, nombre)
+            estado.setdefault("cuentas_ids", {})[principal] = acc_id
             n, c = _traer_casilla(z, acc_id, principal, estado, primera=(n_casillas == 1))
             nuevos += n
             completados += c
+    if ADJ_DIR and Path(ADJ_DIR).is_dir():
+        vigentes = {f.get("ref") for m in estado["mensajes"].values() for f in m.get("archivos", []) if f.get("ref")}
+        for archivo in Path(ADJ_DIR).glob("*.bin"):
+            if archivo.stem not in vigentes:
+                archivo.unlink()
     print(f"Zoho: {n_casillas} casilla(s) leída(s); {len(nuevos)} correos nuevos"
           + (f", {completados} antiguos completados con cadena y adjuntos." if completados else "."))
     return nuevos, completados
@@ -233,7 +259,7 @@ def _traer_casilla(z, account_id, direccion, estado, primera):
     # Correos de esta casilla guardados antes de la versión 2, o con adjuntos que fallaron: se completan.
     viejos = {i for i, m in estado["mensajes"].items()
               if (m.get("cuenta_id") == account_id or (primera and not m.get("cuenta_id")))
-              and (m.get("v") != 2 or "html" not in m or (m.get("intentos_adj", 0) < 3 and any(
+              and (m.get("v") != 2 or "html" not in m or falta_archivo(m) or (m.get("intentos_adj", 0) < 3 and any(
                   str(f.get("texto", "")).startswith("(no se pudo descargar") for f in m.get("archivos", []))))}
     inicio = int((time.time() - dias * 86400) * 1000)       # ventana de la primera importación
     if estado.get("relleno") is None:                       # (una vez) revisar huecos de importaciones cortadas
@@ -287,7 +313,7 @@ def _traer_casilla(z, account_id, direccion, estado, primera):
             texto, html = "", None
         tiene_adj = m.get("hasAttachment") in (True, "1", 1)
         previo_ok = estado["mensajes"].get(mid, {})
-        adj_ok = previo_ok.get("v") == 2 and not any(
+        adj_ok = previo_ok.get("v") == 2 and not falta_archivo(previo_ok) and not any(
             str(f.get("texto", "")).startswith("(no se pudo descargar") for f in previo_ok.get("archivos", []))
         if adj_ok:
             archivos = previo_ok.get("archivos", [])     # solo faltaba el formato original: no se vuelven a bajar
@@ -317,9 +343,12 @@ def _traer_casilla(z, account_id, direccion, estado, primera):
             "enviado": bool(enviado), "contacto": contacto,
             "analisis": previo.get("analisis"), "en_db": False,
             "intentos_adj": previo.get("intentos_adj", 0) + (1 if previo else 0),
+            "intentos_archivo": previo.get("intentos_archivo", 0) + (1 if previo and falta_archivo(previo) else 0),
         }
         if not enviado and de_nombre:
             msg["nombre_contacto"] = de_nombre
+        if previo and [f.get("texto") for f in previo.get("archivos", [])] != [f.get("texto") for f in archivos]:
+            estado.get("hilos", {}).pop(msg["hilo"], None)      # el adjunto se leyó mejor: volver a resumir
         estado["mensajes"][mid] = msg
         if not previo:
             nuevos.append(msg)
@@ -401,7 +430,7 @@ Integra la ficha anterior del contacto (no pierdas datos vigentes); quita pendie
 Nunca copies contraseñas ni códigos de verificación. Marca como posible fraude (importancia alta, acción "no abrir el enlace") los correos que parezcan phishing."""
 
 MAX_GROQ_HILOS = 12       # conversaciones por corrida (respeta el límite gratis por minuto)
-TEXTO_GROQ = 18000        # caracteres de la conversación que se envían
+TEXTO_GROQ = 22000        # caracteres de la conversación que se envían
 
 
 def _texto_hilo_groq(ms):
@@ -414,7 +443,7 @@ def _texto_hilo_groq(ms):
              f"Para: {', '.join(m.get('para', []))}\nAsunto: {m['asunto']}\n\n{t}\n")
         for a in m.get("archivos", []):
             if a.get("texto") and not str(a["texto"]).startswith("("):
-                p += f"[ADJUNTO {a['nombre']}]\n{a['texto'][:2500]}\n[FIN ADJUNTO]\n"
+                p += f"[ADJUNTO {a['nombre']}]\n{a['texto'][:5000]}\n[FIN ADJUNTO]\n"
             else:
                 p += f"[ADJUNTO {a['nombre']}: sin texto legible]\n"
         partes.append(p + "</correo>")
@@ -654,6 +683,7 @@ def generar_html(estado, clave):
         except Exception:
             lista = []
         datos["_ia"] = {"proveedor": "groq", "clave": env("GROQ_API_KEY"), "modelo": env("GROQ_MODELO"), "modelos": lista}
+    datos["_repo"] = env("GITHUB_REPOSITORY") or "nicolasanavalon/sii-dte"
     if env("GH_TOKEN_ENVIO"):
         # Llave de GitHub que SOLO puede lanzar el envío de respuestas (viaja cifrada, como la de Groq).
         datos["_envio"] = {"token": env("GH_TOKEN_ENVIO"), "repo": env("GITHUB_REPOSITORY") or "nicolasanavalon/sii-dte"}

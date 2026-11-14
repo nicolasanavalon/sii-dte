@@ -75,12 +75,50 @@ def _csv(b):
         return t
 
 
+def _ocr_imagen(img):
+    """Texto de una imagen con Tesseract (español). '' si no está instalado."""
+    try:
+        import pytesseract
+        from PIL import ImageOps
+        img = ImageOps.exif_transpose(img).convert("L")
+        if max(img.size) > 2600:
+            img.thumbnail((2600, 2600))
+        return pytesseract.image_to_string(img, lang="spa+eng", timeout=90)
+    except Exception:
+        return ""
+
+
+def _ocr(contenido: bytes):
+    from PIL import Image
+    return _ocr_imagen(Image.open(io.BytesIO(contenido)))
+
+
+def _ocr_pdf(contenido: bytes, paginas=4):
+    """PDF escaneado (sin texto): se dibujan las primeras páginas y se leen con OCR."""
+    try:
+        import pypdfium2 as pdfium
+        doc = pdfium.PdfDocument(contenido)
+        partes = []
+        for i in range(min(len(doc), paginas)):
+            img = doc[i].render(scale=2).to_pil()
+            partes.append(f"[pág. {i + 1}, leída de la imagen]\n" + _ocr_imagen(img))
+        return "\n".join(partes)
+    except Exception:
+        return ""
+
+
 def texto_de(nombre, contenido: bytes) -> str:
     """Devuelve el texto del archivo, o '' si el tipo no se puede leer (imágenes, zip, etc.)."""
     ext = (nombre or "").lower().rsplit(".", 1)[-1] if "." in (nombre or "") else ""
     try:
         if ext == "pdf" or contenido[:5] == b"%PDF-":
             t = _pdf(contenido)
+            if len(re.sub(r"\[pág\. \d+\]|\s", "", t)) < 40:      # PDF escaneado: leer la imagen
+                t = _ocr_pdf(contenido) or t
+        elif ext in ("jpg", "jpeg", "png", "webp", "tif", "tiff", "bmp", "gif"):
+            t = _ocr(contenido)
+            if t.strip():
+                t = "[texto leído de la imagen]\n" + t
         elif ext in ("xlsx", "xlsm"):
             t = _xlsx(contenido)
         elif ext == "xls":
