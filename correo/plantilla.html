@@ -1031,12 +1031,12 @@ $("#avisos").addEventListener("click", async () => {
   if (!("serviceWorker" in navigator) || !("PushManager" in window) || !("Notification" in window)) {
     aviso("Este navegador no permite avisos. En iPhone se necesita iOS 16.4 o más nuevo y abrir la app desde el ícono de la pantalla de inicio.", "mal", 12000); return;
   }
-  if (!(D.push || {}).publica) { aviso("El vigilante aún está preparando los avisos. Espera un minuto y vuelve a apretar 🔔.", "", 8000); revisarZoho(true); return; }
+  if (!((D.push || {}).llaves || {}).publica) { aviso("El vigilante aún está preparando los avisos. Espera un minuto y vuelve a apretar 🔔.", "", 8000); revisarZoho(true); return; }
   try {
     if (await Notification.requestPermission() !== "granted") { aviso("No diste permiso para avisos. Puedes activarlo en Configuración → Notificaciones.", "mal", 8000); return; }
     registroSW = registroSW || await navigator.serviceWorker.register("sw.js");
     await navigator.serviceWorker.ready;
-    const sub = await registroSW.pushManager.getSubscription() || await registroSW.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64aBytes(D.push.publica) });
+    const sub = await registroSW.pushManager.getSubscription() || await registroSW.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64aBytes(D.push.llaves.publica) });
     // Se le entrega la suscripción (cifrada con tu contraseña) al vigilante, que manda los avisos.
     const gh = D._envio, paquete = await cifrar({ modo: "suscribir", sub: sub.toJSON(), ts: Date.now() });
     const r = await fetch(`https://api.github.com/repos/${gh.repo}/actions/workflows/correo_trozo.yml/dispatches`, { method: "POST",
