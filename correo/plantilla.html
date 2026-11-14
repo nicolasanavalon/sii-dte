@@ -201,6 +201,8 @@ textarea{font:inherit}
   .read > *{flex-shrink:0}
 }
 @media (min-width:1700px){ .split{grid-template-columns:minmax(420px, 28%) minmax(0, 1fr)} }
+/* iPhone: con letra de menos de 16 px acerca la página al escribir. */
+@media (max-width:860px){ input, textarea, select{font-size:16px!important} }
 @media (prefers-reduced-motion: reduce){*{transition:none!important}}
 </style>
 </head>
@@ -233,7 +235,7 @@ textarea{font:inherit}
     <div class="toolbar" style="margin-bottom:10px">
       <div class="seg carpetas" id="carpetas" role="tablist" aria-label="Carpetas"></div>
       <label class="search"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
-        <input id="busca" type="search" autocomplete="off" placeholder="Buscar en correos y adjuntos: nombre, factura, monto, RUT…" aria-label="Buscar"></label>
+        <input id="busca" type="search" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" placeholder="Buscar en correos y adjuntos: nombre, factura, monto, RUT…" aria-label="Buscar"></label>
       <div class="chips" id="filtros"></div>
     </div>
     <div class="split" id="split">
@@ -245,7 +247,7 @@ textarea{font:inherit}
   <section id="vPreguntar" hidden>
     <div class="chat">
       <div class="ctx" id="ctx" hidden></div>
-      <form class="ask" id="formAsk"><input id="qAsk" type="text" autocomplete="off" placeholder="Pregunta sobre tus correos: ¿cuánto le debo a ICB?, ¿qué dijo Marsol del horno?…"><button class="btn" id="btnAsk" type="submit">Preguntar</button></form>
+      <form class="ask" id="formAsk"><input id="qAsk" type="text" autocomplete="off" autocorrect="off" spellcheck="false" placeholder="Pregunta sobre tus correos: ¿cuánto le debo a ICB?, ¿qué dijo Marsol del horno?…"><button class="btn" id="btnAsk" type="submit">Preguntar</button></form>
       <div class="chips" id="sugerencias"></div>
       <div class="qa" id="qa"></div>
       <p class="hint" id="hintIA"></p>
@@ -610,11 +612,11 @@ function redactor(){
   return `<section class="compose" aria-label="Responder">
     <h3>${{responder: "Tu respuesta", reenviar: "Reenviar", nuevo: "Correo nuevo"}[b.modo]}${b.ocupado ? " · " + esc(b.ocupado) : ""}</h3>
     ${CUENTAS.length > 1 ? `<label>De <select id="rDe" ${b.modo === "nuevo" ? "" : "disabled"}>${CUENTAS.map(c => `<option value="${esc(c)}" ${c === b.cuenta ? "selected" : ""}>${esc(etiqueta(c))} — ${esc(c)}</option>`).join("")}</select></label>` : ""}
-    <label>Para <span class="campo"><input id="rPara" value="${esc(b.para)}" autocomplete="off" placeholder="Escribe un nombre o correo…"></span></label>
-    <label>Cc <span class="campo"><input id="rCc" value="${esc(b.cc)}" autocomplete="off" placeholder="(opcional)"></span></label>
-    <label>Asunto <input id="rAsunto" value="${esc(b.asunto)}" autocomplete="off"></label>
+    <label>Para <span class="campo"><input id="rPara" value="${esc(b.para)}" autocomplete="off" inputmode="email" autocorrect="off" autocapitalize="off" spellcheck="false" placeholder="Escribe un nombre o correo…"></span></label>
+    <label>Cc <span class="campo"><input id="rCc" value="${esc(b.cc)}" autocomplete="off" inputmode="email" autocorrect="off" autocapitalize="off" spellcheck="false" placeholder="(opcional)"></span></label>
+    <label>Asunto <input id="rAsunto" value="${esc(b.asunto)}" autocomplete="off" autocorrect="off" spellcheck="false"></label>
     ${b.modo === "reenviar" && (MSGS.find(x => x.id === b.id) || {archivos: []}).archivos.length ? `<label class="check"><input type="checkbox" id="rAdj" ${b.con_adjuntos ? "checked" : ""}> Incluir los adjuntos originales (${MSGS.find(x => x.id === b.id).archivos.length})</label>` : ""}
-    <label>Mensaje <textarea id="rTexto" placeholder="Escribe tu respuesta, o usa «Sugerir respuesta».">${esc(b.texto)}</textarea></label>
+    <label>Mensaje <textarea id="rTexto" autocorrect="off" spellcheck="false" placeholder="Escribe tu respuesta, o usa «Sugerir respuesta».">${esc(b.texto)}</textarea></label>
     <div class="adjuntar">
       <label class="btn sec">📎 Adjuntar archivos<input type="file" id="rArchivos" multiple hidden></label>
       ${(b.nuevos || []).map((f, i) => `<span class="adj-chip">📄 ${esc(f.nombre)} <span class="muted">${tamTxt(f.datos.length)}</span><button type="button" data-quitaradj="${i}" aria-label="Quitar ${esc(f.nombre)}">✕</button></span>`).join("")}
