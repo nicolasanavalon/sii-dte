@@ -206,6 +206,7 @@ def falta_archivo(m):
 
 
 _ZOHO = {}
+CARPETAS_EXTRA = {"newsletter", "newsletters", "notification", "notifications", "notificaciones", "boletines"}
 
 
 def traer_nuevos(estado, clave):
@@ -259,6 +260,8 @@ def _traer_casilla(z, account_id, direccion, estado, primera):
                 str(c.get("folderName", "")).lower() in nombres)
     elegidas = [(c, False) for c in carpetas if es(c, {"inbox", "bandeja de entrada"})]
     elegidas += [(c, True) for c in carpetas if es(c, {"sent", "enviados", "elementos enviados"})]
+    # Carpetas que Zoho llena solo (boletines y notificaciones): también son correo recibido.
+    extra = [(c, False) for c in carpetas if es(c, CARPETAS_EXTRA)]
     if not elegidas:
         raise RuntimeError("No encontré la bandeja de entrada en Zoho. Carpetas: " +
                            ", ".join(str(c.get("folderName")) for c in carpetas))
@@ -287,6 +290,16 @@ def _traer_casilla(z, account_id, direccion, estado, primera):
     if rapido:
         # Modo rápido (cada pocos minutos): solo lo nuevo; lo antiguo se completa en las corridas normales.
         viejos, desde, tope = set(), ultimos[account_id] - 6 * 3600_000, 40
+    if extra:
+        vistas = estado.setdefault("carpetas_vistas", {}).setdefault(account_id, [])
+        nuevas = [str(c["folderId"]) for c, _ in extra if str(c["folderId"]) not in vistas]
+        if nuevas:          # carpeta recién incluida: traer también sus correos de la ventana inicial
+            vistas += nuevas
+            relleno[account_id] = True
+            desde, rapido = inicio, False
+            viejos = viejos or set()
+            tope = max(tope, 150)
+        elegidas = elegidas + extra
     if viejos:
         desde = min([desde] + [estado["mensajes"][i]["fecha"] for i in viejos]) - 60_000
 
@@ -350,6 +363,8 @@ def _traer_casilla(z, account_id, direccion, estado, primera):
         previo = estado["mensajes"].get(mid) or {}
         msg = {
             "v": 2, "id": mid, "cuenta_id": account_id, "cuenta": direccion, "carpeta": fid,
+            "carpeta_nombre": str(carpeta.get("folderName") or ""),
+            "boletin": es(carpeta, CARPETAS_EXTRA),
             "thread_zoho": str(m.get("threadId") or ""),
             "hilo": clave_hilo(str(m.get("threadId") or ""), asunto, contacto), "fecha": t,
             "de": de[0][1], "de_nombre": de_nombre, "para": para, "cc": cc, "asunto": asunto,
@@ -473,7 +488,7 @@ def analizar_con_groq(estado):
     import ia
     hilos = estado.setdefault("hilos", {})
     pend = [(hid, ms) for hid, ms in hilos_de(estado).items()
-            if all(m.get("v") == 2 for m in ms) and (hid not in hilos or any(m.get("analisis") is None for m in ms))]
+            if all(m.get("v") == 2 for m in ms) and not all(m.get("boletin") for m in ms) and (hid not in hilos or any(m.get("analisis") is None for m in ms))]
     pend.sort(key=lambda x: (any(m.get("analisis") is None for m in x[1]), x[1][-1]["fecha"]), reverse=True)
     if RAPIDO:
         pend = pend[:3]          # primero las que tienen correos nuevos (ya vienen ordenadas así)
@@ -680,7 +695,7 @@ def avisar(estado, analizados, nuevos=()):
     ya = set(estado.get("avisados", []))
     ids = {m["id"] for m in list(nuevos) + list(analizados or []) if m}
     lista = sorted((estado["mensajes"][i] for i in ids if i in estado["mensajes"]), key=lambda m: m["fecha"])
-    lista = [m for m in lista if not m.get("enviado") and m["fecha"] >= limite and m["id"] not in ya]
+    lista = [m for m in lista if not m.get("enviado") and not m.get("boletin") and m["fecha"] >= limite and m["id"] not in ya]
     if not lista:
         return
     def de(m):
