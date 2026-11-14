@@ -480,7 +480,7 @@ async function sugerir(m){
     else if (borrador.modo === "reenviar") pedido = `Nicolás reenvía este correo a ${borrador.para || "alguien"}. Escribe SOLO una nota breve que va arriba del mensaje reenviado, explicando por qué lo reenvía.` + (idea ? `\nLo que Nicolás quiere decir: ${idea}` : "");
     else pedido = `Escribe la respuesta al correo de ${m.de_nombre || m.de} con asunto "${m.asunto}" (el más reciente de la conversación).` + (idea ? `\nLo que Nicolás quiere decir (respétalo y mejóralo): ${idea}` : "");
     const t = await groq(REGLAS_RESPUESTA + "\nDevuelve SOLO el texto del correo (saludo, cuerpo y despedida firmada «Nicolás»), sin asunto ni comentarios.",
-      `Fecha de hoy: ${hoyISO()}.\n${contexto(m, 18000)}${pedido}`);
+      `Fecha de hoy: ${hoyISO()}.\n${contexto(m, 12000)}${pedido}`);
     borrador.texto = t + cola;
   } catch (e) { borrador.obs = `<p>${esc(e.message)}</p>`; }
   borrador.ocupado = ""; pintarCorreo();
@@ -510,7 +510,7 @@ Revisa el BORRADOR en dos aspectos:
 1) CLARIDAD: que se entienda bien (redacción, ortografía, tono, ambigüedades).
 2) EXACTITUD: ${m ? "compara cada dato del borrador (montos, fechas, números de factura u orden, nombres, compromisos) con la conversación y sus adjuntos; señala lo que no coincida o no aparezca en ella." : "no hay conversación previa: señala solo datos incompletos o contradictorios dentro del mismo borrador."}
 Responde SOLO un objeto JSON: {"claridad": ["observación", ...], "exactitud": ["observación con el dato correcto y de dónde sale", ...], "version_corregida": "el borrador corregido completo"}. Usa listas vacías si no hay nada que corregir.`,
-      `${contexto(m, 16000)}BORRADOR DE NICOLÁS (asunto: ${borrador.asunto}):\n${nota}`, true);
+      `${contexto(m, 11000)}BORRADOR DE NICOLÁS (asunto: ${borrador.asunto}):\n${nota}`, true);
     const r = JSON.parse(t.slice(t.indexOf("{"), t.lastIndexOf("}") + 1));
     const cl = (r.claridad || []).filter(Boolean), ex = (r.exactitud || []).filter(Boolean);
     borrador.corregida = (r.version_corregida || "") ? r.version_corregida + cola : "";
@@ -606,11 +606,11 @@ function contextoGeneral(q){
         for (const t of terms) { const i = n.indexOf(t); if (i >= 0) { bloque += `(${donde}) …${txt.slice(Math.max(0, i - 400), i + 600)}…\n`; break; } } }
       if (bloque.length > 4500) break;
     }
-    if (texto.length + bloque.length > 17000) break;
+    if (texto.length + bloque.length > 10000) break;
     texto += bloque;
   }
   const indice = base.slice(0, 60).map(m => `- ${fmtL(m.fecha)} | ${m.enviado ? "enviado a " + (m.para[0] || "") : (m.de_nombre || m.de)} | ${m.asunto}`).join("\n");
-  return `ÚLTIMOS CORREOS (índice):\n${indice.slice(0, 5000)}\n\nCORREOS RELACIONADOS CON LA PREGUNTA:${texto || "\n(ninguno coincide con las palabras de la pregunta)"}`;
+  return `ÚLTIMOS CORREOS (índice):\n${indice.slice(0, 3000)}\n\nCORREOS RELACIONADOS CON LA PREGUNTA:${texto || "\n(ninguno coincide con las palabras de la pregunta)"}`;
 }
 
 const MODELOS_QA = ["openai/gpt-oss-120b", "llama-3.3-70b-versatile", "openai/gpt-oss-20b", "llama-3.1-8b-instant"];
@@ -651,7 +651,7 @@ $("#formAsk").addEventListener("submit", async ev => {
   $("#qa").prepend(item);
   const btn = $("#btnAsk"); btn.disabled = true;
   try {
-    const contexto = ctxHilo ? `CONVERSACIÓN COMPLETA (todos sus correos, la cadena citada y el texto de los adjuntos):\n${textoHilo(HILOS[ctxHilo], 24000)}` : contextoGeneral(q);
+    const contexto = ctxHilo ? `CONVERSACIÓN COMPLETA (todos sus correos, la cadena citada y el texto de los adjuntos):\n${textoHilo(HILOS[ctxHilo], 13000)}` : contextoGeneral(q);
     const r = await groq(INSTRUCCION, `Fecha de hoy: ${hoyISO()}.\n\n${contexto}\n\nPREGUNTA DE NICOLÁS: ${q}`);
     item.querySelector(".a").innerHTML = md(r || "Sin respuesta.");
   } catch (e) { item.querySelector(".a").innerHTML = `<p class="muted">${esc(e.message)}</p>`; }

@@ -66,6 +66,8 @@ def modelos():
             mid = str(m.get("id", ""))
             if not mid or m.get("active") is False or any(x in mid.lower() for x in NO_CHAT):
                 continue
+            if 0 < int(m.get("context_window") or 0) < 16000:
+                continue                                # contexto muy chico para una conversación completa
             salida = int(m.get("max_completion_tokens") or m.get("context_window") or 0)
             if salida and salida < 1000:
                 continue
