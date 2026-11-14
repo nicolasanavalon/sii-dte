@@ -155,7 +155,8 @@ def clave_hilo(thread_id, asunto, contacto):
     return hashlib.sha1(base.encode()).hexdigest()[:16]
 
 
-ADJ_DIR = os.environ.get("CORREO_ADJ_DIR", "").strip()   # carpeta de la rama correo-adjuntos (solo en la sincronización)
+ADJ_DIR = os.environ.get("CORREO_ADJ_DIR", "").strip()
+RAPIDO = os.environ.get("CORREO_RAPIDO", "").strip().lower() in ("1", "true", "si", "sí")   # carpeta de la rama correo-adjuntos (solo en la sincronización)
 
 
 def ref_adjunto(mid, att_id):
@@ -271,6 +272,10 @@ def _traer_casilla(z, account_id, direccion, estado, primera):
         desde = ultimos[account_id] - 2 * 86400_000          # margen de 2 días
     else:
         desde = inicio      # casilla nueva, o importación que quedó a medias: revisar toda la ventana
+    rapido = RAPIDO and bool(ultimos.get(account_id))
+    if rapido:
+        # Modo rápido (cada pocos minutos): solo lo nuevo; lo antiguo se completa en las corridas normales.
+        viejos, desde, tope = set(), ultimos[account_id] - 6 * 3600_000, 40
     if viejos:
         desde = min([desde] + [estado["mensajes"][i]["fecha"] for i in viejos]) - 60_000
 
@@ -298,7 +303,7 @@ def _traer_casilla(z, account_id, direccion, estado, primera):
               f"y el resto en las próximas corridas.")
         candidatos = candidatos[-tope:]
         relleno[account_id] = True          # la próxima corrida vuelve a revisar la ventana completa
-    else:
+    elif not rapido:
         relleno[account_id] = False
 
     nuevos = []
@@ -458,7 +463,9 @@ def analizar_con_groq(estado):
     hilos = estado.setdefault("hilos", {})
     pend = [(hid, ms) for hid, ms in hilos_de(estado).items()
             if all(m.get("v") == 2 for m in ms) and (hid not in hilos or any(m.get("analisis") is None for m in ms))]
-    pend.sort(key=lambda x: x[1][-1]["fecha"], reverse=True)
+    pend.sort(key=lambda x: (any(m.get("analisis") is None for m in x[1]), x[1][-1]["fecha"]), reverse=True)
+    if RAPIDO:
+        pend = pend[:3]          # primero las que tienen correos nuevos (ya vienen ordenadas así)
     analizados, hechos = [], 0
     hoy = datetime.now(TZ).strftime("%Y-%m-%d (%A)")
     for hid, ms in pend[:MAX_GROQ_HILOS]:
@@ -487,7 +494,7 @@ def analizar_con_groq(estado):
         if nuevos:
             analizados += aplicar_resultado(estado, contacto, {"contacto": r.get("contacto"), "correos": r.get("correos")}, nuevos)
         hechos += 1
-        time.sleep(3)
+        time.sleep(1 if RAPIDO else 3)
     estado["errores"] = estado.get("errores", [])[-20:]
     quedan = len(pend) - hechos
     print(f"Groq: {hechos} conversaciones resumidas ({len(analizados)} correos nuevos); quedan {quedan}.")
@@ -691,6 +698,9 @@ def generar_html(estado, clave):
     html = PLANTILLA.read_text(encoding="utf-8").replace("/*__DATOS__*/null", json.dumps(caja))
     SALIDA.parent.mkdir(parents=True, exist_ok=True)
     SALIDA.write_text(html, encoding="utf-8")
+    # Archivo pequeño para que la página sepa si hay datos nuevos sin descargar todo (no contiene datos de correos).
+    (SALIDA.parent / "version.json").write_text(json.dumps(
+        {"v": hashlib.sha1(caja["ct"].encode()).hexdigest()[:16], "t": estado.get("ultima_sync", "")}))
     print(f"Página generada: {SALIDA} ({len(html) // 1024} KB)")
 
 
