@@ -114,6 +114,12 @@ header{display:flex; flex-wrap:wrap; align-items:center; justify-content:space-b
 .movil{display:none}
 /* Celular: botones, estado y salir en una sola fila. */
 @media (max-width:600px){
+  #vCorreos .toolbar{flex-wrap:wrap}
+  #vCorreos .toolbar .carpetas{flex:none; flex-wrap:nowrap}
+  #vCorreos .toolbar .carpetas .pc{display:none}
+  #vCorreos .toolbar .carpetas button{padding:8px 11px}
+  #vCorreos .toolbar .search{flex:1 1 0}
+  #vCorreos .toolbar .chips{flex-basis:100%}
   .acciones{width:100%; flex-wrap:nowrap; gap:6px}
   .acciones .sinc{flex:1; min-width:0; flex-wrap:nowrap; gap:6px}
   #sincTxt{min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; font-size:12px}
@@ -283,7 +289,8 @@ textarea{font:inherit}
 
 <script>
 const CAJA = /*__DATOS__*/null;
-const VERSION_PAGINA = /*__VERSION__*/"";   // commit de la plantilla con que se publicó esta página
+const VERSION_PAGINA = /*__VERSION__*/"";
+if (matchMedia("(max-width:600px)").matches) document.addEventListener("DOMContentLoaded", () => { const b = document.getElementById("busca"); if (b) b.placeholder = "Buscar…"; });   // commit de la plantilla con que se publicó esta página
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const norm = s => String(s || "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
@@ -381,8 +388,8 @@ function pintarFiltros(){
   const nNoLeidos = MSGS.filter(m => (!cuentaSel || m.cuenta === cuentaSel) && noLeido(m)).length;
   ponerBurbuja();
   const nEnv = MSGS.filter(m => (!cuentaSel || m.cuenta === cuentaSel) && m.enviado).length;
-  $("#carpetas").innerHTML = [["entrada", "📥 Bandeja de entrada", nNoLeidos ? ` <b class="nl-n">(${nNoLeidos})</b>` : ""], ["enviados", "📤 Enviados", ` <span class="muted">${nEnv}</span>`]]
-    .map(([k, t, n]) => `<button role="tab" data-carpeta="${k}" aria-pressed="${carpeta === k}" aria-selected="${carpeta === k}">${t}${n}</button>`).join("");
+  $("#carpetas").innerHTML = [["entrada", "📥", "Bandeja de entrada", nNoLeidos ? ` <b class="nl-n">(${nNoLeidos})</b>` : ""], ["enviados", "📤", "Enviados", ` <span class="muted pc">${nEnv}</span>`]]
+    .map(([k, ic, t, n]) => `<button role="tab" data-carpeta="${k}" aria-pressed="${carpeta === k}" aria-selected="${carpeta === k}" title="${t}">${ic}<span class="pc"> ${t}</span>${n}</button>`).join("");
   const fs = carpeta === "enviados" ? [["todos","Todos"],["adjuntos","Con adjuntos"]]
     : [["todos","Todos"],["noleidos",`No leídos${nNoLeidos ? " (" + nNoLeidos + ")" : ""}`],["adjuntos","Con adjuntos"]];
   if (!fs.some(([k]) => k === filtro)) filtro = "todos";
