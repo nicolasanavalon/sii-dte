@@ -70,7 +70,8 @@ def _orden_gemini(mid):
     v = re.search(r"gemini-(\d+(?:\.\d+)?)", mid)
     version = float(v.group(1)) if v else 0
     nivel = 2 if "lite" in mid else 0 if "flash" in mid else 1
-    prueba = 1 if re.search(r"preview|exp|\d{2}-\d{2}", mid) else 0
+    # Versiones de prueba y modelos con nombre clave (p. ej. "gemini-4-hydrogen"): lentos o inestables, al final.
+    prueba = 1 if re.search(r"preview|exp|\d{2}-\d{2}", mid) or not re.search(r"flash|pro", mid) else 0
     return (prueba, -version, nivel)
 
 
@@ -92,7 +93,7 @@ def _modelos_gemini():
                 and not any(x in mid.lower() for x in NO_GEMINI) and "latest" not in mid):
             out.append(mid)
             _max_salida[mid] = int(m.get("outputTokenLimit") or 8192)
-    return sorted(set(out), key=_orden_gemini)[:6]
+    return sorted(set(out), key=_orden_gemini)[:8]
 
 
 def modelos():
@@ -137,12 +138,29 @@ def max_salida(modelo, pedido):
     return max(256, min(pedido, tope))
 
 
+_sin_thinking = set()     # modelos que no aceptan thinkingConfig
+
+
 def _gemini_chat(modelo, sistema, usuario, max_tokens, json_mode):
     cuerpo = {"systemInstruction": {"parts": [{"text": sistema}]},
               "contents": [{"role": "user", "parts": [{"text": usuario}]}],
               "generationConfig": {"temperature": 0.2, "maxOutputTokens": max(4096, max_tokens * 2)}}
     if json_mode:
         cuerpo["generationConfig"]["responseMimeType"] = "application/json"
+    if modelo not in _sin_thinking:
+        # Pensar poco = responder rápido (resumir correos no necesita razonamiento largo).
+        cuerpo["generationConfig"]["thinkingConfig"] = {"thinkingLevel": "low"}
+        try:
+            return _gemini_enviar(modelo, cuerpo)
+        except urllib.error.HTTPError as e:
+            if e.code != 400:
+                raise
+            _sin_thinking.add(modelo)
+            del cuerpo["generationConfig"]["thinkingConfig"]
+    return _gemini_enviar(modelo, cuerpo)
+
+
+def _gemini_enviar(modelo, cuerpo):
     req = urllib.request.Request(f"{GEMINI_API}/models/{modelo}:generateContent", data=json.dumps(cuerpo).encode(),
                                  headers={"x-goog-api-key": _clave_gemini(), "Content-Type": "application/json",
                                           "User-Agent": "correo-resumenes/1.0"}, method="POST")
@@ -164,8 +182,15 @@ RESERVADOS = {x.strip() for x in (os.environ.get("GROQ_RESERVADO") or "openai/gp
 
 
 def reservados():
-    """Para la página: Gemini flash/pro (no los "lite") y el mejor de Groq."""
-    return [m for m in modelos() if (es_gemini(m) and "lite" not in m) or m in RESERVADOS]
+    """Para la página: el Gemini flash más nuevo, los Gemini pro y el mejor de Groq (cada modelo tiene su
+    propia cuota gratis diaria, así los resúmenes automáticos nunca gastan la de lo que pides tú)."""
+    gem = [m for m in modelos() if es_gemini(m)]
+    flash = [m for m in gem if "flash" in m and "lite" not in m and _orden_gemini(m)[0] == 0]
+    pro = [m for m in gem if "pro" in m and _orden_gemini(m)[0] == 0]
+    elegidos = set(flash[:1] + pro + [m for m in modelos() if m in RESERVADOS])
+    if not elegidos & set(gem):
+        elegidos |= set(gem[:1])
+    return [m for m in modelos() if m in elegidos]
 
 
 def modelos_fondo():

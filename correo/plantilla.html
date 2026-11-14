@@ -939,12 +939,16 @@ function contextoGeneral(q){
 
 const MODELOS_QA = ["openai/gpt-oss-120b", "llama-3.3-70b-versatile", "openai/gpt-oss-20b", "llama-3.1-8b-instant"];
 // IA gratuita: Gemini de Google (principal) y Groq (respaldo). Primero los modelos reservados para la página.
+const SIN_PENSAR = new Set();   // modelos de Gemini que no aceptan "thinkingConfig"
 async function llamarModelo(ia, modelo, sistema, usuario, json){
   if (modelo.startsWith("gemini")) {
-    const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${modelo}:generateContent?key=${encodeURIComponent(ia.clave_gemini)}`, { method: "POST",
+    const pedir = pensar => fetch(`https://generativelanguage.googleapis.com/v1beta/models/${modelo}:generateContent?key=${encodeURIComponent(ia.clave_gemini)}`, { method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ systemInstruction: { parts: [{ text: sistema }] }, contents: [{ role: "user", parts: [{ text: usuario }] }],
-        generationConfig: Object.assign({ temperature: 0.2, maxOutputTokens: 4096 }, json ? { responseMimeType: "application/json" } : {}) }) }).catch(() => null);
+        generationConfig: Object.assign({ temperature: 0.2, maxOutputTokens: 4096 }, json ? { responseMimeType: "application/json" } : {},
+          pensar ? { thinkingConfig: { thinkingLevel: "low" } } : {}) }) }).catch(() => null);
+    let r = await pedir(!SIN_PENSAR.has(modelo));          // pensar poco = responder rápido
+    if (r && r.status === 400 && !SIN_PENSAR.has(modelo)) { SIN_PENSAR.add(modelo); r = await pedir(false); }
     if (!r || !r.ok) return { r };
     const j = await r.json(), partes = (((j.candidates || [])[0] || {}).content || {}).parts || [];
     return { r, texto: partes.filter(p => !p.thought).map(p => p.text || "").join("") };
