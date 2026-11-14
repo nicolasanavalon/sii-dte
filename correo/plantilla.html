@@ -176,6 +176,10 @@ textarea{font:inherit}
 .ctx{display:flex; align-items:center; flex-wrap:wrap; gap:8px; background:var(--accent-soft); color:var(--accent); border-radius:8px; padding:8px 12px; font-size:13.5px}
 .ctx button{border:0; background:none; color:inherit; cursor:pointer; margin-left:auto; font-weight:600}
 .ask{display:flex; gap:8px; background:var(--panel); border:1px solid var(--line); border-radius:var(--r); padding:10px}
+.mic{padding:10px 13px; font-size:18px; line-height:1}
+.mic.grabando{background:var(--alta); color:#fff; animation:latido 1.2s ease-in-out infinite}
+@keyframes latido{50%{opacity:.65}}
+#micTxt{margin:-4px 2px 0}
 .ask input{flex:1; min-width:0; padding:10px 12px; border:1px solid var(--line); border-radius:8px; background:var(--bg)}
 .qa{display:flex; flex-direction:column; gap:12px}
 .q{align-self:flex-end; background:var(--accent); color:var(--accent-ink); padding:9px 14px; border-radius:14px 14px 4px 14px; max-width:85%; overflow-wrap:anywhere}
@@ -247,7 +251,8 @@ textarea{font:inherit}
   <section id="vPreguntar" hidden>
     <div class="chat">
       <div class="ctx" id="ctx" hidden></div>
-      <form class="ask" id="formAsk"><input id="qAsk" type="text" autocomplete="off" autocorrect="on" autocapitalize="sentences" spellcheck="true" placeholder="Pregunta sobre tus correos: ¿cuánto le debo a ICB?, ¿qué dijo Marsol del horno?…"><button class="btn" id="btnAsk" type="submit">Preguntar</button></form>
+      <form class="ask" id="formAsk"><input id="qAsk" type="text" autocomplete="off" autocorrect="on" autocapitalize="sentences" spellcheck="true" placeholder="Pregunta sobre tus correos: ¿cuánto le debo a ICB?, ¿qué dijo Marsol del horno?…"><button class="btn sec mic" id="btnMic" type="button" aria-label="Dictar la pregunta" title="Dictar la pregunta">🎤</button><button class="btn" id="btnAsk" type="submit">Preguntar</button></form>
+      <p class="small muted" id="micTxt" hidden></p>
       <div class="chips" id="sugerencias"></div>
       <div class="qa" id="qa"></div>
       <p class="hint" id="hintIA"></p>
@@ -991,6 +996,63 @@ function pintarCtx(){
                       : ["¿Qué tengo pendiente de responder?", "¿Qué facturas vencen esta semana?", "¿Cuánto le debo a ICB?"];
   $("#sugerencias").innerHTML = sug.map(s => `<button class="chip" data-sug="${esc(s)}">${esc(s)}</button>`).join("");
 }
+
+/* ---------- dictar la pregunta: se graba la voz y la transcribe Whisper (gratis, de Groq) ---------- */
+let grabadora = null, trozosVoz = [], relojMic = null;
+function estadoMic(txt, grabando){
+  const b = $("#btnMic"); b.classList.toggle("grabando", !!grabando); b.textContent = grabando ? "⏹" : "🎤";
+  b.setAttribute("aria-label", grabando ? "Detener y transcribir" : "Dictar la pregunta");
+  $("#micTxt").hidden = !txt; $("#micTxt").textContent = txt || "";
+}
+async function transcribir(blob){
+  const ia = D._ia || {};
+  if (!ia.clave) throw new Error("Para dictar falta la clave gratuita de Groq.");
+  const ext = /mp4|m4a|aac/.test(blob.type) ? "m4a" : /ogg/.test(blob.type) ? "ogg" : "webm";
+  let ultimo = "";
+  for (const modelo of ["whisper-large-v3-turbo", "whisper-large-v3"]) {
+    const f = new FormData();
+    f.append("file", blob, "pregunta." + ext); f.append("model", modelo); f.append("language", "es");
+    f.append("prompt", "Pregunta sobre correos de Anasep, Platón y Gary: facturas, pagos, montos, proveedores.");
+    const r = await fetch("https://api.groq.com/openai/v1/audio/transcriptions", { method: "POST",
+      headers: { "Authorization": "Bearer " + ia.clave }, body: f }).catch(() => null);
+    if (r && r.ok) return ((await r.json()).text || "").trim();
+    ultimo = !r ? "Sin conexión." : r.status === 429 ? "Se alcanzó el límite gratis de dictado por ahora; prueba en un rato." : `No se pudo transcribir (${r.status}).`;
+    if (r && r.status !== 404 && r.status !== 400) break;
+  }
+  throw new Error(ultimo);
+}
+$("#btnMic").addEventListener("click", async () => {
+  if (grabadora && grabadora.state === "recording") { grabadora.stop(); return; }
+  if (!navigator.mediaDevices || !window.MediaRecorder) { estadoMic("Este navegador no permite grabar voz. Usa el micrófono del teclado."); return; }
+  let flujo;
+  try { flujo = await navigator.mediaDevices.getUserMedia({ audio: true }); }
+  catch(e) { estadoMic("Sin permiso para el micrófono. Actívalo en la configuración del navegador para esta página."); return; }
+  trozosVoz = [];
+  const tipo = ["audio/webm;codecs=opus", "audio/mp4", "audio/webm"].find(t => MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(t));
+  grabadora = new MediaRecorder(flujo, tipo ? { mimeType: tipo } : undefined);
+  grabadora.ondataavailable = e => { if (e.data && e.data.size) trozosVoz.push(e.data); };
+  grabadora.onstop = async () => {
+    clearInterval(relojMic); flujo.getTracks().forEach(t => t.stop());
+    const blob = new Blob(trozosVoz, { type: grabadora.mimeType || tipo || "audio/webm" });
+    if (blob.size < 1500) { estadoMic("No se escuchó nada. Mantén apretado un poco más."); return; }
+    estadoMic("Transcribiendo…"); $("#btnMic").disabled = true;
+    try {
+      const texto = await transcribir(blob);
+      const q = $("#qAsk"); q.value = (q.value.trim() ? q.value.trim() + " " : "") + texto; q.focus();
+      estadoMic(texto ? "Revisa el texto y aprieta Preguntar." : "No se entendió; intenta de nuevo.");
+      setTimeout(() => { if ($("#micTxt").textContent.startsWith("Revisa")) estadoMic(""); }, 6000);
+    } catch(e) { estadoMic(e.message); }
+    $("#btnMic").disabled = false;
+  };
+  grabadora.start();
+  const ini = Date.now();
+  estadoMic("Escuchando… habla y aprieta ⏹ al terminar (0:00)", true);
+  relojMic = setInterval(() => {
+    const s = Math.floor((Date.now() - ini) / 1000);
+    if (s >= 90) { grabadora.stop(); return; }                 // tope: 1 minuto y medio
+    estadoMic(`Escuchando… habla y aprieta ⏹ al terminar (${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")})`, true);
+  }, 500);
+});
 
 $("#formAsk").addEventListener("submit", async ev => {
   ev.preventDefault();
