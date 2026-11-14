@@ -28,13 +28,18 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
+        with:
+          sparse-checkout: correo        # solo lo necesario: más rápido
+          fetch-depth: 1
 
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+          cache: pip
+          cache-dependency-path: correo/requirements.txt
 
       - name: Instalar dependencias
-        run: pip install -q cryptography
+        run: pip install -q --disable-pip-version-check cryptography
 
       - name: Enviar
         env:
