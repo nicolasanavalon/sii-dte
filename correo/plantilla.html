@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="robots" content="noindex, nofollow">
-<title>Bandeja Anasep</title>
+<title>Bandeja Zoho</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap">
@@ -92,6 +92,7 @@ header{display:flex; flex-wrap:wrap; align-items:center; justify-content:space-b
 .casillas .lbl{font-size:12.5px; color:var(--muted)}
 .seg{display:flex; gap:2px; background:var(--soft); padding:3px; border-radius:10px; flex-wrap:wrap}
 .seg button{border:0; background:none; padding:6px 12px; border-radius:8px; cursor:pointer; color:var(--muted); font-weight:500; font-size:14px}
+.seg .nl-n{color:var(--accent); font-weight:700}
 .seg button[aria-pressed="true"]{background:var(--panel); color:var(--ink); box-shadow:0 1px 2px rgba(0,0,0,.08)}
 .progreso{display:flex; flex-wrap:wrap; align-items:center; gap:6px 14px; font-size:12.5px; color:var(--muted)}
 .barra{width:140px; height:6px; background:var(--soft); border-radius:999px; overflow:hidden}
@@ -197,7 +198,7 @@ textarea{font:inherit}
 <body>
 <div id="bloqueo" class="lock">
   <form id="formClave" class="lockbox">
-    <h1>Bandeja Anasep</h1>
+    <h1>Bandeja Zoho</h1>
     <p class="muted small" style="margin:0">Tus correos están cifrados. Ingresa tu contraseña para verlos.</p>
     <input id="clave" type="password" autocomplete="current-password" placeholder="Contraseña" required>
     <label class="small muted"><input type="checkbox" id="recordar" checked> Recordar en este dispositivo (no volver a pedirla)</label>
@@ -208,7 +209,7 @@ textarea{font:inherit}
 
 <div id="appwrap" class="app" hidden>
   <header>
-    <div style="display:flex;flex-direction:column;gap:4px"><h1>Bandeja Anasep</h1><div class="muted small" id="estado"></div><div class="progreso" id="progreso"></div></div>
+    <div style="display:flex;flex-direction:column;gap:4px"><h1>Bandeja Zoho</h1><div class="muted small" id="estado"></div><div class="progreso" id="progreso"></div></div>
     <div class="casillas" id="casillas" hidden><span class="lbl">Casilla:</span><div class="seg" id="seg"></div></div>
     <nav class="tabs" role="tablist" aria-label="Vistas">
       <button class="tab" role="tab" id="tab-correos" data-v="correos">Correos</button>
@@ -312,7 +313,7 @@ function construir(refresco = false){
   CUENTAS = [...new Set(MSGS.map(m => m.cuenta).filter(Boolean))];
   armarAgenda();
   for (const m of MSGS) m._idx = norm(m.asunto + " " + m.de + " " + (m.de_nombre || "") + " " + m.para.join(" ") + " " + (m.texto || m.vista_previa || "") + " " + m.archivos.map(a => a.nombre + " " + (a.texto || "")).join(" "));
-  $("#estado").textContent = `${MSGS.length} correos${CUENTAS.length > 1 ? " · " + CUENTAS.length + " casillas" : ""} · actualizado ${D.ultima_sync || "—"}`;
+  $("#estado").textContent = `${MSGS.length} correos${CUENTAS.length > 1 ? " · " + CUENTAS.length + " casillas" : ""}`;
   $("#hintIA").textContent = D._ia && D._ia.clave ? "Responde la IA gratuita de Groq usando tus correos y adjuntos. Puede equivocarse: revisa el correo citado." : "La IA se activa cuando guardes la clave gratuita de Groq (GROQ_API_KEY).";
   pintarFiltros(); pintarLista();
   if (!refresco || !abierto) pintarCorreo();
@@ -327,7 +328,8 @@ function pintarFiltros(){
   $("#filtros").innerHTML = h;
   $("#casillas").hidden = CUENTAS.length < 2;
   $("#seg").innerHTML = [["", "Todas"], ...CUENTAS.map(c => [c, etiqueta(c)])]
-    .map(([k,t]) => `<button data-cu="${esc(k)}" aria-pressed="${cuentaSel === k}" title="${esc(k || "Todas las casillas")}">${esc(t)}</button>`).join("");
+    .map(([k,t]) => { const n = MSGS.filter(m => (!k || m.cuenta === k) && noLeido(m)).length;
+      return `<button data-cu="${esc(k)}" aria-pressed="${cuentaSel === k}" title="${esc(k || "Todas las casillas")}${n ? " · " + n + " sin leer" : ""}">${esc(t)}${n ? ` <b class="nl-n">(${n})</b>` : ""}</button>`; }).join("");
   pintarProgreso();
 }
 
@@ -695,7 +697,7 @@ async function enviar(m){
         if (run.conclusion === "success") {
           local.estadoLocal = "enviado"; pintarLista();
           aviso(`✓ ${nombreAccion} enviad${b.modo === "reenviar" ? "o" : b.modo === "nuevo" ? "o" : "a"} a ${esc(local.para.join(", "))}`, "bien", 6000);
-          buscando = false; buscarCorreos(true);      // traer el enviado desde Zoho
+          setTimeout(() => revisarZoho(false), 70000);      // el vigilante lo trae de Zoho en ~1 minuto
         } else falla(local, copia, m, "No se pudo enviar (Zoho lo rechazó).");
         return;
       }
@@ -862,56 +864,47 @@ let tBusca;
 $("#busca").addEventListener("input", ev => { clearTimeout(tBusca); tBusca = setTimeout(() => { busca = ev.target.value.trim(); limite = 150; pintarLista(); pintarCorreo(); }, 150); });
 
 /* ---------- correos nuevos: casi en tiempo real ---------- */
-let versionActual = null, sondeo = null, buscando = false;
-const ahoraTxt = () => new Date().toLocaleTimeString("es-CL", {hour: "2-digit", minute: "2-digit"});
+// Un "vigilante" en GitHub revisa Zoho cada minuto y guarda los datos (cifrados) en la rama correo-datos.
+// La página la revisa cada 30 segundos y, si hay algo nuevo, lo descarga y lo muestra sin recargar.
+let versionActual = null, buscando = false;
+const horaTxt = ms => new Date(ms || Date.now()).toLocaleTimeString("es-CL", {hour: "2-digit", minute: "2-digit"});
 function sinc(txt, gira){ $("#sincTxt").innerHTML = esc(txt); $("#buscarAhora").innerHTML = (gira ? '<span class="girando">🔄</span>' : "🔄") + " Buscar ahora"; }
 
-async function versionPublicada(){
-  try { const r = await fetch(`version.json?t=${Date.now()}`, {cache: "no-store"}); return r.ok ? (await r.json()).v : null; } catch(e) { return null; }
+async function deDatos(archivo){
+  const gh = (D && D._envio) || {}, repo = gh.repo || (D && D._repo) || "nicolasanavalon/sii-dte";
+  const url = `https://api.github.com/repos/${repo}/contents/${archivo}?ref=correo-datos`;
+  const h = { "Accept": "application/vnd.github.raw" };
+  if (gh.token) h.Authorization = "Bearer " + gh.token;
+  let r = await fetch(url, { headers: h, cache: "no-store" });
+  if ((r.status === 401 || r.status === 403) && h.Authorization) { delete h.Authorization; r = await fetch(url, { headers: h, cache: "no-store" }); }
+  if (!r.ok) throw new Error("HTTP " + r.status);
+  return r.json();
 }
-async function traerDatosNuevos(){
-  const r = await fetch(`${location.pathname}?t=${Date.now()}`, {cache: "no-store"});
-  const html = await r.text(), i = html.indexOf("const CAJA = ");
-  const caja = JSON.parse(html.slice(i + 13, html.indexOf(";\n", i)));
-  if (!caja || caja.ct === CAJA_ACTUAL.ct) return 0;
-  const antes = new Set(MSGS.map(m => m.id));
-  CAJA_ACTUAL = caja; leerBorrador();
-  D = await abrirCaja(caja, CLAVE);
-  construir(true);
-  return MSGS.filter(m => !antes.has(m.id)).length;
-}
-// Pide a GitHub una búsqueda rápida en Zoho (la misma llave del envío, que solo puede lanzar tareas de este proyecto).
-async function dispararBusqueda(){
-  const gh = D._envio; if (!gh || !gh.token) return false;
+async function revisarZoho(manual){
+  if (buscando || !D) return; buscando = true;
+  if (manual) sinc("Revisando…", true);
   try {
-    const r = await fetch(`https://api.github.com/repos/${gh.repo}/actions/workflows/correo_sync.yml/dispatches`, { method: "POST",
-      headers: { "Authorization": "Bearer " + gh.token, "Accept": "application/vnd.github+json" },
-      body: JSON.stringify({ ref: "main", inputs: { forzar: "false", rapido: "true" } }) });
-    if (r.ok) try { localStorage.setItem("correo_ult_busqueda", String(Date.now())); } catch(e) {}
-    return r.ok;
-  } catch(e) { return false; }
+    const v = await deDatos("version.json");
+    let n = 0;
+    if (v.v && v.v !== versionActual) {
+      const caja = await deDatos("caja.json");
+      if (caja && caja.ct && caja.ct !== CAJA_ACTUAL.ct) {
+        const antes = new Set(MSGS.map(m => m.id));
+        const nuevoD = await abrirCaja(caja, CLAVE);
+        CAJA_ACTUAL = caja; leerBorrador(); D = nuevoD; construir(true);
+        n = MSGS.filter(m => !antes.has(m.id) && !m.local).length;
+      }
+      versionActual = v.v;
+    }
+    const atraso = Date.now() - (v.ms || 0);
+    sinc(n ? `${n} correo${n > 1 ? "s" : ""} nuevo${n > 1 ? "s" : ""} · ${horaTxt()}`
+           : atraso < 5 * 60000 ? `Al día · Zoho revisado ${horaTxt(v.ms)}` : `⚠️ Última revisión de Zoho: ${horaTxt(v.ms)}`);
+  } catch(e) { sinc(manual ? "No se pudo revisar; reintento en 30 s." : ($("#sincTxt").textContent || "")); }
+  buscando = false;
 }
-async function buscarCorreos(manual){
-  if (buscando) return; buscando = true;
-  let ult = 0; try { ult = +localStorage.getItem("correo_ult_busqueda") || 0; } catch(e) {}
-  if (manual || Date.now() - ult > 100000) await dispararBusqueda();
-  sinc("Buscando correos nuevos…", true);
-  versionActual = versionActual || await versionPublicada();
-  const fin = Date.now() + 6 * 60000;
-  clearInterval(sondeo);
-  sondeo = setInterval(async () => {
-    const v = await versionPublicada();
-    if (v && v !== versionActual) {
-      versionActual = v;
-      try { const n = await traerDatosNuevos(); sinc(n ? `${n} correo${n > 1 ? "s" : ""} nuevo${n > 1 ? "s" : ""} · ${ahoraTxt()}` : `Al día · ${ahoraTxt()}`); }
-      catch(e) { sinc("No se pudo actualizar; reintenta."); }
-      clearInterval(sondeo); buscando = false;
-    } else if (Date.now() > fin) { sinc(`Al día · ${ahoraTxt()}`); clearInterval(sondeo); buscando = false; }
-  }, 15000);
-}
-$("#buscarAhora").addEventListener("click", () => { buscando = false; buscarCorreos(true); });
-setInterval(() => { if (D && document.visibilityState === "visible" && !buscando) buscarCorreos(false); }, 120000);
-document.addEventListener("visibilitychange", () => { if (D && document.visibilityState === "visible" && !buscando) buscarCorreos(false); });
+$("#buscarAhora").addEventListener("click", () => { buscando = false; revisarZoho(true); });
+setInterval(() => { if (D && document.visibilityState === "visible") revisarZoho(false); }, 30000);
+document.addEventListener("visibilitychange", () => { if (D && document.visibilityState === "visible") revisarZoho(false); });
 
 /* ---------- entrar ---------- */
 async function entrar(clave, recordar){
@@ -919,7 +912,7 @@ async function entrar(clave, recordar){
   if (recordar) ss.set("correo_clave", clave);
   $("#bloqueo").hidden = true; $("#appwrap").hidden = false;
   construir(); irA("correos");
-  versionPublicada().then(v => { versionActual = v; buscarCorreos(false); });
+  revisarZoho(false);
 }
 $("#salir").addEventListener("click", () => { ss.del("correo_clave"); location.reload(); });
 $("#formClave").addEventListener("submit", async ev => {

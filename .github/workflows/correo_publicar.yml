@@ -1,0 +1,57 @@
+name: "Correo: publicar página"
+
+# Arma la página del correo con los datos cifrados más recientes (rama correo-datos) y la publica en GitHub
+# Pages junto al DTE. La lanza el vigilante una vez por hora y cada cambio de la plantilla. La página, una vez
+# abierta, se mantiene al día leyendo la rama correo-datos cada 30 segundos.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "correo/plantilla.html"
+      - ".github/workflows/correo_publicar.yml"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  publicar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment:
+      name: github-pages
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Armar el sitio (DTE + correo)
+        env:
+          REPO_URL: https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git
+          CORREO_URL: ${{ vars.CORREO_URL || format('https://{0}.github.io/{1}/correo/', github.repository_owner, github.event.repository.name) }}
+        run: |
+          mkdir -p public/correo
+          cp index.html public/index.html
+          if git clone -q --depth 1 --branch correo-datos "$REPO_URL" "$RUNNER_TEMP/datos"; then
+            python3 - "$RUNNER_TEMP/datos/caja.json" <<'PY'
+          import json, sys
+          caja = open(sys.argv[1], encoding="utf-8").read().strip()
+          json.loads(caja)
+          html = open("correo/plantilla.html", encoding="utf-8").read().replace("/*__DATOS__*/null", caja)
+          open("public/correo/index.html", "w", encoding="utf-8").write(html)
+          PY
+            cp "$RUNNER_TEMP/datos/version.json" public/correo/version.json || true
+          else
+            # Aún no hay rama de datos: conservar la página publicada.
+            curl -sSfL "${CORREO_URL}?nocache=$(date +%s)" -o public/correo/index.html
+          fi
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: public
+
+      - uses: actions/deploy-pages@v4
