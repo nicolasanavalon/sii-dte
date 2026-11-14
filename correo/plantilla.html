@@ -344,7 +344,7 @@ function construir(refresco = false){
   armarAgenda();
   for (const m of MSGS) m._idx = norm(m.asunto + " " + m.de + " " + (m.de_nombre || "") + " " + m.para.join(" ") + " " + (m.texto || m.vista_previa || "") + " " + m.archivos.map(a => a.nombre + " " + (a.texto || "")).join(" "));
   $("#estado").textContent = `${MSGS.length} correos${CUENTAS.length > 1 ? " · " + CUENTAS.length + " casillas" : ""}`;
-  $("#hintIA").textContent = D._ia && D._ia.clave ? "Responde la IA gratuita de Groq usando tus correos y adjuntos. Puede equivocarse: revisa el correo citado." : "La IA se activa cuando guardes la clave gratuita de Groq (GROQ_API_KEY).";
+  $("#hintIA").textContent = D._ia && (D._ia.clave || D._ia.clave_gemini) ? `Responde la IA gratuita (${D._ia.clave_gemini ? "Gemini de Google" + (D._ia.clave ? ", con Groq de respaldo" : "") : "Groq"}) usando tus correos y adjuntos. Puede equivocarse: revisa el correo citado.` : "La IA se activa cuando guardes la clave gratuita de Gemini (GEMINI_API_KEY) o de Groq (GROQ_API_KEY).";
   pintarFiltros(); pintarLista();
   if (!refresco || !abierto) pintarCorreo();
   programarLeidos(3000);
@@ -938,27 +938,43 @@ function contextoGeneral(q){
 }
 
 const MODELOS_QA = ["openai/gpt-oss-120b", "llama-3.3-70b-versatile", "openai/gpt-oss-20b", "llama-3.1-8b-instant"];
+// IA gratuita: Gemini de Google (principal) y Groq (respaldo). Primero los modelos reservados para la página.
+async function llamarModelo(ia, modelo, sistema, usuario, json){
+  if (modelo.startsWith("gemini")) {
+    const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${modelo}:generateContent?key=${encodeURIComponent(ia.clave_gemini)}`, { method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ systemInstruction: { parts: [{ text: sistema }] }, contents: [{ role: "user", parts: [{ text: usuario }] }],
+        generationConfig: Object.assign({ temperature: 0.2, maxOutputTokens: 4096 }, json ? { responseMimeType: "application/json" } : {}) }) }).catch(() => null);
+    if (!r || !r.ok) return { r };
+    const j = await r.json(), partes = (((j.candidates || [])[0] || {}).content || {}).parts || [];
+    return { r, texto: partes.filter(p => !p.thought).map(p => p.text || "").join("") };
+  }
+  const r = await fetch("https://api.groq.com/openai/v1/chat/completions", { method: "POST",
+    headers: { "Authorization": "Bearer " + ia.clave, "Content-Type": "application/json" },
+    body: JSON.stringify(Object.assign({ model: modelo, temperature: 0.2, max_tokens: 1500,
+      messages: [{ role: "system", content: sistema }, { role: "user", content: usuario }] },
+      modelo.includes("gpt-oss") ? { reasoning_effort: "low" } : {}, json ? { response_format: { type: "json_object" } } : {})) }).catch(() => null);
+  if (!r || !r.ok) return { r };
+  const j = await r.json();
+  return { r, texto: j.choices[0].message.content || "" };
+}
 async function groq(sistema, usuario, json = false){
   const ia = D._ia;
-  if (!ia || !ia.clave) throw new Error("La IA todavía no está activada (falta la clave gratuita de Groq).");
-  // Primero el modelo reservado para ti (los resúmenes automáticos no gastan su cuota); solo modelos que tu cuenta tiene.
-  const cuenta = ia.modelos && ia.modelos.length ? ia.modelos : MODELOS_QA;
+  if (!ia || !(ia.clave || ia.clave_gemini)) throw new Error("La IA todavía no está activada (falta la clave gratuita de Gemini o de Groq).");
+  const cuenta = (ia.modelos && ia.modelos.length ? ia.modelos : MODELOS_QA)
+    .filter(m => m.startsWith("gemini") ? ia.clave_gemini : ia.clave);
   const modelos = [ia.modelo, ...(ia.reservados || []).filter(m => cuenta.includes(m)), ...cuenta].filter((m, i, a) => m && a.indexOf(m) === i);
   let error = "La IA no pudo responder.", limite = false;
   for (const modelo of modelos) {
-    const r = await fetch("https://api.groq.com/openai/v1/chat/completions", { method: "POST",
-      headers: { "Authorization": "Bearer " + ia.clave, "Content-Type": "application/json" },
-      body: JSON.stringify(Object.assign({ model: modelo, temperature: 0.2, max_tokens: 1500,
-        messages: [{ role: "system", content: sistema }, { role: "user", content: usuario }] },
-        modelo.includes("gpt-oss") ? { reasoning_effort: "low" } : {}, json ? { response_format: { type: "json_object" } } : {})) }).catch(() => null);
-    if (r && r.ok) { const j = await r.json(); return (j.choices[0].message.content || "").replace(/<think>[\s\S]*?<\/think>/g, "").trim(); }
+    const { r, texto } = await llamarModelo(ia, modelo, sistema, usuario, json);
+    if (r && r.ok && texto && texto.trim()) return texto.replace(/<think>[\s\S]*?<\/think>/g, "").trim();
     if (r && r.status === 429) {
-      const txt = await r.text().catch(() => ""), dia = /per day|TPD|RPD/i.test(txt), m = txt.match(/try again in ([\dhms.]+)/);
-      const en = m ? m[1].replace(/\.$/, "").replace(/\.\d+s/, "s").replace(/(\d+)h/, "$1 h ").replace(/(\d+)m/, "$1 min ").replace(/(\d+)s/, "$1 s").trim() : "";
+      const txt = await r.text().catch(() => ""), dia = /per ?day|TPD|RPD/i.test(txt), m = txt.match(/(?:try again|retry) in ([\dhms.]+)/);
+      const en = m ? m[1].replace(/\.$/, "").replace(/\.\d+s/, "s").replace(/(\d+)h/, "$1 h ").replace(/(\d+)m(?!s)/, "$1 min ").replace(/(\d+)s/, "$1 s").trim() : "";
       if (!limite || dia) error = dia ? `La IA gratuita llegó a su límite del día${en ? "; vuelve a estar disponible en " + en : ""}.` : "La IA gratuita está ocupada (límite por minuto). Prueba en un minuto.";
       limite = true;
     } else if (!limite) error = !r ? "Sin conexión con la IA." : `La IA no pudo responder (${r.status}).`;
-    if (r && ![400, 404, 413, 429].includes(r.status)) break;
+    if (r && ![400, 403, 404, 413, 429, 500, 503].includes(r.status)) break;
   }
   throw new Error(error);
 }
