@@ -128,6 +128,12 @@ header{display:flex; flex-wrap:wrap; align-items:center; justify-content:space-b
 details.resumen summary{cursor:pointer; list-style:none} details.resumen summary::-webkit-details-marker{display:none}
 @media (max-width:560px){ .remite{grid-template-columns:auto 1fr} .fecha-msg{grid-column:2} .hoja .cuerpo{padding:14px} }
 
+.toast{position:fixed; left:50%; transform:translateX(-50%); bottom:calc(18px + env(safe-area-inset-bottom, 0px)); z-index:50;
+  background:#1d2433; color:#fff; padding:12px 16px; border-radius:10px; box-shadow:0 10px 30px rgba(0,0,0,.25); font-size:14.5px;
+  display:flex; gap:12px; align-items:center; max-width:calc(100% - 32px)}
+.toast.bien{background:#176a49} .toast.mal{background:#9b2f17}
+.toast .btn.sec{background:#fff; color:#1d2433}
+
 /* Sugerencias de contactos */
 .campo{position:relative}
 .sugs{position:absolute; left:0; right:0; top:100%; margin-top:4px; background:#fff; border:1px solid var(--line); border-radius:8px;
@@ -261,6 +267,7 @@ function construir(refresco = false){
   HILOS = {};
   for (const m of MSGS) (HILOS[m.hilo] ||= []).push(m);
   for (const k in HILOS) HILOS[k].sort((a, b) => a.fecha - b.fecha);
+  agregarLocales();
   CUENTAS = [...new Set(MSGS.map(m => m.cuenta).filter(Boolean))];
   armarAgenda();
   for (const m of MSGS) m._idx = norm(m.asunto + " " + m.de + " " + (m.de_nombre || "") + " " + m.para.join(" ") + " " + (m.texto || m.vista_previa || "") + " " + m.archivos.map(a => a.nombre + " " + (a.texto || "")).join(" "));
@@ -332,7 +339,7 @@ function fila(m, terms = []){
     <div class="r1"><span class="who">${resaltar(quien, terms)}</span><span class="when">${fmtL(m.fecha)}</span></div>
     <div class="subj">${resaltar(m.asunto, terms)}</div>
     <div class="snip">${fragmento(m, terms)}</div>
-    <div class="tags">${m.enviado ? '<span class="tag ok">enviado</span>' : ""}${m.archivos.length ? `<span class="tag acc">📎 ${m.archivos.length}</span>` : ""}${n > 1 ? `<span class="tag">${n} en la conversación</span>` : ""}${CUENTAS.length > 1 ? `<span class="tag">${esc(etiqueta(m.cuenta))}</span>` : ""}${(m.analisis || {}).importancia === "alta" && !m.enviado ? '<span class="tag alta">importante</span>' : ""}</div>
+    <div class="tags">${m.local ? (m.estadoLocal === "enviando" ? '<span class="tag acc">enviando…</span>' : '<span class="tag ok">✓ enviado</span>') : m.enviado ? '<span class="tag ok">enviado</span>' : ""}${m.archivos.length ? `<span class="tag acc">📎 ${m.archivos.length}</span>` : ""}${n > 1 ? `<span class="tag">${n} en la conversación</span>` : ""}${CUENTAS.length > 1 ? `<span class="tag">${esc(etiqueta(m.cuenta))}</span>` : ""}${(m.analisis || {}).importancia === "alta" && !m.enviado ? '<span class="tag alta">importante</span>' : ""}</div>
   </button>`;
 }
 
@@ -598,9 +605,26 @@ async function cifrar(obj){
   return {v:1, iter:250000, salt:b(salt), iv:b(iv), ct:b(ct)};
 }
 
+/* Envío optimista: el editor se cierra al tiro, el correo aparece en la lista como "enviando…" y un aviso confirma. */
+let LOCALES = [];        // correos enviados desde la página que aún no llegan desde Zoho
+function aviso(html, tipo, ms){
+  let t = $("#toast"); if (!t) { t = document.createElement("div"); t.id = "toast"; t.setAttribute("role", "status"); document.body.appendChild(t); }
+  t.className = "toast " + (tipo || ""); t.innerHTML = html; t.hidden = false;
+  clearTimeout(t._tm); if (ms) t._tm = setTimeout(() => { t.hidden = true; }, ms);
+}
+function agregarLocales(){
+  const ahora = Date.now();
+  LOCALES = LOCALES.filter(l => ahora - l.fecha < 30 * 60000 &&
+    !MSGS.some(m => !m.local && m.enviado && Math.abs(m.fecha - l.fecha) < 30 * 60000 && norm(m.asunto) === norm(l.asunto)));
+  for (const l of LOCALES) if (!MSGS.includes(l)) { MSGS.unshift(l); (HILOS[l.hilo] ||= []).push(l); }
+  MSGS.sort((a, b) => b.fecha - a.fecha);
+}
+
 async function enviar(m){
   const b = borrador, gh = D._envio, id = Math.random().toString(36).slice(2, 10);
-  b.confirmar = false; b.ocupado = "enviando…"; b.estado = "Enviando… (tarda alrededor de 1 minuto)"; b.clase = ""; pintarCorreo();
+  const nombreAccion = {responder: "Respuesta", reenviar: "Reenvío", nuevo: "Correo"}[b.modo];
+  b.confirmar = false; b.ocupado = "enviando…"; pintarCorreo();
+  let local = null;
   try {
     const cuenta = b.cuenta || (m && m.cuenta) || "";
     const paquete = await cifrar({ modo: b.modo, cuenta, cuenta_id: ((D.cuentas_ids || {})[cuenta]) || (m && m.cuenta_id) || "",
@@ -610,19 +634,42 @@ async function enviar(m){
     const h = { "Authorization": "Bearer " + gh.token, "Accept": "application/vnd.github+json" };
     const r = await fetch(api + "/dispatches", { method: "POST", headers: h, body: JSON.stringify({ ref: "main", inputs: { paquete: JSON.stringify(paquete), id } }) });
     if (!r.ok) throw new Error(r.status === 401 || r.status === 403 ? "La llave de GitHub no tiene permiso para enviar." : `GitHub no aceptó el envío (${r.status}).`);
-    for (let i = 0; i < 40; i++) {
-      await new Promise(ok => setTimeout(ok, 5000));
-      const j = await (await fetch(api + "/runs?per_page=10&event=workflow_dispatch", { headers: h })).json().catch(() => ({}));
+
+    // Aceptado: cerrar el editor y mostrarlo ya en la lista.
+    const copia = {...b, ocupado: "", confirmar: false, estado: "", obs: null};
+    local = { id: "local-" + id, local: true, estadoLocal: "enviando", enviado: true, fecha: Date.now(), cuenta,
+      de: cuenta, de_nombre: "Tú", para: listaCorreos(b.para), cc: listaCorreos(b.cc), asunto: b.asunto, texto: b.texto,
+      vista_previa: b.texto.slice(0, 160), archivos: [], hilo: m ? m.hilo : "local-" + id, analisis: null, _idx: norm(b.asunto + " " + b.texto + " " + b.para) };
+    LOCALES.push(local); agregarLocales();
+    borrador = null; if (abierto === "__nuevo__") abierto = null;
+    pintarFiltros(); pintarLista(); pintarCorreo();
+    aviso(`📤 Enviando ${nombreAccion.toLowerCase()} a ${esc(local.para.join(", "))}…`, "", 0);
+
+    for (let i = 0; i < 60; i++) {
+      await new Promise(ok => setTimeout(ok, i < 10 ? 2500 : 5000));
+      const j = await (await fetch(api + "/runs?per_page=10&event=workflow_dispatch", { headers: h, cache: "no-store" })).json().catch(() => ({}));
       const run = (j.workflow_runs || []).find(x => (x.display_title || "").includes(id));
       if (run && run.status === "completed") {
-        if (run.conclusion === "success") { b.estado = `✓ ${b.modo === "responder" ? "Respuesta enviada" : b.modo === "reenviar" ? "Correo reenviado" : "Correo enviado"}. Aparecerá en Enviados en la próxima sincronización.`; b.clase = "bien"; b.texto = ""; }
-        else { b.estado = "✗ No se pudo enviar. Revisa el detalle en GitHub (Actions → Correo: enviar respuesta)."; b.clase = "mal"; }
-        b.ocupado = ""; pintarCorreo(); return;
+        if (run.conclusion === "success") {
+          local.estadoLocal = "enviado"; pintarLista();
+          aviso(`✓ ${nombreAccion} enviad${b.modo === "reenviar" ? "o" : b.modo === "nuevo" ? "o" : "a"} a ${esc(local.para.join(", "))}`, "bien", 6000);
+          buscando = false; buscarCorreos(true);      // traer el enviado desde Zoho
+        } else falla(local, copia, m, "No se pudo enviar (Zoho lo rechazó).");
+        return;
       }
     }
-    b.estado = "El envío sigue en proceso; revisa en unos minutos tus Enviados en Zoho."; b.clase = "";
-  } catch (e) { b.estado = "✗ " + e.message; b.clase = "mal"; }
-  b.ocupado = ""; pintarCorreo();
+    aviso("El envío sigue en proceso; revisa en unos minutos tus Enviados en Zoho.", "", 8000);
+  } catch (e) {
+    if (local) falla(local, {...b}, m, e.message);
+    else { b.estado = "✗ " + e.message; b.clase = "mal"; b.ocupado = ""; pintarCorreo(); }
+  }
+}
+let recuperable = null;
+function falla(local, copia, m, motivo){
+  LOCALES = LOCALES.filter(x => x !== local); MSGS = MSGS.filter(x => x !== local);
+  if (HILOS[local.hilo]) HILOS[local.hilo] = HILOS[local.hilo].filter(x => x !== local);
+  recuperable = {copia, mid: m ? m.id : null}; pintarLista();
+  aviso(`✗ ${esc(motivo)} <button class="btn sec" data-recuperar>Recuperar borrador</button>`, "mal", 0);
 }
 
 /* ---------- vista Preguntar (IA gratuita de Groq) ---------- */
@@ -732,12 +779,14 @@ function irA(v){
   if (v === "preguntar") { pintarCtx(); $("#qAsk").focus(); }
 }
 document.addEventListener("click", ev => {
-  const t = ev.target.closest("[data-v],[data-m],[data-f],[data-cu],[data-back],[data-more],[data-askthread],[data-noctx],[data-sug],[data-responder],[data-r],[data-adj],[data-vertexto],[data-ver],[data-bajar],[data-nuevo]");
+  const t = ev.target.closest("[data-v],[data-m],[data-f],[data-cu],[data-back],[data-more],[data-askthread],[data-noctx],[data-sug],[data-responder],[data-r],[data-adj],[data-vertexto],[data-ver],[data-bajar],[data-nuevo],[data-recuperar]");
   if (!t) return;
   if (t.dataset.adj !== undefined) { const i = +t.dataset.adj; leerBorrador(); adjAbierto = adjAbierto === i ? null : i; pintarCorreo(); return; }
   if (t.dataset.ver !== undefined || t.dataset.bajar !== undefined) { const mm = MSGS.find(x => x.id === abierto); if (mm) abrirAdjunto(mm, +(t.dataset.ver ?? t.dataset.bajar), t.dataset.ver !== undefined); return; }
   if ("vertexto" in t.dataset) { leerBorrador(); verTexto = !verTexto; pintarCorreo(); return; }
   const m = MSGS.find(x => x.id === abierto);
+  if ("recuperar" in t.dataset && recuperable) { borrador = recuperable.copia; abierto = recuperable.mid || "__nuevo__"; recuperable = null; $("#toast").hidden = true;
+    irA("correos"); pintarLista(); pintarCorreo(); return; }
   if ("nuevo" in t.dataset) { irA("correos"); borrador = nuevoBorrador(null, "nuevo"); abierto = "__nuevo__"; pintarLista(); pintarCorreo(); setTimeout(() => $("#rPara") && $("#rPara").focus(), 0); if (innerWidth <= 860) scrollTo(0, 0); return; }
   if (t.dataset.responder && m) { const modo = t.dataset.responder; if (!borrador || borrador.id !== m.id || (borrador.modo === "reenviar") !== (modo === "reenviar")) borrador = nuevoBorrador(m, modo); pintarCorreo();
     setTimeout(() => { const e = modo === "reenviar" ? $("#rPara") : $("#rTexto"); if (e) { e.focus(); if (e.id === "rTexto") e.setSelectionRange(0, 0); } }, 0); return; }
