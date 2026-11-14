@@ -257,6 +257,9 @@ def chat(sistema, usuario, max_tokens=3000, json_mode=True, reservado=False):
             except (urllib.error.URLError, OSError, ValueError) as e:   # sin conexión, demora excesiva, respuesta cortada
                 ultimo = f"{modelo}: {e}"
                 print(f"::warning::IA {modelo}: {str(e)[:150]}", flush=True)
+                if "timed out" in str(e).lower() or isinstance(e, TimeoutError):
+                    _agotados[modelo] = time.time() + 900   # no respondió a tiempo: saltarlo 15 minutos
+                    break
                 if intento >= 1:
                     break                           # probar el siguiente modelo
                 time.sleep(3)
