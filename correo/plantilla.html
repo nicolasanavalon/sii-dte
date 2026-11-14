@@ -5,6 +5,14 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
 <meta name="robots" content="noindex, nofollow">
 <title>Bandeja Zoho</title>
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icono-180.png">
+<link rel="icon" href="icono-192.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Zoho">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="theme-color" content="#ffffff">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap">
@@ -232,6 +240,7 @@ textarea{font:inherit}
     </nav>
     <div class="sinc"><button class="chip" id="buscarAhora" title="Buscar correos nuevos en Zoho">🔄 Buscar ahora</button><span class="small muted" id="sincTxt"></span></div>
     <button class="btn" id="nuevo" data-nuevo>✉️ Nuevo correo</button>
+    <button class="chip" id="avisos" hidden>🔔 Activar burbuja y avisos</button>
     <button class="chip" id="salir" title="Olvidar la contraseña en este dispositivo">Cerrar sesión</button>
   </header>
 
@@ -358,6 +367,7 @@ function construir(refresco = false){
 /* ---------- vista Correos ---------- */
 function pintarFiltros(){
   const nNoLeidos = MSGS.filter(m => (!cuentaSel || m.cuenta === cuentaSel) && noLeido(m)).length;
+  ponerBurbuja();
   const nEnv = MSGS.filter(m => (!cuentaSel || m.cuenta === cuentaSel) && m.enviado).length;
   $("#carpetas").innerHTML = [["entrada", "📥 Bandeja de entrada", nNoLeidos ? ` <b class="nl-n">(${nNoLeidos})</b>` : ""], ["enviados", "📤 Enviados", ` <span class="muted">${nEnv}</span>`]]
     .map(([k, t, n]) => `<button role="tab" data-carpeta="${k}" aria-pressed="${carpeta === k}" aria-selected="${carpeta === k}">${t}${n}</button>`).join("");
@@ -997,6 +1007,44 @@ function pintarCtx(){
   $("#sugerencias").innerHTML = sug.map(s => `<button class="chip" data-sug="${esc(s)}">${esc(s)}</button>`).join("");
 }
 
+/* ---------- burbuja del ícono y avisos al celular (app agregada a la pantalla de inicio) ---------- */
+const enPantallaInicio = () => matchMedia("(display-mode: standalone)").matches || navigator.standalone === true;
+function ponerBurbuja(){
+  const n = MSGS.filter(m => !m.enviado && noLeido(m)).length;
+  try { if (navigator.setAppBadge) (n ? navigator.setAppBadge(n) : navigator.clearAppBadge()).catch(() => {}); } catch(e) {}
+}
+let registroSW = null;
+async function prepararAvisos(){
+  const b = $("#avisos");
+  if (/iPhone|iPad/.test(navigator.userAgent) && !enPantallaInicio()) { b.hidden = false; return; }   // explica cómo instalarla
+  if (!("serviceWorker" in navigator)) return;
+  try { registroSW = await navigator.serviceWorker.register("sw.js"); } catch(e) { return; }
+  if (!("PushManager" in window) || !("Notification" in window) || !(D.push || {}).publica) { b.hidden = true; return; }
+  const sub = await registroSW.pushManager.getSubscription().catch(() => null);
+  b.hidden = !!(sub && Notification.permission === "granted");
+}
+const b64aBytes = s => { s = s.replace(/-/g, "+").replace(/_/g, "/"); const t = atob(s + "=".repeat((4 - s.length % 4) % 4)); return Uint8Array.from(t, c => c.charCodeAt(0)); };
+$("#avisos").addEventListener("click", async () => {
+  const b = $("#avisos");
+  if (/iPhone|iPad/.test(navigator.userAgent) && !enPantallaInicio()) {
+    aviso("Para la burbuja y los avisos, primero agrega esta página a la pantalla de inicio: botón Compartir → «Agregar a inicio». Después ábrela desde ese ícono y aprieta 🔔.", "", 12000); return;
+  }
+  try {
+    if (await Notification.requestPermission() !== "granted") { aviso("No diste permiso para avisos. Puedes activarlo en Configuración → Notificaciones.", "mal", 8000); return; }
+    registroSW = registroSW || await navigator.serviceWorker.register("sw.js");
+    await navigator.serviceWorker.ready;
+    const sub = await registroSW.pushManager.getSubscription() || await registroSW.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64aBytes(D.push.publica) });
+    // Se le entrega la suscripción (cifrada con tu contraseña) al vigilante, que manda los avisos.
+    const gh = D._envio, paquete = await cifrar({ modo: "suscribir", sub: sub.toJSON(), ts: Date.now() });
+    const r = await fetch(`https://api.github.com/repos/${gh.repo}/actions/workflows/correo_trozo.yml/dispatches`, { method: "POST",
+      headers: { "Authorization": "Bearer " + gh.token, "Accept": "application/vnd.github+json" },
+      body: JSON.stringify({ ref: "main", inputs: { id: "trozo-sub" + Math.random().toString(36).slice(2, 10) + "-0", datos: JSON.stringify(paquete) } }) });
+    if (!r.ok) throw new Error("GitHub no aceptó el pedido (" + r.status + ").");
+    b.hidden = true; ponerBurbuja();
+    aviso("✓ Listo: desde el próximo correo te llega el aviso y la burbuja muestra los no leídos.", "bien", 8000);
+  } catch(e) { aviso("No se pudieron activar los avisos: " + esc(e.message), "mal", 10000); }
+});
+
 /* ---------- dictar la pregunta: se graba la voz y la transcribe Whisper (gratis, de Groq) ---------- */
 let grabadora = null, trozosVoz = [], relojMic = null;
 function estadoMic(txt, grabando){
@@ -1190,6 +1238,7 @@ async function entrar(clave, recordar){
   $("#bloqueo").hidden = true; $("#appwrap").hidden = false;
   construir(); irA("correos");
   revisarZoho(false);
+  prepararAvisos();
 }
 $("#salir").addEventListener("click", () => { ss.del("correo_clave"); location.reload(); });
 $("#formClave").addEventListener("submit", async ev => {

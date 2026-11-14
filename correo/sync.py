@@ -885,20 +885,115 @@ def main():
     marcar_cambio(cambio)
 
 
+# ---------------------------------------------------------------- Avisos al celular (burbuja del ícono)
+
+def _gh_api(url, metodo="GET", crudo=False):
+    token = env("GITHUB_TOKEN") or env("GH_TOKEN")
+    class SinRedireccion(urllib.request.HTTPRedirectHandler):
+        def redirect_request(self, *a, **k):
+            return None
+    req = urllib.request.Request(url, method=metodo, headers={"Authorization": f"Bearer {token}",
+                                                              "Accept": "application/vnd.github+json"})
+    try:
+        with urllib.request.build_opener(SinRedireccion).open(req, timeout=60) as r:
+            cuerpo = r.read()
+            return cuerpo if crudo else (json.loads(cuerpo) if cuerpo else {})
+    except urllib.error.HTTPError as e:
+        if e.code in (301, 302, 303, 307, 308) and e.headers.get("Location"):
+            with urllib.request.urlopen(e.headers["Location"], timeout=120) as r:
+                return r.read()
+        raise
+
+
+def recoger_suscripciones(estado, clave):
+    """La página entrega la suscripción del celular (cifrada) como "artifact" trozo-sub…; aquí se guarda."""
+    import io
+    import zipfile
+    repo = env("GITHUB_REPOSITORY")
+    if not repo or not (env("GITHUB_TOKEN") or env("GH_TOKEN")):
+        return False
+    api = f"https://api.github.com/repos/{repo}/actions/artifacts"
+    cambio = False
+    for art in (_gh_api(f"{api}?per_page=100").get("artifacts") or []):
+        if not str(art.get("name", "")).startswith("trozo-sub") or art.get("expired"):
+            continue
+        try:
+            z = zipfile.ZipFile(io.BytesIO(_gh_api(art["archive_download_url"], crudo=True)))
+            p = cripto.descifrar(json.loads(z.read("trozo.txt").decode()), clave)
+            sub = p.get("sub") or {}
+            if p.get("modo") == "suscribir" and str(sub.get("endpoint", "")).startswith("https://") and sub.get("keys"):
+                subs = [x for x in estado.setdefault("push", {}).setdefault("subs", []) if x.get("endpoint") != sub["endpoint"]]
+                estado["push"]["subs"] = (subs + [{"endpoint": sub["endpoint"], "keys": sub["keys"]}])[-10:]
+                cambio = True
+                print("Avisos: se activó un celular.")
+        except Exception as e:
+            print(f"::warning::No pude leer una suscripción de avisos: {str(e)[:200]}")
+        try:
+            _gh_api(f"{api}/{art['id']}", metodo="DELETE")
+        except Exception:
+            pass
+    return cambio
+
+
+def avisar_celular(estado, nuevos):
+    """Aviso al celular por cada correo nuevo recibido, con la cantidad de no leídos para la burbuja."""
+    import push
+    p = estado.get("push") or {}
+    lista = [m for m in nuevos if not m.get("enviado") and not m.get("boletin")
+             and m["fecha"] >= (time.time() - 6 * 3600) * 1000]
+    if not p.get("subs") or not p.get("llaves") or not lista:
+        return
+    n = sum(1 for m in estado["mensajes"].values() if not m.get("enviado") and m.get("no_leido"))
+    if len(lista) <= 3:
+        mensajes = [{"titulo": m.get("de_nombre") or m["de"], "cuerpo": m.get("asunto") or "(sin asunto)", "n": n,
+                     "tag": m["id"]} for m in lista]
+    else:
+        mensajes = [{"titulo": f"{len(lista)} correos nuevos", "n": n, "tag": "varios",
+                     "cuerpo": " · ".join((m.get("de_nombre") or m["de"]) for m in lista[:6])}]
+    vigentes = []
+    for sub in p["subs"]:
+        codigo = 0
+        for msg in mensajes:
+            codigo = push.enviar(sub, msg, p["llaves"])
+            if codigo in (404, 410):
+                break
+        if codigo in (404, 410):
+            print("Avisos: un celular ya no está suscrito; se quita.")
+        else:
+            vigentes.append(sub)
+            if codigo >= 400:
+                print(f"::warning::Aviso al celular no entregado (HTTP {codigo}).")
+    p["subs"] = vigentes
+
+
 def una_vuelta(estado, clave, rapido):
     """Una revisión de Zoho. Devuelve True si cambió algo (y en ese caso deja los datos nuevos escritos)."""
     global RAPIDO, LIMITE_VUELTA
     RAPIDO = rapido
     LIMITE_VUELTA = time.time() + 40
     t0 = time.time()
+    if "llaves" not in estado.setdefault("push", {}):
+        import push
+        estado["push"]["llaves"] = push.nuevas_llaves()   # llaves de los avisos al celular (se crean una vez)
+        estado["_cambio_otro"] = True
+    try:
+        if recoger_suscripciones(estado, clave):
+            estado["_cambio_otro"] = True
+    except Exception as e:
+        print(f"::warning::Avisos: {str(e)[:200]}")
     nuevos, completados = traer_nuevos(estado, clave)
     avisar(estado, [], nuevos)                       # aviso inmediato, sin esperar el resumen de la IA
+    try:
+        avisar_celular(estado, nuevos)
+    except Exception as e:
+        print(f"::warning::No pude avisar al celular: {str(e)[:200]}")
     t1 = time.time()
     estilo = not rapido and actualizar_estilo(estado)
     t2 = time.time()
     analizados = analizar_pendientes(estado)
     print(f"  tiempos: Zoho {t1 - t0:.0f} s · estilo {t2 - t1:.0f} s · resúmenes {time.time() - t2:.0f} s")
-    cambio = bool(nuevos or completados or analizados or estilo or estado.pop("_hilos_actualizados", 0)
+    cambio = bool(nuevos or completados or analizados or estilo or estado.pop("_cambio_otro", False)
+                  or estado.pop("_hilos_actualizados", 0)
                   or estado.pop("_cambio_leidos", False)) or not estado["ultima_sync"]
     estado["ultima_sync"] = datetime.now(TZ).strftime("%Y-%m-%d %H:%M")
     recortar(estado)
