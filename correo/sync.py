@@ -435,26 +435,26 @@ Integra la ficha anterior del contacto (no pierdas datos vigentes); quita pendie
 Nunca copies contraseñas ni códigos de verificación. Marca como posible fraude (importancia alta, acción "no abrir el enlace") los correos que parezcan phishing."""
 
 MAX_GROQ_HILOS = 12       # conversaciones por corrida (respeta el límite gratis por minuto)
-TEXTO_GROQ = 22000        # caracteres de la conversación que se envían
+TEXTO_GROQ = 15000        # el plan gratis limita el largo de cada consulta; si no cabe, se reintenta más corto        # caracteres de la conversación que se envían
 
 
-def _texto_hilo_groq(ms):
+def _texto_hilo_groq(ms, limite=TEXTO_GROQ):
     partes = []
     for i, m in enumerate(ms):
         ultimo = i == len(ms) - 1
-        t = (m.get("texto") or m.get("vista_previa") or "")[: 9000 if ultimo else 1500]
+        t = (m.get("texto") or m.get("vista_previa") or "")[: (limite * 2) // 5 if ultimo else 1500]
         p = (f"<correo id=\"{m['id']}\" {'NUEVO' if m.get('analisis') is None else 'ya analizado'} fecha=\"{fecha_txt(m['fecha'])}\" "
              f"{'ENVIADO por Nicolás' if m['enviado'] else 'RECIBIDO'}>\nDe: {m.get('de_nombre', '')} <{m['de']}>\n"
              f"Para: {', '.join(m.get('para', []))}\nAsunto: {m['asunto']}\n\n{t}\n")
         for a in m.get("archivos", []):
             if a.get("texto") and not str(a["texto"]).startswith("("):
-                p += f"[ADJUNTO {a['nombre']}]\n{a['texto'][:5000]}\n[FIN ADJUNTO]\n"
+                p += f"[ADJUNTO {a['nombre']}]\n{a['texto'][:max(1500, limite // 4)]}\n[FIN ADJUNTO]\n"
             else:
                 p += f"[ADJUNTO {a['nombre']}: sin texto legible]\n"
         partes.append(p + "</correo>")
     texto = "\n".join(partes)
-    if len(texto) > TEXTO_GROQ:      # se recortan primero los correos antiguos (el último trae la cadena citada)
-        texto = "[…correos más antiguos recortados…]\n" + texto[-TEXTO_GROQ:]
+    if len(texto) > limite:      # se recortan primero los correos antiguos (el último trae la cadena citada)
+        texto = "[…correos más antiguos recortados…]\n" + texto[-limite:]
     return texto
 
 
@@ -473,10 +473,16 @@ def analizar_con_groq(estado):
         f = estado["contactos"].get(contacto)
         ficha = json.dumps({k: f.get(k) for k in ("nombre", "tipo", "resumen", "pendientes", "datos_clave", "plazos")},
                            ensure_ascii=False) if f else "(contacto nuevo)"
-        usuario = (f"Fecha de hoy: {hoy}\nResumen anterior de esta conversación: {hilos.get(hid, {}).get('resumen') or '(ninguno)'}\n"
-                   f"Ficha anterior del contacto {contacto}: {ficha}\n\nCONVERSACIÓN:\n{_texto_hilo_groq(ms)}")
+        cabeza = (f"Fecha de hoy: {hoy}\nResumen anterior de esta conversación: {hilos.get(hid, {}).get('resumen') or '(ninguno)'}\n"
+                  f"Ficha anterior del contacto {contacto}: {ficha}\n\nCONVERSACIÓN:\n")
         try:
-            texto, modelo = ia.chat(SISTEMA_GROQ, usuario)
+            for limite in (TEXTO_GROQ, 9000, 5000):
+                try:
+                    texto, modelo = ia.chat(SISTEMA_GROQ, cabeza + _texto_hilo_groq(ms, limite), max_tokens=2000)
+                    break
+                except RuntimeError as e:
+                    if "reduce the length" not in str(e) and "too large" not in str(e).lower() or limite == 5000:
+                        raise
             r = ia.json_de(texto)
         except ia.LimiteDiario as e:
             print(f"::notice::{e} Lo que falta se resume en las próximas corridas.")
