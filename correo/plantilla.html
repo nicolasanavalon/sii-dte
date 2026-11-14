@@ -44,7 +44,7 @@ h3{font:600 12.5px/1.3 var(--f-display); margin:0; text-transform:uppercase; let
 .lockbox{background:var(--panel); border:1px solid var(--line); border-radius:var(--r); padding:28px; width:100%; max-width:360px; display:flex; flex-direction:column; gap:12px}
 .lockbox input[type=password]{padding:11px 12px; border:1px solid var(--line); border-radius:8px; background:var(--bg)}
 
-.app{max-width:1320px; margin:0 auto; padding-block:14px 28px; padding-left:max(16px, env(safe-area-inset-left,0px)); padding-right:max(16px, env(safe-area-inset-right,0px)); display:flex; flex-direction:column; gap:12px}
+.app{max-width:1320px; margin:0 auto; padding-block:calc(14px + env(safe-area-inset-top, 0px)) 28px; padding-left:max(16px, env(safe-area-inset-left,0px)); padding-right:max(16px, env(safe-area-inset-right,0px)); display:flex; flex-direction:column; gap:12px}
 header{display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:10px 18px}
 .tabs{display:flex; gap:4px; background:var(--soft); padding:4px; border-radius:999px}
 .tab{border:0; background:none; padding:7px 18px; border-radius:999px; cursor:pointer; color:var(--muted); font-weight:500}
@@ -112,6 +112,22 @@ header{display:flex; flex-wrap:wrap; align-items:center; justify-content:space-b
 .sinc{display:flex; align-items:center; gap:8px; flex-wrap:wrap}
 .acciones{display:flex; align-items:center; gap:10px 18px; flex-wrap:wrap}
 .movil{display:none}
+.row .avatar.mini, .row .clip{display:none}
+/* App en la pantalla de inicio del iPhone: el iPhone difumina la franja de arriba; el contenido parte más abajo. */
+@media (display-mode: standalone) and (max-width:860px){ .app{padding-top:calc(env(safe-area-inset-top, 0px) + 34px)} }
+/* Celular: lista compacta como la app de Zoho (avatar, de quién, hora y asunto). */
+@media (max-width:860px){
+  .row{display:grid; grid-template-columns:40px minmax(0,1fr); column-gap:12px; padding:11px 14px; align-items:center}
+  .row .avatar.mini{display:grid; width:40px; height:40px; font-size:14px; grid-row:1 / span 2}
+  .row .r1, .row .subj{grid-column:2}
+  .row .subj{display:flex; gap:8px; align-items:center}
+  .row .subj-t{flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+  .row .clip{display:inline; font-size:13px; opacity:.6}
+  .row .snip, .row .tags{display:none}
+  .row.con-busqueda .snip{display:-webkit-box; grid-column:2}          /* al buscar: se ve dónde aparece */
+  .row.nl .who::before{width:7px; height:7px; margin-right:6px}
+  .row:not(.nl) .who{font-weight:500}
+}
 /* Celular: botones, estado y salir en una sola fila. */
 @media (max-width:600px){
   #vCorreos .toolbar{flex-wrap:wrap}
@@ -449,9 +465,11 @@ function fragmento(m, terms){
 function fila(m, terms = []){
   const quien = m.enviado ? "Para: " + (m.para[0] || "") : (m.de_nombre || m.de);
   const n = (HILOS[m.hilo] || []).length;
-  return `<button class="row${noLeido(m) ? " nl" : ""}" data-m="${esc(m.id)}" aria-current="${abierto === m.id}">
+  const dir = m.enviado ? (m.para[0] || "") : m.de;
+  return `<button class="row${noLeido(m) ? " nl" : ""}${terms.length ? " con-busqueda" : ""}" data-m="${esc(m.id)}" aria-current="${abierto === m.id}">
+    <span class="avatar mini" style="--h:${tono(dir)}" aria-hidden="true">${esc(iniciales(m.enviado ? dir : (m.de_nombre || m.de)))}</span>
     <div class="r1"><span class="who">${resaltar(quien, terms)}</span><span class="when">${fmtL(m.fecha)}</span></div>
-    <div class="subj">${resaltar(m.asunto, terms)}</div>
+    <div class="subj"><span class="subj-t">${resaltar(m.asunto, terms)}</span>${m.archivos.length ? '<span class="clip" aria-label="con adjuntos">📎</span>' : ""}</div>
     <div class="snip">${fragmento(m, terms)}</div>
     <div class="tags">${m.local ? (m.estadoLocal === "enviando" ? '<span class="tag acc">enviando…</span>' : '<span class="tag ok">✓ enviado</span>') : m.enviado ? '<span class="tag ok">enviado</span>' : ""}${m.boletin ? `<span class="tag">${esc(m.carpeta_nombre || "Newsletter")}</span>` : ""}${m.archivos.length ? `<span class="tag acc">📎 ${m.archivos.length}</span>` : ""}${n > 1 ? `<span class="tag">${n} en la conversación</span>` : ""}${CUENTAS.length > 1 ? `<span class="tag">${esc(etiqueta(m.cuenta))}</span>` : ""}${(m.analisis || {}).importancia === "alta" && !m.enviado ? '<span class="tag alta">importante</span>' : ""}</div>
   </button>`;
