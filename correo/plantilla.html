@@ -99,6 +99,10 @@ header{display:flex; flex-wrap:wrap; align-items:center; justify-content:space-b
 .progreso b{color:var(--ink); font-weight:600; font-variant-numeric:tabular-nums}
 .vacio{color:var(--muted); text-align:center; padding:40px 16px; margin:0}
 
+.sinc{display:flex; align-items:center; gap:8px; flex-wrap:wrap}
+.sinc .girando{display:inline-block; animation:girar 1s linear infinite}
+@keyframes girar{to{transform:rotate(360deg)}}
+
 /* Lectura tipo Outlook */
 .readbar{display:flex; justify-content:space-between; align-items:center; gap:8px; flex-wrap:wrap}
 .asunto{font-size:21px; line-height:1.3}
@@ -182,6 +186,7 @@ textarea{font:inherit}
       <button class="tab" role="tab" id="tab-correos" data-v="correos">Correos</button>
       <button class="tab" role="tab" id="tab-preguntar" data-v="preguntar">Preguntar</button>
     </nav>
+    <div class="sinc"><button class="chip" id="buscarAhora" title="Buscar correos nuevos en Zoho">🔄 Buscar ahora</button><span class="small muted" id="sincTxt"></span></div>
     <button class="btn" id="nuevo" data-nuevo>✉️ Nuevo correo</button>
     <button class="chip" id="salir" title="Olvidar la contraseña en este dispositivo">Cerrar sesión</button>
   </header>
@@ -231,14 +236,16 @@ function marcarLeido(id){ if (LEIDOS.has(id)) return; LEIDOS.add(id); try { loca
 
 /* ---------- descifrar ---------- */
 const b64 = s => Uint8Array.from(atob(s), c => c.charCodeAt(0));
-async function abrir(clave){
+let CAJA_ACTUAL = CAJA;
+async function abrir(clave){ return abrirCaja(CAJA, clave); }
+async function abrirCaja(CAJA, clave){
   const pw = await crypto.subtle.importKey("raw", new TextEncoder().encode(clave), "PBKDF2", false, ["deriveKey"]);
   const key = await crypto.subtle.deriveKey({name:"PBKDF2", salt:b64(CAJA.salt), iterations:CAJA.iter, hash:"SHA-256"}, pw, {name:"AES-GCM", length:256}, false, ["decrypt"]);
   const plano = await crypto.subtle.decrypt({name:"AES-GCM", iv:b64(CAJA.iv)}, key, b64(CAJA.ct));
   return JSON.parse(await new Response(new Blob([plano]).stream().pipeThrough(new DecompressionStream("gzip"))).text());
 }
 
-function construir(){
+function construir(refresco = false){
   MSGS = Object.values(D.mensajes || {}).map(m => ({...m, para: m.para || [], cc: m.cc || [], archivos: m.archivos || [],
     cuenta: m.cuenta || D.cuenta || "", hilo: m.hilo || ("m" + m.id)})).sort((a, b) => b.fecha - a.fecha);
   HILOS = {};
@@ -248,7 +255,8 @@ function construir(){
   for (const m of MSGS) m._idx = norm(m.asunto + " " + m.de + " " + (m.de_nombre || "") + " " + m.para.join(" ") + " " + (m.texto || m.vista_previa || "") + " " + m.archivos.map(a => a.nombre + " " + (a.texto || "")).join(" "));
   $("#estado").textContent = `${MSGS.length} correos${CUENTAS.length > 1 ? " · " + CUENTAS.length + " casillas" : ""} · actualizado ${D.ultima_sync || "—"}`;
   $("#hintIA").textContent = D._ia && D._ia.clave ? "Responde la IA gratuita de Groq usando tus correos y adjuntos. Puede equivocarse: revisa el correo citado." : "La IA se activa cuando guardes la clave gratuita de Groq (GROQ_API_KEY).";
-  pintarFiltros(); pintarLista(); pintarCorreo();
+  pintarFiltros(); pintarLista();
+  if (!refresco || !abierto) pintarCorreo();
 }
 
 /* ---------- vista Correos ---------- */
@@ -695,12 +703,65 @@ document.addEventListener("input", ev => { if (ev.target.closest(".compose")) { 
 let tBusca;
 $("#busca").addEventListener("input", ev => { clearTimeout(tBusca); tBusca = setTimeout(() => { busca = ev.target.value.trim(); limite = 150; pintarLista(); pintarCorreo(); }, 150); });
 
+/* ---------- correos nuevos: casi en tiempo real ---------- */
+let versionActual = null, sondeo = null, buscando = false;
+const ahoraTxt = () => new Date().toLocaleTimeString("es-CL", {hour: "2-digit", minute: "2-digit"});
+function sinc(txt, gira){ $("#sincTxt").innerHTML = esc(txt); $("#buscarAhora").innerHTML = (gira ? '<span class="girando">🔄</span>' : "🔄") + " Buscar ahora"; }
+
+async function versionPublicada(){
+  try { const r = await fetch(`version.json?t=${Date.now()}`, {cache: "no-store"}); return r.ok ? (await r.json()).v : null; } catch(e) { return null; }
+}
+async function traerDatosNuevos(){
+  const r = await fetch(`${location.pathname}?t=${Date.now()}`, {cache: "no-store"});
+  const html = await r.text(), i = html.indexOf("const CAJA = ");
+  const caja = JSON.parse(html.slice(i + 13, html.indexOf(";\n", i)));
+  if (!caja || caja.ct === CAJA_ACTUAL.ct) return 0;
+  const antes = new Set(MSGS.map(m => m.id));
+  CAJA_ACTUAL = caja; leerBorrador();
+  D = await abrirCaja(caja, CLAVE);
+  construir(true);
+  return MSGS.filter(m => !antes.has(m.id)).length;
+}
+// Pide a GitHub una búsqueda rápida en Zoho (la misma llave del envío, que solo puede lanzar tareas de este proyecto).
+async function dispararBusqueda(){
+  const gh = D._envio; if (!gh || !gh.token) return false;
+  try {
+    const r = await fetch(`https://api.github.com/repos/${gh.repo}/actions/workflows/correo_sync.yml/dispatches`, { method: "POST",
+      headers: { "Authorization": "Bearer " + gh.token, "Accept": "application/vnd.github+json" },
+      body: JSON.stringify({ ref: "main", inputs: { forzar: "false", rapido: "true" } }) });
+    if (r.ok) try { localStorage.setItem("correo_ult_busqueda", String(Date.now())); } catch(e) {}
+    return r.ok;
+  } catch(e) { return false; }
+}
+async function buscarCorreos(manual){
+  if (buscando) return; buscando = true;
+  let ult = 0; try { ult = +localStorage.getItem("correo_ult_busqueda") || 0; } catch(e) {}
+  if (manual || Date.now() - ult > 100000) await dispararBusqueda();
+  sinc("Buscando correos nuevos…", true);
+  versionActual = versionActual || await versionPublicada();
+  const fin = Date.now() + 6 * 60000;
+  clearInterval(sondeo);
+  sondeo = setInterval(async () => {
+    const v = await versionPublicada();
+    if (v && v !== versionActual) {
+      versionActual = v;
+      try { const n = await traerDatosNuevos(); sinc(n ? `${n} correo${n > 1 ? "s" : ""} nuevo${n > 1 ? "s" : ""} · ${ahoraTxt()}` : `Al día · ${ahoraTxt()}`); }
+      catch(e) { sinc("No se pudo actualizar; reintenta."); }
+      clearInterval(sondeo); buscando = false;
+    } else if (Date.now() > fin) { sinc(`Al día · ${ahoraTxt()}`); clearInterval(sondeo); buscando = false; }
+  }, 15000);
+}
+$("#buscarAhora").addEventListener("click", () => { buscando = false; buscarCorreos(true); });
+setInterval(() => { if (D && document.visibilityState === "visible" && !buscando) buscarCorreos(false); }, 120000);
+document.addEventListener("visibilitychange", () => { if (D && document.visibilityState === "visible" && !buscando) buscarCorreos(false); });
+
 /* ---------- entrar ---------- */
 async function entrar(clave, recordar){
   D = await abrir(clave); CLAVE = clave;
   if (recordar) ss.set("correo_clave", clave);
   $("#bloqueo").hidden = true; $("#appwrap").hidden = false;
   construir(); irA("correos");
+  versionPublicada().then(v => { versionActual = v; buscarCorreos(false); });
 }
 $("#salir").addEventListener("click", () => { ss.del("correo_clave"); location.reload(); });
 $("#formClave").addEventListener("submit", async ev => {

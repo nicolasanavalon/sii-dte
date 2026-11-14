@@ -60,6 +60,7 @@ jobs:
           cp index.html public/index.html
           # Conserva la página de correo ya publicada (Pages reemplaza el sitio completo en cada publicación).
           code=$(curl -sS -L --retry 3 -o public/correo/index.html -w "%{http_code}" "${CORREO_URL}?nocache=$(date +%s)" || echo 000)
+          curl -sS -L --retry 3 -o public/correo/version.json "${CORREO_URL}version.json?nocache=$(date +%s)" || true
           if [ "$code" = "404" ]; then
             rm -rf public/correo   # aún no existe la página de correo
           elif [ "$code" != "200" ]; then

@@ -1,14 +1,20 @@
 name: "Correo: sincronizar"
 
-# Cada 30 minutos: trae correos nuevos de Zoho, los resume con la IA gratuita de Groq y publica la página cifrada
+# Cada 5 minutos (modo rápido: solo correos nuevos) y una vez por hora (completo: completa correos antiguos y
+# resume más conversaciones): trae correos de Zoho, los resume con la IA gratuita de Groq y publica la página cifrada
 # en GitHub Pages (https://USUARIO.github.io/REPO/correo/). Si no hay correos nuevos, no publica nada.
 on:
   schedule:
-    - cron: "7,37 * * * *"   # GitHub puede atrasarlo algunos minutos
+    - cron: "*/5 * * * *"    # rápido (GitHub puede atrasarlo algunos minutos)
+    - cron: "23 * * * *"     # completo
   workflow_dispatch:
     inputs:
       forzar:
         description: "Republicar la página aunque no haya correos nuevos"
+        type: boolean
+        default: false
+      rapido:
+        description: "Solo correos nuevos (lo usa la página al abrirse y cada 2 minutos)"
         type: boolean
         default: false
 
@@ -34,6 +40,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+          cache: pip
+          cache-dependency-path: correo/requirements.txt
 
       - name: Instalar dependencias (y OCR para leer fotos y PDF escaneados)
         run: |
@@ -51,6 +59,7 @@ jobs:
         env:
           CORREO_CLAVE: ${{ secrets.CORREO_CLAVE }}
           CORREO_ADJ_DIR: ${{ runner.temp }}/adj/adj
+          CORREO_RAPIDO: ${{ github.event.schedule == '*/5 * * * *' || inputs.rapido }}
           GITHUB_REPOSITORY: ${{ github.repository }}
           ZOHO_CLIENT_ID: ${{ secrets.ZOHO_CLIENT_ID }}
           ZOHO_CLIENT_SECRET: ${{ secrets.ZOHO_CLIENT_SECRET }}
@@ -81,6 +90,7 @@ jobs:
           mkdir -p public/correo
           cp index.html public/index.html
           cp correo/index.html public/correo/index.html
+          cp correo/version.json public/correo/version.json 2>/dev/null || true
 
       - uses: actions/upload-pages-artifact@v3
         if: steps.sync.outputs.cambio == 'true' || inputs.forzar
