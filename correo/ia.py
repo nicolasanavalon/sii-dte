@@ -146,7 +146,7 @@ def _gemini_chat(modelo, sistema, usuario, max_tokens, json_mode):
     req = urllib.request.Request(f"{GEMINI_API}/models/{modelo}:generateContent", data=json.dumps(cuerpo).encode(),
                                  headers={"x-goog-api-key": _clave_gemini(), "Content-Type": "application/json",
                                           "User-Agent": "correo-resumenes/1.0"}, method="POST")
-    with urllib.request.urlopen(req, timeout=180) as r:
+    with urllib.request.urlopen(req, timeout=TIMEOUT) as r:
         d = json.load(r)
     partes = ((d.get("candidates") or [{}])[0].get("content") or {}).get("parts") or []
     texto = "".join(p.get("text", "") for p in partes if not p.get("thought"))
@@ -157,6 +157,7 @@ def _gemini_chat(modelo, sistema, usuario, max_tokens, json_mode):
 
 _agotados = {}       # modelo -> hasta cuándo (time.time()) no se vuelve a intentar
 MAX_ESPERA = 600     # segundos máximos de espera ante un límite por minuto
+TIMEOUT = 180        # segundos máximos por consulta (el vigilante lo baja para no atrasarse)
 # Modelo reservado para lo que pides TÚ en la página (Preguntar, Sugerir, Mejorar): los resúmenes automáticos
 # no lo usan, así nunca se gastan su cuota gratis del día.
 RESERVADOS = {x.strip() for x in (os.environ.get("GROQ_RESERVADO") or "openai/gpt-oss-120b").split(",") if x.strip()}
@@ -207,7 +208,7 @@ def chat(sistema, usuario, max_tokens=3000, json_mode=True, reservado=False):
             try:
                 if es_gemini(modelo):
                     return _gemini_chat(modelo, sistema, usuario, max_tokens, json_mode), modelo
-                r = _pedir("/chat/completions", cuerpo)
+                r = _pedir("/chat/completions", cuerpo, timeout=TIMEOUT)
                 return r["choices"][0]["message"]["content"], modelo
             except urllib.error.HTTPError as e:
                 txt = (e.read().decode("utf-8", "replace") if e.fp else str(e.msg))[:1500]
@@ -228,9 +229,12 @@ def chat(sistema, usuario, max_tokens=3000, json_mode=True, reservado=False):
                     time.sleep(5 * (intento + 1))
                     continue
                 break
-            except (urllib.error.URLError, TimeoutError) as e:
-                ultimo = str(e)
-                time.sleep(5 * (intento + 1))
+            except (urllib.error.URLError, OSError, ValueError) as e:   # sin conexión, demora excesiva, respuesta cortada
+                ultimo = f"{modelo}: {e}"
+                print(f"::warning::IA {modelo}: {str(e)[:150]}", flush=True)
+                if intento >= 1:
+                    break                           # probar el siguiente modelo
+                time.sleep(3)
     if lista and all(_agotado(m) for m in lista):
         raise LimiteDiario("Se alcanzó el límite gratis del día en todos los modelos de Groq.")
     raise RuntimeError(f"Groq no respondió: {ultimo}")

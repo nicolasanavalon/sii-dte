@@ -97,7 +97,7 @@ jobs:
           CORREO_DIAS_INICIALES: ${{ vars.CORREO_DIAS_INICIALES }}
           CORREO_MAX_POR_CORRIDA: ${{ vars.CORREO_MAX_POR_CORRIDA }}
           CORREO_URL: ${{ vars.CORREO_URL || format('https://{0}.github.io/{1}/correo/', github.repository_owner, github.event.repository.name) }}
-        run: python correo/sync.py --vigilar 340
+        run: python -u correo/sync.py --vigilar 340   # -u: el registro se ve al instante
 
       - name: Relanzar el vigilante
         env:
