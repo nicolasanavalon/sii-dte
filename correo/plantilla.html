@@ -92,6 +92,7 @@ header{display:flex; flex-wrap:wrap; align-items:center; justify-content:space-b
 .casillas .lbl{font-size:12.5px; color:var(--muted)}
 .seg{display:flex; gap:2px; background:var(--soft); padding:3px; border-radius:10px; flex-wrap:wrap}
 .seg button{border:0; background:none; padding:6px 12px; border-radius:8px; cursor:pointer; color:var(--muted); font-weight:500; font-size:14px}
+.carpetas button{font-size:15px; padding:8px 14px}
 .seg .nl-n{color:var(--accent); font-weight:700}
 .seg button[aria-pressed="true"]{background:var(--panel); color:var(--ink); box-shadow:0 1px 2px rgba(0,0,0,.08)}
 .progreso{display:flex; flex-wrap:wrap; align-items:center; gap:6px 14px; font-size:12.5px; color:var(--muted)}
@@ -230,6 +231,7 @@ textarea{font:inherit}
 
   <section id="vCorreos">
     <div class="toolbar" style="margin-bottom:10px">
+      <div class="seg carpetas" id="carpetas" role="tablist" aria-label="Carpetas"></div>
       <label class="search"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
         <input id="busca" type="search" autocomplete="off" placeholder="Buscar en correos y adjuntos: nombre, factura, monto, RUT…" aria-label="Buscar"></label>
       <div class="chips" id="filtros"></div>
@@ -265,6 +267,7 @@ const ss = { get(k){ try { return localStorage.getItem(k) || sessionStorage.getI
              del(k){ try { localStorage.removeItem(k); sessionStorage.removeItem(k); } catch(e){} } };
 
 let D = null, MSGS = [], HILOS = {}, CUENTAS = [];
+let carpeta = "entrada";   // entrada | enviados (como las carpetas de Zoho)
 let abierto = null, busca = "", filtro = "todos", cuentaSel = "", limite = 150, ctxHilo = null;
 let CLAVE = "", borrador = null;
 const LEIDOS = new Set((() => { try { return JSON.parse(localStorage.getItem("correo_leidos") || "[]"); } catch(e) { return []; } })());
@@ -347,7 +350,12 @@ function construir(refresco = false){
 /* ---------- vista Correos ---------- */
 function pintarFiltros(){
   const nNoLeidos = MSGS.filter(m => (!cuentaSel || m.cuenta === cuentaSel) && noLeido(m)).length;
-  const fs = [["todos","Todos"],["noleidos",`No leídos${nNoLeidos ? " (" + nNoLeidos + ")" : ""}`],["recibidos","Recibidos"],["enviados","Enviados"],["adjuntos","Con adjuntos"]];
+  const nEnv = MSGS.filter(m => (!cuentaSel || m.cuenta === cuentaSel) && m.enviado).length;
+  $("#carpetas").innerHTML = [["entrada", "📥 Bandeja de entrada", nNoLeidos ? ` <b class="nl-n">(${nNoLeidos})</b>` : ""], ["enviados", "📤 Enviados", ` <span class="muted">${nEnv}</span>`]]
+    .map(([k, t, n]) => `<button role="tab" data-carpeta="${k}" aria-pressed="${carpeta === k}" aria-selected="${carpeta === k}">${t}${n}</button>`).join("");
+  const fs = carpeta === "enviados" ? [["todos","Todos"],["adjuntos","Con adjuntos"]]
+    : [["todos","Todos"],["noleidos",`No leídos${nNoLeidos ? " (" + nNoLeidos + ")" : ""}`],["adjuntos","Con adjuntos"]];
+  if (!fs.some(([k]) => k === filtro)) filtro = "todos";
   let h = fs.map(([k,t]) => `<button class="chip" data-f="${k}" aria-pressed="${filtro === k}">${t}</button>`).join("");
   $("#filtros").innerHTML = h;
   $("#casillas").hidden = CUENTAS.length < 2;
@@ -371,7 +379,8 @@ const terminos = () => norm(busca).split(/\s+/).filter(Boolean);
 function visibles(){
   const terms = terminos();
   return MSGS.filter(m => (!cuentaSel || m.cuenta === cuentaSel) &&
-    (filtro === "todos" || (filtro === "noleidos" && noLeido(m)) || (filtro === "recibidos" && !m.enviado) || (filtro === "enviados" && m.enviado) || (filtro === "adjuntos" && m.archivos.length)) &&
+    (terms.length || (carpeta === "enviados" ? m.enviado : !m.enviado)) &&     // al buscar: en todas las carpetas
+    (filtro === "todos" || (filtro === "noleidos" && noLeido(m)) || (filtro === "adjuntos" && m.archivos.length)) &&
     terms.every(t => m._idx.includes(t)));
 }
 
@@ -413,7 +422,7 @@ function fila(m, terms = []){
 
 function pintarLista(){
   const terms = terminos(), ms = visibles();
-  $("#count").textContent = busca ? `${ms.length} correo${ms.length === 1 ? "" : "s"} con "${busca}"` : `${ms.length} correos · más recientes primero`;
+  $("#count").textContent = busca ? `${ms.length} correo${ms.length === 1 ? "" : "s"} con "${busca}" (en todas las carpetas)` : `${carpeta === "enviados" ? "Enviados" : "Bandeja de entrada"} · ${ms.length} correo${ms.length === 1 ? "" : "s"}`;
   $("#rows").innerHTML = ms.slice(0, limite).map(m => fila(m, terms)).join("") +
     (ms.length > limite ? `<button class="more" data-more>Mostrar más (${ms.length - limite} restantes)</button>` : "") +
     (ms.length ? "" : `<p class="vacio">No hay correos que coincidan.</p>`);
@@ -977,11 +986,12 @@ function irA(v){
   if (v === "preguntar") { pintarCtx(); $("#qAsk").focus(); }
 }
 document.addEventListener("click", ev => {
-  const t = ev.target.closest("[data-v],[data-m],[data-f],[data-cu],[data-back],[data-more],[data-askthread],[data-noctx],[data-sug],[data-responder],[data-r],[data-adj],[data-vertexto],[data-ver],[data-bajar],[data-nuevo],[data-recuperar],[data-noleido],[data-hoja],[data-quitaradj]");
+  const t = ev.target.closest("[data-v],[data-m],[data-f],[data-cu],[data-back],[data-more],[data-askthread],[data-noctx],[data-sug],[data-responder],[data-r],[data-adj],[data-vertexto],[data-ver],[data-bajar],[data-nuevo],[data-recuperar],[data-noleido],[data-hoja],[data-quitaradj],[data-carpeta]");
   if (!t) return;
   if (t.dataset.adj !== undefined) { const i = +t.dataset.adj; leerBorrador(); adjAbierto = adjAbierto === i ? null : i; pintarCorreo(); return; }
   if (t.dataset.ver !== undefined || t.dataset.bajar !== undefined) { const mm = MSGS.find(x => x.id === abierto); if (mm) abrirAdjunto(mm, +(t.dataset.ver ?? t.dataset.bajar), t.dataset.ver !== undefined); return; }
   if (t.dataset.quitaradj !== undefined && borrador) { leerBorrador(); borrador.nuevos.splice(+t.dataset.quitaradj, 1); borrador.estado = ""; pintarCorreo(); return; }
+  if (t.dataset.carpeta) { carpeta = t.dataset.carpeta; limite = 150; abierto = null; pintarFiltros(); pintarLista(); pintarCorreo(); if (innerWidth <= 860) scrollTo(0, 0); return; }
   if (t.dataset.hoja !== undefined) { visor.hoja = +t.dataset.hoja; pintarCorreo(); return; }
   if ("vertexto" in t.dataset) { leerBorrador(); verTexto = !verTexto; pintarCorreo(); return; }
   const m = MSGS.find(x => x.id === abierto);
