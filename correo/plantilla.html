@@ -2,7 +2,7 @@
 <html lang="es">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
 <meta name="robots" content="noindex, nofollow">
 <title>Bandeja Zoho</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -202,7 +202,7 @@ textarea{font:inherit}
 }
 @media (min-width:1700px){ .split{grid-template-columns:minmax(420px, 28%) minmax(0, 1fr)} }
 /* iPhone: con letra de menos de 16 px acerca la página al escribir. */
-@media (max-width:860px){ input, textarea, select{font-size:16px!important} }
+@media (max-width:1024px), (pointer:coarse){ input, textarea, select{font-size:16px!important} }
 @media (prefers-reduced-motion: reduce){*{transition:none!important}}
 </style>
 </head>
@@ -247,7 +247,7 @@ textarea{font:inherit}
   <section id="vPreguntar" hidden>
     <div class="chat">
       <div class="ctx" id="ctx" hidden></div>
-      <form class="ask" id="formAsk"><input id="qAsk" type="text" autocomplete="off" autocorrect="off" spellcheck="false" placeholder="Pregunta sobre tus correos: ¿cuánto le debo a ICB?, ¿qué dijo Marsol del horno?…"><button class="btn" id="btnAsk" type="submit">Preguntar</button></form>
+      <form class="ask" id="formAsk"><input id="qAsk" type="text" autocomplete="off" autocorrect="on" autocapitalize="sentences" spellcheck="true" placeholder="Pregunta sobre tus correos: ¿cuánto le debo a ICB?, ¿qué dijo Marsol del horno?…"><button class="btn" id="btnAsk" type="submit">Preguntar</button></form>
       <div class="chips" id="sugerencias"></div>
       <div class="qa" id="qa"></div>
       <p class="hint" id="hintIA"></p>
