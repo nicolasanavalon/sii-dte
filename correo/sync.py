@@ -655,31 +655,50 @@ def aplicar_turno(estado, clave, archivo):
 
 # ---------------------------------------------------------------- Telegram
 
-def avisar(estado, analizados):
+def _telegram(texto):
     token, chat = env("TELEGRAM_BOT_TOKEN"), env("TELEGRAM_CHAT_ID")
-    if not (token and chat) or env("CORREO_TELEGRAM", "1") == "0":
+    data = urllib.parse.urlencode({"chat_id": chat, "text": texto[:4000], "disable_web_page_preview": "true"}).encode()
+    urllib.request.urlopen(f"https://api.telegram.org/bot{token}/sendMessage", data=data, timeout=60).read()
+
+
+def avisar(estado, analizados, nuevos=()):
+    """Aviso por Telegram de CADA correo nuevo recibido (no de los que envías tú ni de la importación inicial)."""
+    if not (env("TELEGRAM_BOT_TOKEN") and env("TELEGRAM_CHAT_ID")) or env("CORREO_TELEGRAM", "1") == "0":
         return
-    limite = (time.time() - 36 * 3600) * 1000   # no avisar correos viejos (primera importación)
+    limite = (time.time() - 6 * 3600) * 1000          # correos antiguos que se completan después no se avisan
     ya = set(estado.get("avisados", []))
-    altos = [m for m in analizados if not m["enviado"] and m["fecha"] >= limite and m["id"] not in ya
-             and (m["analisis"] or {}).get("importancia") == "alta"]
-    if not altos:
+    ids = {m["id"] for m in list(nuevos) + list(analizados or []) if m}
+    lista = sorted((estado["mensajes"][i] for i in ids if i in estado["mensajes"]), key=lambda m: m["fecha"])
+    lista = [m for m in lista if not m.get("enviado") and m["fecha"] >= limite and m["id"] not in ya]
+    if not lista:
         return
-    estado["avisados"] = (estado.get("avisados", []) + [m["id"] for m in altos])[-300:]
-    lineas = [f"📬 {len(altos)} correo(s) importante(s):"]
-    for m in altos[:8]:
-        a = m["analisis"]
-        nombre = estado["contactos"].get(m["contacto"], {}).get("nombre") or m["de"]
-        lineas.append(f"\n• {nombre} — {m['asunto']}\n  {a['resumen']}")
+    etiquetas = estado.get("etiquetas", {})
+
+    def bloque(m):
+        a = m.get("analisis") or {}
+        casilla = etiquetas.get(m.get("cuenta", ""), "")
+        resumen = a.get("resumen") or (m.get("vista_previa") or m.get("texto") or "").strip().replace("\n", " ")[:280]
+        lineas = [f"📩 Nuevo correo{' · ' + casilla if casilla else ''}{' ⚠️ IMPORTANTE' if a.get('importancia') == 'alta' else ''}",
+                  f"De: {m.get('de_nombre') or m['de']} <{m['de']}>", f"Asunto: {m['asunto']}"]
+        if m.get("archivos"):
+            lineas.append(f"📎 {len(m['archivos'])} adjunto(s): " + ", ".join(f["nombre"] for f in m["archivos"][:3]))
+        if resumen:
+            lineas.append(f"\n{resumen}")
         if a.get("accion"):
-            lineas.append(f"  👉 {a['accion']}")
-    if env("CORREO_URL"):
-        lineas.append(f"\nVer todo: {env('CORREO_URL')}")
-    data = urllib.parse.urlencode({"chat_id": chat, "text": "\n".join(lineas)[:4000],
-                                   "disable_web_page_preview": "true"}).encode()
+            lineas.append(f"👉 {a['accion']}")
+        return "\n".join(lineas)
+
+    url = env("CORREO_URL")
     try:
-        urllib.request.urlopen(f"https://api.telegram.org/bot{token}/sendMessage", data=data, timeout=60).read()
-        print("Telegram: aviso enviado.")
+        if len(lista) <= 5:
+            for m in lista:
+                _telegram(bloque(m) + (f"\n\nAbrir: {url}" if url else ""))
+        else:
+            txt = f"📬 {len(lista)} correos nuevos:\n" + "\n".join(
+                f"• {etiquetas.get(m.get('cuenta', ''), '')} · {m.get('de_nombre') or m['de']} — {m['asunto']}" for m in lista[:25])
+            _telegram(txt + (f"\n\nAbrir: {url}" if url else ""))
+        estado["avisados"] = (estado.get("avisados", []) + [m["id"] for m in lista])[-500:]
+        print(f"Telegram: aviso de {len(lista)} correo(s) nuevo(s).")
     except Exception as e:
         print(f"::warning::No se pudo enviar el aviso por Telegram: {e}")
 
@@ -771,7 +790,7 @@ def main():
                   or estado.pop("_cambio_leidos", False)) or not estado["ultima_sync"]
     estado["ultima_sync"] = datetime.now(TZ).strftime("%Y-%m-%d %H:%M")
     recortar(estado)
-    avisar(estado, analizados)
+    avisar(estado, analizados, nuevos)
     if cambio or "--forzar" in sys.argv:
         generar_html(estado, clave)
     else:
