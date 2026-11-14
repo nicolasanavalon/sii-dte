@@ -112,12 +112,14 @@ class Zoho:
         d = d[0] if isinstance(d, list) else d
         return {k: d.get(k) for k in ("storeName", "attachmentPath", "attachmentName")}
 
-    def responder(self, account_id, message_id, desde, para, cc, asunto, texto):
+    def responder(self, account_id, message_id, desde, para, cc, asunto, texto, adjuntos=()):
         """Responde un correo (queda en la conversación y en Enviados de Zoho)."""
         cuerpo = {"fromAddress": desde, "toAddress": ",".join(para), "subject": asunto,
                   "content": texto, "action": "reply", "mailFormat": "plaintext"}
         if cc:
             cuerpo["ccAddress"] = ",".join(cc)
+        if adjuntos:
+            cuerpo["attachments"] = list(adjuntos)
         return self.post(f"/accounts/{account_id}/messages/{message_id}", cuerpo)
 
     def get(self, ruta, _crudo=False, **params):

@@ -17,6 +17,7 @@ on:
 
 permissions:
   contents: read
+  actions: write     # leer (y luego borrar) las partes de los archivos que adjuntaste
 
 # Cada envío corre por su cuenta (ninguno se cancela). Marcar leídos va en su propio grupo: si se junta
 # más de uno, basta el último (la página reintenta lo que falte).
@@ -27,7 +28,7 @@ concurrency:
 jobs:
   enviar:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 12
     steps:
       - uses: actions/checkout@v4
         with:
@@ -46,6 +47,8 @@ jobs:
       - name: Enviar
         env:
           PAQUETE: ${{ inputs.paquete }}
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
           CORREO_CLAVE: ${{ secrets.CORREO_CLAVE }}
           ZOHO_CLIENT_ID: ${{ secrets.ZOHO_CLIENT_ID }}
           ZOHO_CLIENT_SECRET: ${{ secrets.ZOHO_CLIENT_SECRET }}

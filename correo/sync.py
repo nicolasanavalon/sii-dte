@@ -536,6 +536,70 @@ def analizar_con_groq(estado):
     return analizados
 
 
+# ---------------------------------------------------------------- Estilo de Nicolás
+
+CORTE_CITA = re.compile(
+    r"^\s*(>|-*\s*(El|En|On)\s[^\n]{4,240}(\n[^\n]{0,120})?\s(escribió|escribio|wrote|a écrit)\b|-{2,}\s*(Mensaje original|"
+    r"Original Message|Mensaje reenviado|Forwarded message)|_{6,}|(De|From|Enviado el|Sent)\s*:\s*\S)", re.I | re.M)
+
+
+def texto_propio(m):
+    """Lo que escribió la persona en ESTE correo (sin la cadena citada de abajo)."""
+    t = (m.get("texto") or "").replace("\r", "")
+    corte = CORTE_CITA.search(t)
+    if corte:
+        t = t[:corte.start()]
+    return re.sub(r"\n{3,}", "\n\n", t).strip()
+
+
+SISTEMA_ESTILO = """Eres experto en estilo de escritura. Te paso correos REALES escritos por Nicolás (dueño de Anasep Restaurant /
+restaurante Platón, Chile). Describe CÓMO escribe, con tanto detalle que otra IA pueda escribir correos que nadie distinga de los suyos.
+Fíjate en la forma, no en los temas: largo típico, saludos y despedidas exactos que usa, firma, trato (tú/usted y con quién),
+tono (cercano, directo, formal…), estructura (párrafos, viñetas, líneas cortas), puntuación y mayúsculas, signos (¿¡, emojis),
+muletillas y expresiones chilenas o propias, cómo pide cosas, cómo agradece, cómo reclama, cómo confirma, qué NO hace nunca.
+Cita frases textuales suyas como ejemplo. No inventes rasgos que no aparezcan en los correos.
+Responde SOLO un objeto JSON:
+{"resumen": "3-5 frases sobre su forma de escribir", "largo": "...", "saludos": ["textuales"], "despedidas": ["textuales"],
+ "firma": "textual o vacío", "trato": "...", "tono": "...", "estructura": "...", "puntuacion": "...",
+ "expresiones": ["frases o palabras típicas textuales"], "segun_destinatario": "diferencias con proveedores, clientes, equipo, etc.",
+ "evitar": ["cosas que él NO hace y una IA tendería a hacer"]}"""
+
+
+def actualizar_estilo(estado):
+    """Aprende cómo escribe Nicolás a partir de sus correos enviados (se renueva cada semana o cada 15 enviados nuevos)."""
+    import ia
+    if not ia.disponible():
+        return False
+    enviados = sorted((m for m in estado["mensajes"].values() if m.get("enviado") and not m.get("boletin")),
+                      key=lambda m: m["fecha"], reverse=True)
+    est = estado.get("estilo") or {}
+    if len(enviados) < 3 or (est.get("n_enviados", 0) + 15 > len(enviados)
+                             and time.time() - est.get("ms", 0) / 1000 < 7 * 86400):
+        return False
+    muestra, total = [], 0
+    for m in enviados:
+        t = texto_propio(m)
+        if len(t) < 25:
+            continue
+        bloque = f"--- Para: {', '.join(m.get('para', [])[:3])} | Asunto: {m.get('asunto', '')}\n{t[:1500]}"
+        if total + len(bloque) > 11000:
+            break
+        muestra.append(bloque)
+        total += len(bloque)
+    if len(muestra) < 3:
+        return False
+    try:
+        texto, modelo = ia.chat(SISTEMA_ESTILO, "CORREOS ESCRITOS POR NICOLÁS:\n\n" + "\n\n".join(muestra), max_tokens=2000)
+        perfil = ia.json_de(texto)
+    except Exception as e:
+        print(f"::warning::No pude actualizar el estilo de escritura: {str(e)[:200]}")
+        return False
+    estado["estilo"] = {"perfil": perfil, "ms": int(time.time() * 1000), "n_enviados": len(enviados),
+                        "n_ejemplos": len(muestra), "modelo": modelo}
+    print(f"Estilo de escritura actualizado con {len(muestra)} correos enviados.")
+    return True
+
+
 def analizar_pendientes(estado):
     if env("GROQ_API_KEY"):
         return analizar_con_groq(estado)   # IA gratuita (Groq)
@@ -824,8 +888,9 @@ def una_vuelta(estado, clave, rapido):
     LIMITE_VUELTA = time.time() + 40
     nuevos, completados = traer_nuevos(estado, clave)
     avisar(estado, [], nuevos)                       # aviso inmediato, sin esperar el resumen de la IA
+    estilo = not rapido and actualizar_estilo(estado)
     analizados = analizar_pendientes(estado)
-    cambio = bool(nuevos or completados or analizados or estado.pop("_hilos_actualizados", 0)
+    cambio = bool(nuevos or completados or analizados or estilo or estado.pop("_hilos_actualizados", 0)
                   or estado.pop("_cambio_leidos", False)) or not estado["ultima_sync"]
     estado["ultima_sync"] = datetime.now(TZ).strftime("%Y-%m-%d %H:%M")
     recortar(estado)

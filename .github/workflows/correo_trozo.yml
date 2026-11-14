@@ -1,0 +1,38 @@
+name: "Correo: subir adjunto"
+run-name: "Correo: adjunto ${{ inputs.id }}"
+
+# La Bandeja sube cada archivo que adjuntas CIFRADO con tu contraseña y en partes (GitHub limita el tamaño
+# de cada pedido). Cada parte queda guardada 1 día como "artifact"; el envío las junta y luego las borra.
+on:
+  workflow_dispatch:
+    inputs:
+      id:
+        description: "Parte (trozo-<envío>-<n>)"
+        required: true
+        type: string
+      datos:
+        description: "Parte cifrada del archivo"
+        required: true
+        type: string
+
+permissions: {}
+
+jobs:
+  guardar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Guardar la parte
+        env:
+          DATOS: ${{ inputs.datos }}
+          ID: ${{ inputs.id }}
+        run: |
+          [[ "$ID" =~ ^trozo-[a-z0-9]+-[0-9]+$ ]] || { echo "::error::Identificador inválido"; exit 1; }
+          printf '%s' "$DATOS" > trozo.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.id }}
+          path: trozo.txt
+          retention-days: 1
+          if-no-files-found: error
