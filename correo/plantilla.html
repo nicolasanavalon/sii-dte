@@ -128,6 +128,16 @@ header{display:flex; flex-wrap:wrap; align-items:center; justify-content:space-b
 details.resumen summary{cursor:pointer; list-style:none} details.resumen summary::-webkit-details-marker{display:none}
 @media (max-width:560px){ .remite{grid-template-columns:auto 1fr} .fecha-msg{grid-column:2} .hoja .cuerpo{padding:14px} }
 
+/* Sugerencias de contactos */
+.campo{position:relative}
+.sugs{position:absolute; left:0; right:0; top:100%; margin-top:4px; background:#fff; border:1px solid var(--line); border-radius:8px;
+  box-shadow:0 8px 24px rgba(20,26,40,.14); z-index:20; max-height:280px; overflow:auto}
+.sug{display:flex; gap:10px; align-items:center; width:100%; text-align:left; border:0; background:none; padding:8px 12px; cursor:pointer; color:var(--ink)}
+.sug[aria-selected="true"], .sug:hover{background:var(--accent-soft)}
+.sug .avatar{width:30px; height:30px; font-size:12px; flex:none}
+.sug .t{min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+.sug .t small{color:var(--muted)}
+
 /* Responder */
 .compose{border:1px solid var(--accent); border-radius:10px; padding:14px; display:flex; flex-direction:column; gap:10px; background:var(--panel)}
 .compose label{font-size:12.5px; color:var(--muted); display:flex; flex-direction:column; gap:4px}
@@ -252,6 +262,7 @@ function construir(refresco = false){
   for (const m of MSGS) (HILOS[m.hilo] ||= []).push(m);
   for (const k in HILOS) HILOS[k].sort((a, b) => a.fecha - b.fecha);
   CUENTAS = [...new Set(MSGS.map(m => m.cuenta).filter(Boolean))];
+  armarAgenda();
   for (const m of MSGS) m._idx = norm(m.asunto + " " + m.de + " " + (m.de_nombre || "") + " " + m.para.join(" ") + " " + (m.texto || m.vista_previa || "") + " " + m.archivos.map(a => a.nombre + " " + (a.texto || "")).join(" "));
   $("#estado").textContent = `${MSGS.length} correos${CUENTAS.length > 1 ? " · " + CUENTAS.length + " casillas" : ""} · actualizado ${D.ultima_sync || "—"}`;
   $("#hintIA").textContent = D._ia && D._ia.clave ? "Responde la IA gratuita de Groq usando tus correos y adjuntos. Puede equivocarse: revisa el correo citado." : "La IA se activa cuando guardes la clave gratuita de Groq (GROQ_API_KEY).";
@@ -416,6 +427,62 @@ async function abrirAdjunto(m, i, ver){
 }
 function descargar(url, nombre){ const a = document.createElement("a"); a.href = url; a.download = nombre; a.target = "_blank"; document.body.appendChild(a); a.click(); a.remove(); }
 
+/* ---------- agenda: sugerencias al escribir Para / Cc ---------- */
+let AGENDA = [];
+function armarAgenda(){
+  const yo = new Set((D.propios || []).map(x => x.toLowerCase())), mapa = {};
+  const sumar = (email, nombre, fecha, peso) => {
+    email = String(email || "").trim().toLowerCase();
+    if (!email.includes("@") || yo.has(email) || /no-?reply|noreply|notificacion|mailer-daemon/.test(email)) return;
+    const c = mapa[email] ||= {email, nombre: "", n: 0, ult: 0};
+    if (nombre && !nombre.includes("@") && nombre.length > (c.nombre || "").length) c.nombre = nombre.trim();
+    c.n += peso; c.ult = Math.max(c.ult, fecha || 0);
+  };
+  for (const m of MSGS) {
+    if (m.enviado) { for (const x of [...m.para, ...m.cc]) sumar(x, "", m.fecha, 3); }   // a quien TÚ escribes pesa más
+    else { sumar(m.de, m.de_nombre, m.fecha, 1); for (const x of m.cc) sumar(x, "", m.fecha, 0.3); }
+  }
+  for (const [email, f] of Object.entries(D.contactos || {})) if (mapa[email.toLowerCase()] && f.nombre) mapa[email.toLowerCase()].nombre ||= f.nombre;
+  const ahora = Date.now();
+  AGENDA = Object.values(mapa).map(c => ({...c, puntaje: c.n + 6 * Math.exp(-(ahora - c.ult) / (30 * 864e5)), clave: norm(c.nombre + " " + c.email)}))
+    .sort((a, b) => b.puntaje - a.puntaje);
+}
+
+let sugs = {campo: null, lista: [], sel: 0};
+function tokenActual(valor){ const i = valor.lastIndexOf(","); return [valor.slice(0, i + 1), valor.slice(i + 1).trim()]; }
+function mostrarSugs(input){
+  cerrarSugs();
+  const [, t] = tokenActual(input.value), q = norm(t);
+  if (q.length < 1) return;
+  const ya = new Set(input.value.split(",").map(x => x.trim().toLowerCase()));
+  const lista = AGENDA.filter(c => !ya.has(c.email) && c.clave.split(/[\s@._-]+/).some(p => p.startsWith(q)) || (q.length > 2 && c.clave.includes(q) && !ya.has(c.email))).slice(0, 8);
+  if (!lista.length) return;
+  sugs = {campo: input, lista, sel: 0};
+  const caja = document.createElement("div");
+  caja.className = "sugs"; caja.setAttribute("role", "listbox");
+  caja.innerHTML = lista.map((c, i) => `<button type="button" class="sug" role="option" data-sug-i="${i}" aria-selected="${i === 0}">
+    <span class="avatar" style="--h:${tono(c.email)}">${esc(iniciales(c.nombre || c.email))}</span>
+    <span class="t">${resaltar(c.nombre || c.email, [q])}${c.nombre ? `<br><small>${resaltar(c.email, [q])}</small>` : ""}</span></button>`).join("");
+  input.parentElement.appendChild(caja);
+}
+function cerrarSugs(){ document.querySelectorAll(".sugs").forEach(x => x.remove()); sugs = {campo: null, lista: [], sel: 0}; }
+function elegirSug(i){
+  const c = sugs.lista[i], input = sugs.campo; if (!c || !input) return;
+  const [antes] = tokenActual(input.value);
+  input.value = (antes ? antes.replace(/,\s*$/, ", ") : "") + c.email + ", ";
+  cerrarSugs(); input.focus(); leerBorrador();
+}
+document.addEventListener("input", ev => { if (ev.target.id === "rPara" || ev.target.id === "rCc") mostrarSugs(ev.target); });
+document.addEventListener("keydown", ev => {
+  if (!sugs.campo || ev.target !== sugs.campo) return;
+  if (ev.key === "ArrowDown" || ev.key === "ArrowUp") {
+    ev.preventDefault(); sugs.sel = (sugs.sel + (ev.key === "ArrowDown" ? 1 : -1) + sugs.lista.length) % sugs.lista.length;
+    document.querySelectorAll(".sug").forEach((b, i) => b.setAttribute("aria-selected", i === sugs.sel));
+  } else if (ev.key === "Enter" || ev.key === "Tab") { ev.preventDefault(); elegirSug(sugs.sel); }
+  else if (ev.key === "Escape") cerrarSugs();
+});
+document.addEventListener("mousedown", ev => { const b = ev.target.closest("[data-sug-i]"); if (b) { ev.preventDefault(); elegirSug(+b.dataset.sugI); } else if (!ev.target.closest(".sugs")) cerrarSugs(); });
+
 /* ---------- responder ---------- */
 const PROPIOS = () => new Set((D.propios || []).map(x => x.toLowerCase()));
 function nuevoBorrador(m, modo){
@@ -435,8 +502,8 @@ function redactor(){
   return `<section class="compose" aria-label="Responder">
     <h3>${{responder: "Tu respuesta", reenviar: "Reenviar", nuevo: "Correo nuevo"}[b.modo]}${b.ocupado ? " · " + esc(b.ocupado) : ""}</h3>
     ${CUENTAS.length > 1 ? `<label>De <select id="rDe" ${b.modo === "nuevo" ? "" : "disabled"}>${CUENTAS.map(c => `<option value="${esc(c)}" ${c === b.cuenta ? "selected" : ""}>${esc(etiqueta(c))} — ${esc(c)}</option>`).join("")}</select></label>` : ""}
-    <label>Para <input id="rPara" value="${esc(b.para)}" autocomplete="off"></label>
-    <label>Cc <input id="rCc" value="${esc(b.cc)}" autocomplete="off" placeholder="(opcional)"></label>
+    <label>Para <span class="campo"><input id="rPara" value="${esc(b.para)}" autocomplete="off" placeholder="Escribe un nombre o correo…"></span></label>
+    <label>Cc <span class="campo"><input id="rCc" value="${esc(b.cc)}" autocomplete="off" placeholder="(opcional)"></span></label>
     <label>Asunto <input id="rAsunto" value="${esc(b.asunto)}" autocomplete="off"></label>
     ${b.modo === "reenviar" && (MSGS.find(x => x.id === b.id) || {archivos: []}).archivos.length ? `<label class="check"><input type="checkbox" id="rAdj" ${b.con_adjuntos ? "checked" : ""}> Incluir los adjuntos originales (${MSGS.find(x => x.id === b.id).archivos.length})</label>` : ""}
     <label>Mensaje <textarea id="rTexto" placeholder="Escribe tu respuesta, o usa «Sugerir respuesta».">${esc(b.texto)}</textarea></label>
