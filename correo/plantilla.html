@@ -1199,7 +1199,7 @@ async function revisarZoho(manual){
       if (caja && caja.ct && caja.ct !== CAJA_ACTUAL.ct) {
         const antes = new Set(MSGS.map(m => m.id));
         const nuevoD = await abrirCaja(caja, CLAVE);
-        CAJA_ACTUAL = caja; leerBorrador(); D = nuevoD; construir(true);
+        CAJA_ACTUAL = caja; leerBorrador(); D = nuevoD; construir(true); prepararAvisos();
         n = MSGS.filter(m => !antes.has(m.id) && !m.local).length;
       }
       versionActual = v.v;
