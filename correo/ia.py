@@ -88,6 +88,7 @@ def max_salida(modelo, pedido):
 
 
 _agotados = set()
+MAX_ESPERA = 600     # segundos máximos de espera ante un límite por minuto
 
 
 def chat(sistema, usuario, max_tokens=3000, json_mode=True):
@@ -111,6 +112,8 @@ def chat(sistema, usuario, max_tokens=3000, json_mode=True):
                 ultimo = f"{e.code}: {txt}"
                 if e.code == 429:
                     espera = float(e.headers.get("retry-after") or 20)
+                    if espera > MAX_ESPERA:
+                        break                       # (vigilante) no esperar: probar otro modelo o la próxima vuelta
                     if espera > 90 or "per day" in txt.lower() or "(rpd)" in txt.lower() or "(tpd)" in txt.lower():
                         _agotados.add(modelo)       # límite diario: probar el siguiente modelo
                         break
