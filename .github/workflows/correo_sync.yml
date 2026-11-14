@@ -92,6 +92,7 @@ jobs:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          CORREO_TELEGRAM: "0"   # avisos de correo nuevo: solo en el iPhone (app), no por Telegram
           GH_TOKEN_ENVIO: ${{ secrets.GH_TOKEN_ENVIO }}
           GROQ_MODELO: ${{ vars.GROQ_MODELO }}
           CORREO_DIAS_INICIALES: ${{ vars.CORREO_DIAS_INICIALES }}
