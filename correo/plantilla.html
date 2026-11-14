@@ -68,6 +68,10 @@ header{display:flex; flex-wrap:wrap; align-items:center; justify-content:space-b
 .row:first-child{border-top:0}
 .row:hover{background:var(--soft)}
 .row[aria-current="true"]{background:var(--accent-soft)}
+.row.nl{position:relative; background:color-mix(in srgb, var(--accent-soft) 45%, var(--panel))}
+.row.nl::before{content:""; position:absolute; left:0; top:0; bottom:0; width:3px; background:var(--accent)}
+.row.nl .who, .row.nl .subj{font-weight:700; color:var(--ink)}
+.row.nl .who::before{content:""; display:inline-block; width:8px; height:8px; border-radius:50%; background:var(--accent); margin-right:7px; vertical-align:1px}
 .r1{display:flex; justify-content:space-between; gap:8px; align-items:baseline}
 .who{font-weight:600; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
 .when{font-size:12px; color:var(--muted); white-space:nowrap; font-variant-numeric:tabular-nums}
@@ -102,6 +106,27 @@ header{display:flex; flex-wrap:wrap; align-items:center; justify-content:space-b
 .barra i{display:block; height:100%; background:var(--accent); border-radius:999px}
 .progreso b{color:var(--ink); font-weight:600; font-variant-numeric:tabular-nums}
 .vacio{color:var(--muted); text-align:center; padding:40px 16px; margin:0}
+
+/* Lectura tipo Outlook */
+.readbar{display:flex; justify-content:space-between; align-items:center; gap:8px; flex-wrap:wrap}
+.asunto{font-size:21px; line-height:1.3}
+.remite{display:grid; grid-template-columns:auto 1fr auto; gap:12px; align-items:center}
+.avatar{width:42px; height:42px; border-radius:50%; display:grid; place-items:center; font-weight:600; font-size:15px; color:#fff; background:hsl(var(--h) 45% 45%)}
+.remite-txt{min-width:0; overflow-wrap:anywhere}
+.fecha-msg{white-space:nowrap; align-self:start; padding-top:3px}
+.adjs{display:flex; flex-wrap:wrap; gap:8px}
+.adj{display:inline-flex; align-items:center; gap:8px; max-width:100%; border:1px solid var(--line); background:var(--panel); border-radius:8px; padding:6px 10px; cursor:pointer; font-size:13px}
+.adj[aria-expanded="true"]{border-color:var(--accent); background:var(--accent-soft)}
+.adj .ext{font:600 10.5px/1 var(--f-mono); background:var(--accent); color:var(--accent-ink); border-radius:4px; padding:4px 5px}
+.adj-n{overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:220px}
+.adj-texto{border:1px solid var(--line); border-radius:8px; padding:10px 12px; background:var(--bg)}
+.adj-texto pre{white-space:pre-wrap; overflow-wrap:anywhere; font:12px/1.45 var(--f-mono); max-height:360px; overflow:auto; margin:6px 0 0}
+.hoja{background:#fff; color:#1f2328; border:1px solid var(--line); border-radius:8px; overflow:hidden}
+.hoja .cuerpo{padding:18px 20px}
+.correo-html{display:block; width:100%; border:0; height:300px; background:#fff}
+.enlace{border:0; background:none; color:var(--accent); cursor:pointer; padding:0; align-self:flex-start}
+details.resumen summary{cursor:pointer; list-style:none} details.resumen summary::-webkit-details-marker{display:none}
+@media (max-width:560px){ .remite{grid-template-columns:auto 1fr} .fecha-msg{grid-column:2} .hoja .cuerpo{padding:14px} }
 
 /* Responder */
 .compose{border:1px solid var(--accent); border-radius:10px; padding:14px; display:flex; flex-direction:column; gap:10px; background:var(--panel)}
@@ -144,7 +169,7 @@ textarea{font:inherit}
     <h1>Bandeja Anasep</h1>
     <p class="muted small" style="margin:0">Tus correos están cifrados. Ingresa tu contraseña para verlos.</p>
     <input id="clave" type="password" autocomplete="current-password" placeholder="Contraseña" required>
-    <label class="small muted"><input type="checkbox" id="recordar"> Recordar en esta pestaña</label>
+    <label class="small muted"><input type="checkbox" id="recordar" checked> Recordar en este dispositivo (no volver a pedirla)</label>
     <p id="errClave" class="small" style="color:var(--alta);min-height:18px;margin:0"></p>
     <button class="btn" type="submit">Abrir</button>
   </form>
@@ -158,6 +183,7 @@ textarea{font:inherit}
       <button class="tab" role="tab" id="tab-correos" data-v="correos">Correos</button>
       <button class="tab" role="tab" id="tab-preguntar" data-v="preguntar">Preguntar</button>
     </nav>
+    <button class="chip" id="salir" title="Olvidar la contraseña en este dispositivo">Cerrar sesión</button>
   </header>
 
   <section id="vCorreos">
@@ -192,11 +218,16 @@ const hoy = new Date();
 const fmtL = ms => { const d = new Date(+ms); return d.toDateString() === hoy.toDateString() ? d.toLocaleTimeString("es-CL", {hour:"2-digit", minute:"2-digit"}) : d.toLocaleDateString("es-CL", {day:"2-digit", month:"short"}); };
 const fmtF = ms => new Date(+ms).toLocaleString("es-CL", {weekday:"short", day:"2-digit", month:"short", year:"numeric", hour:"2-digit", minute:"2-digit"});
 const hoyISO = () => new Date().toLocaleDateString("sv-SE");
-const ss = { get(k){ try { return sessionStorage.getItem(k); } catch(e){ return null; } }, set(k,v){ try { sessionStorage.setItem(k,v); } catch(e){} } };
+const ss = { get(k){ try { return localStorage.getItem(k) || sessionStorage.getItem(k); } catch(e){ return null; } },
+             set(k,v){ try { localStorage.setItem(k,v); } catch(e){} },
+             del(k){ try { localStorage.removeItem(k); sessionStorage.removeItem(k); } catch(e){} } };
 
 let D = null, MSGS = [], HILOS = {}, CUENTAS = [];
 let abierto = null, busca = "", filtro = "todos", cuentaSel = "", limite = 150, ctxHilo = null;
-let CLAVE = "", borrador = null;   // borrador: {id, para, cc, asunto, texto, obs, confirmar, estado, clase, ocupado}
+let CLAVE = "", borrador = null;
+const LEIDOS = new Set((() => { try { return JSON.parse(localStorage.getItem("correo_leidos") || "[]"); } catch(e) { return []; } })());
+const noLeido = m => m.no_leido && !LEIDOS.has(m.id);
+function marcarLeido(id){ if (LEIDOS.has(id)) return; LEIDOS.add(id); try { localStorage.setItem("correo_leidos", JSON.stringify([...LEIDOS].slice(-3000))); } catch(e){} }   // borrador: {id, para, cc, asunto, texto, obs, confirmar, estado, clase, ocupado}
 
 /* ---------- descifrar ---------- */
 const b64 = s => Uint8Array.from(atob(s), c => c.charCodeAt(0));
@@ -222,7 +253,8 @@ function construir(){
 
 /* ---------- vista Correos ---------- */
 function pintarFiltros(){
-  const fs = [["todos","Todos"],["recibidos","Recibidos"],["enviados","Enviados"],["adjuntos","Con adjuntos"]];
+  const nNoLeidos = MSGS.filter(m => (!cuentaSel || m.cuenta === cuentaSel) && noLeido(m)).length;
+  const fs = [["todos","Todos"],["noleidos",`No leídos${nNoLeidos ? " (" + nNoLeidos + ")" : ""}`],["recibidos","Recibidos"],["enviados","Enviados"],["adjuntos","Con adjuntos"]];
   let h = fs.map(([k,t]) => `<button class="chip" data-f="${k}" aria-pressed="${filtro === k}">${t}</button>`).join("");
   $("#filtros").innerHTML = h;
   $("#casillas").hidden = CUENTAS.length < 2;
@@ -243,7 +275,7 @@ const terminos = () => norm(busca).split(/\s+/).filter(Boolean);
 function visibles(){
   const terms = terminos();
   return MSGS.filter(m => (!cuentaSel || m.cuenta === cuentaSel) &&
-    (filtro === "todos" || (filtro === "recibidos" && !m.enviado) || (filtro === "enviados" && m.enviado) || (filtro === "adjuntos" && m.archivos.length)) &&
+    (filtro === "todos" || (filtro === "noleidos" && noLeido(m)) || (filtro === "recibidos" && !m.enviado) || (filtro === "enviados" && m.enviado) || (filtro === "adjuntos" && m.archivos.length)) &&
     terms.every(t => m._idx.includes(t)));
 }
 
@@ -275,7 +307,7 @@ function fragmento(m, terms){
 function fila(m, terms = []){
   const quien = m.enviado ? "Para: " + (m.para[0] || "") : (m.de_nombre || m.de);
   const n = (HILOS[m.hilo] || []).length;
-  return `<button class="row" data-m="${esc(m.id)}" aria-current="${abierto === m.id}">
+  return `<button class="row${noLeido(m) ? " nl" : ""}" data-m="${esc(m.id)}" aria-current="${abierto === m.id}">
     <div class="r1"><span class="who">${resaltar(quien, terms)}</span><span class="when">${fmtL(m.fecha)}</span></div>
     <div class="subj">${resaltar(m.asunto, terms)}</div>
     <div class="snip">${fragmento(m, terms)}</div>
@@ -292,27 +324,44 @@ function pintarLista(){
   $("#split").classList.toggle("abierto", !!abierto);
 }
 
+let verTexto = false;
+const iniciales = t => (String(t || "?").replace(/[<>"]/g, "").trim().split(/[\s@.]+/).filter(Boolean).slice(0, 2).map(x => x[0]).join("") || "?").toUpperCase();
+const tono = t => { let h = 0; for (const c of String(t)) h = (h * 31 + c.charCodeAt(0)) % 360; return h; };
+const ext = n => (String(n).split(".").pop() || "").slice(0, 4).toUpperCase();
+const kb = b => b >= 1048576 ? (b / 1048576).toFixed(1) + " MB" : Math.max(1, Math.round((b || 0) / 1024)) + " KB";
+const BASE_HTML = `<base target="_blank"><style>html,body{margin:0;background:#fff;color:#1f2328}body{padding:18px 20px;font:14px/1.55 -apple-system,"Segoe UI",Roboto,Arial,sans-serif;overflow-wrap:anywhere}img{max-width:100%;height:auto}table{max-width:100%!important}blockquote{margin:8px 0 8px 4px;padding-left:12px;border-left:3px solid #d0d7de;color:#57606a}a{color:#0b57d0}</style>`;
+
 function pintarCorreo(){
   const m = MSGS.find(x => x.id === abierto);
   if (!m) { $("#read").innerHTML = `<p class="vacio">Elige un correo de la lista para leerlo.</p>`; return; }
   const terms = terminos(), hilo = HILOS[m.hilo] || [m], h = (D.hilos || {})[m.hilo] || {}, a = m.analisis || {};
   const legible = f => f.texto && !String(f.texto).startsWith("(");
-  $("#read").innerHTML = `<button class="back" data-back>← Volver a la lista</button>
-    <h2>${resaltar(m.asunto, terms)}</h2>
-    <dl class="meta"><dt>De</dt><dd>${esc(m.de_nombre || "")} &lt;${esc(m.de)}&gt;</dd>
-      <dt>Para</dt><dd>${esc(m.para.join(", "))}</dd>${m.cc.length ? `<dt>Cc</dt><dd>${esc(m.cc.join(", "))}</dd>` : ""}
-      <dt>Fecha</dt><dd>${fmtF(m.fecha)}</dd>${CUENTAS.length > 1 ? `<dt>Casilla</dt><dd>${esc(m.cuenta)}</dd>` : ""}</dl>
-    <div class="actions"><button class="btn" data-responder="uno">↩ Responder</button>${(m.cc.length || m.para.length > 1) ? '<button class="btn sec" data-responder="todos">↩ Responder a todos</button>' : ""}
-      <button class="btn sec" data-askthread="${esc(m.hilo)}">Preguntar sobre ${hilo.length > 1 ? "esta conversación" : "este correo"}</button></div>
+  const nombre = m.de_nombre || m.de, conHtml = !!m.html && !verTexto;
+  $("#read").innerHTML = `<div class="readbar"><button class="back" data-back>← Volver a la lista</button>
+      <div class="actions"><button class="btn" data-responder="uno">↩ Responder</button>${(m.cc.length || m.para.length > 1) ? '<button class="btn sec" data-responder="todos">↩ Responder a todos</button>' : ""}
+      <button class="btn sec" data-askthread="${esc(m.hilo)}">💬 Preguntar</button></div></div>
+    <h2 class="asunto">${resaltar(m.asunto, terms)}</h2>
+    <div class="remite">
+      <span class="avatar" style="--h:${tono(m.de)}">${esc(iniciales(nombre))}</span>
+      <div class="remite-txt"><div><strong>${resaltar(nombre, terms)}</strong> <span class="muted small">&lt;${esc(m.de)}&gt;</span></div>
+        <div class="muted small">Para: ${esc(m.para.join(", "))}${m.cc.length ? " · Cc: " + esc(m.cc.join(", ")) : ""}${CUENTAS.length > 1 ? " · Casilla: " + esc((m.cuenta || "").split("@")[0]) : ""}</div></div>
+      <div class="muted small fecha-msg">${fmtF(m.fecha)}</div>
+    </div>
+    ${m.archivos.length ? `<div class="adjs">${m.archivos.map((f, i) => `<button class="adj" data-adj="${i}" aria-expanded="${adjAbierto === i}"><span class="ext">${esc(ext(f.nombre))}</span><span class="adj-n">${esc(f.nombre)}</span><span class="muted">${kb(f.tamano)}</span></button>`).join("")}</div>
+      ${adjAbierto !== null && m.archivos[adjAbierto] ? `<div class="adj-texto"><div class="small muted">Texto de «${esc(m.archivos[adjAbierto].nombre)}»</div><pre>${legible(m.archivos[adjAbierto]) ? resaltar(m.archivos[adjAbierto].texto, terms) : "No se puede mostrar el texto de este archivo (foto u otro formato)."}</pre></div>` : ""}` : ""}
     ${borrador && borrador.id === m.id ? redactor() : ""}
-    ${h.resumen || a.resumen ? `<div class="resumen"><h3>${hilo.length > 1 ? "Resumen de la conversación" : "Resumen"}</h3><p>${esc(h.resumen || a.resumen)}</p>
+    ${h.resumen || a.resumen ? `<details class="resumen" ${hilo.length > 1 || a.accion ? "open" : ""}><summary><h3>✨ ${hilo.length > 1 ? "Resumen de la conversación" : "Resumen"}</h3></summary><p>${esc(h.resumen || a.resumen)}</p>
       ${(h.puntos_clave || []).length ? `<ul>${h.puntos_clave.map(x => `<li>${esc(x)}</li>`).join("")}</ul>` : ""}
-      ${a.accion && !m.enviado ? `<p class="small">👉 ${esc(a.accion)}</p>` : ""}</div>` : ""}
-    <div class="cuerpo">${resaltar(m.texto || m.vista_previa || "(sin contenido)", terms)}</div>
-    ${m.archivos.map(f => `<details class="file" ${terms.length && legible(f) && norm(f.texto).includes(terms[0]) ? "open" : ""}><summary>📎 ${esc(f.nombre)} <span class="muted">(${Math.max(1, Math.round((f.tamano || 0) / 1024))} KB)</span></summary>
-      <pre>${legible(f) ? resaltar(f.texto, terms) : "No se puede mostrar el texto de este archivo (foto u otro formato)."}</pre></details>`).join("")}
+      ${a.accion && !m.enviado ? `<p class="small">👉 ${esc(a.accion)}</p>` : ""}</details>` : ""}
+    <div class="hoja">${conHtml ? `<iframe class="correo-html" title="Contenido del correo" sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox" srcdoc="${esc(BASE_HTML + m.html)}"></iframe>`
+        : `<div class="cuerpo">${resaltar(m.texto || m.vista_previa || "(sin contenido)", terms)}</div>`}</div>
+    ${m.html ? `<button class="enlace small" data-vertexto>${verTexto ? "Ver con el formato original" : "Ver como texto simple" + (terms.length ? " (con lo buscado resaltado)" : "")}</button>` : ""}
     ${hilo.length > 1 ? `<h3>Conversación (${hilo.length} correos)</h3><div class="hilo">${[...hilo].reverse().map(x => fila(x)).join("")}</div>` : ""}`;
+  const fr = $("#read iframe.correo-html");
+  if (fr) fr.addEventListener("load", () => { try { const d = fr.contentDocument; fr.style.height = Math.max(120, d.documentElement.scrollHeight, d.body.scrollHeight) + 2 + "px";
+      d.querySelectorAll("a[href]").forEach(x => { x.target = "_blank"; x.rel = "noopener"; }); } catch(e) { fr.style.height = "70vh"; } });
 }
+let adjAbierto = null;
 
 /* ---------- responder ---------- */
 const PROPIOS = () => new Set((D.propios || []).map(x => x.toLowerCase()));
@@ -333,7 +382,8 @@ function redactor(){
     <label>Mensaje <textarea id="rTexto" placeholder="Escribe tu respuesta, o usa «Sugerir respuesta».">${esc(b.texto)}</textarea></label>
     <div class="actions">
       <button class="btn sec" data-r="sugerir" ${b.ocupado ? "disabled" : ""}>✨ Sugerir respuesta</button>
-      <button class="btn sec" data-r="revisar" ${b.ocupado || !b.texto.trim() ? "disabled" : ""}>🔍 Revisar</button>
+      <button class="btn sec" data-r="mejorar" ${b.ocupado || !b.texto.trim() ? "disabled" : ""}>✍️ Mejorar redacción</button>
+      <button class="btn sec" data-r="revisar" ${b.ocupado || !b.texto.trim() ? "disabled" : ""}>🔍 Revisar datos</button>
       <button class="btn" data-r="enviar" ${b.ocupado || !envio ? "disabled" : ""}>Enviar</button>
       <button class="btn sec" data-r="cancelar">Cancelar</button>
     </div>
@@ -362,6 +412,21 @@ async function sugerir(m){
       `Fecha de hoy: ${hoyISO()}.\nCONVERSACIÓN (el correo a responder es el más reciente; incluye la cadena citada y los adjuntos):\n${textoHilo(HILOS[m.hilo], 18000)}\n\n` +
       `Escribe la respuesta al correo de ${m.de_nombre || m.de} con asunto "${m.asunto}".` + (idea ? `\nNicolás quiere decir esto (respétalo y mejóralo): ${idea}` : ""));
     borrador.texto = t;
+  } catch (e) { borrador.obs = `<p>${esc(e.message)}</p>`; }
+  borrador.ocupado = ""; pintarCorreo();
+}
+
+async function mejorar(m){
+  leerBorrador(); if (!borrador.texto.trim()) return;
+  borrador.ocupado = "la IA está mejorando tu redacción…"; borrador.obs = null; pintarCorreo();
+  try {
+    const t = await groq(REGLAS_RESPUESTA + `
+Reescribe el BORRADOR de Nicolás para que se entienda claramente: buena redacción, ortografía y puntuación correctas, orden lógico y tono cordial y profesional.
+Mantén EXACTAMENTE la intención y todos los datos (montos, fechas, números, nombres, compromisos): no agregues información nueva ni quites ninguna.
+Mantén un largo parecido. Si falta saludo o despedida, agrégalos (firma «Nicolás»). Devuelve SOLO el texto reescrito, sin comentarios.`,
+      `Contexto (correo al que se responde, solo como referencia):\n${textoHilo(HILOS[m.hilo].slice(-1), 4000)}\n\nBORRADOR DE NICOLÁS:\n${borrador.texto}`);
+    borrador.anterior = borrador.texto; borrador.texto = t;
+    borrador.obs = '<span class="ok">✓ Texto mejorado.</span> <div class="actions"><button class="btn sec" data-r="deshacer">↶ Volver a mi versión</button></div>';
   } catch (e) { borrador.obs = `<p>${esc(e.message)}</p>`; }
   borrador.ocupado = ""; pintarCorreo();
 }
@@ -528,13 +593,17 @@ function irA(v){
   if (v === "preguntar") { pintarCtx(); $("#qAsk").focus(); }
 }
 document.addEventListener("click", ev => {
-  const t = ev.target.closest("[data-v],[data-m],[data-f],[data-cu],[data-back],[data-more],[data-askthread],[data-noctx],[data-sug],[data-responder],[data-r]");
+  const t = ev.target.closest("[data-v],[data-m],[data-f],[data-cu],[data-back],[data-more],[data-askthread],[data-noctx],[data-sug],[data-responder],[data-r],[data-adj],[data-vertexto]");
   if (!t) return;
+  if (t.dataset.adj !== undefined) { const i = +t.dataset.adj; leerBorrador(); adjAbierto = adjAbierto === i ? null : i; pintarCorreo(); return; }
+  if ("vertexto" in t.dataset) { leerBorrador(); verTexto = !verTexto; pintarCorreo(); return; }
   const m = MSGS.find(x => x.id === abierto);
   if (t.dataset.responder && m) { if (!borrador || borrador.id !== m.id) borrador = nuevoBorrador(m, t.dataset.responder === "todos"); pintarCorreo(); setTimeout(() => $("#rTexto") && $("#rTexto").focus(), 0); return; }
   if (t.dataset.r && m && borrador) {
     const a = t.dataset.r; leerBorrador();
     if (a === "sugerir") sugerir(m);
+    else if (a === "mejorar") mejorar(m);
+    else if (a === "deshacer") { borrador.texto = borrador.anterior || borrador.texto; borrador.anterior = ""; borrador.obs = null; pintarCorreo(); }
     else if (a === "revisar") revisar(m);
     else if (a === "usar") { borrador.texto = borrador.corregida || borrador.texto; borrador.obs = null; pintarCorreo(); }
     else if (a === "enviar") { if (!listaCorreos(borrador.para).length || !borrador.texto.trim()) { borrador.estado = "Falta el destinatario o el mensaje."; borrador.clase = "mal"; } else { borrador.confirmar = true; borrador.estado = ""; } pintarCorreo(); }
@@ -544,7 +613,7 @@ document.addEventListener("click", ev => {
     return;
   }
   if (t.dataset.v) irA(t.dataset.v);
-  else if (t.dataset.m) { abierto = t.dataset.m; pintarLista(); pintarCorreo(); if (innerWidth <= 860) scrollTo(0, 0); }
+  else if (t.dataset.m) { abierto = t.dataset.m; adjAbierto = null; verTexto = false; marcarLeido(abierto); pintarFiltros(); pintarLista(); pintarCorreo(); if (innerWidth <= 860) scrollTo(0, 0); }
   else if (t.dataset.f) { filtro = t.dataset.f; limite = 150; pintarFiltros(); pintarLista(); }
   else if ("cu" in t.dataset) { cuentaSel = t.dataset.cu; limite = 150; abierto = null; pintarFiltros(); pintarLista(); pintarCorreo(); irA("correos"); }
   else if ("back" in t.dataset) { const id = abierto; abierto = null; pintarLista(); pintarCorreo();
@@ -555,7 +624,7 @@ document.addEventListener("click", ev => {
   else if (t.dataset.sug) { $("#qAsk").value = t.dataset.sug; $("#formAsk").requestSubmit(); }
 });
 document.addEventListener("input", ev => { if (ev.target.closest(".compose")) { leerBorrador();
-  const rv = document.querySelector('[data-r="revisar"]'); if (rv && !borrador.ocupado) rv.disabled = !borrador.texto.trim(); } });
+  for (const k of ["revisar", "mejorar"]) { const b = document.querySelector(`[data-r="${k}"]`); if (b && !borrador.ocupado) b.disabled = !borrador.texto.trim(); } } });
 let tBusca;
 $("#busca").addEventListener("input", ev => { clearTimeout(tBusca); tBusca = setTimeout(() => { busca = ev.target.value.trim(); limite = 150; pintarLista(); pintarCorreo(); }, 150); });
 
@@ -566,6 +635,7 @@ async function entrar(clave, recordar){
   $("#bloqueo").hidden = true; $("#appwrap").hidden = false;
   construir(); irA("correos");
 }
+$("#salir").addEventListener("click", () => { ss.del("correo_clave"); location.reload(); });
 $("#formClave").addEventListener("submit", async ev => {
   ev.preventDefault(); const err = $("#errClave"); err.textContent = "Abriendo…";
   try { await entrar($("#clave").value, $("#recordar").checked); } catch(e) { err.textContent = "Contraseña incorrecta."; }

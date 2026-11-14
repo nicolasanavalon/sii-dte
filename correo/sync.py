@@ -212,7 +212,7 @@ def traer_nuevos(estado, clave):
 
 
 def _traer_casilla(z, account_id, direccion, estado, primera):
-    from zoho import direcciones, html_a_texto
+    from zoho import direcciones, html_a_texto, limpiar_html
 
     propios = set(estado["propios"])
     carpetas = z.carpetas(account_id)
@@ -233,7 +233,7 @@ def _traer_casilla(z, account_id, direccion, estado, primera):
     # Correos de esta casilla guardados antes de la versión 2, o con adjuntos que fallaron: se completan.
     viejos = {i for i, m in estado["mensajes"].items()
               if (m.get("cuenta_id") == account_id or (primera and not m.get("cuenta_id")))
-              and (m.get("v") != 2 or (m.get("intentos_adj", 0) < 3 and any(
+              and (m.get("v") != 2 or "html" not in m or (m.get("intentos_adj", 0) < 3 and any(
                   str(f.get("texto", "")).startswith("(no se pudo descargar") for f in m.get("archivos", []))))}
     inicio = int((time.time() - dias * 86400) * 1000)       # ventana de la primera importación
     if estado.get("relleno") is None:                       # (una vez) revisar huecos de importaciones cortadas
@@ -280,12 +280,19 @@ def _traer_casilla(z, account_id, direccion, estado, primera):
         mid = str(m["messageId"])
         fid = str(carpeta["folderId"])
         try:
-            texto = html_a_texto(z.contenido(account_id, fid, mid))
+            crudo = z.contenido(account_id, fid, mid)
+            texto, html = html_a_texto(crudo), limpiar_html(crudo)
         except Exception as e:
             print(f"::warning::No pude leer el contenido del correo {mid}: {e}")
-            texto = ""
+            texto, html = "", None
         tiene_adj = m.get("hasAttachment") in (True, "1", 1)
-        archivos = leer_archivos(z, account_id, fid, mid) if tiene_adj else []
+        previo_ok = estado["mensajes"].get(mid, {})
+        adj_ok = previo_ok.get("v") == 2 and not any(
+            str(f.get("texto", "")).startswith("(no se pudo descargar") for f in previo_ok.get("archivos", []))
+        if adj_ok:
+            archivos = previo_ok.get("archivos", [])     # solo faltaba el formato original: no se vuelven a bajar
+        else:
+            archivos = leer_archivos(z, account_id, fid, mid) if tiene_adj else []
         de = direcciones(m.get("fromAddress")) or [("", "")]
         de_nombre = (m.get("sender") or de[0][0] or "").strip()
         para = [a for _, a in direcciones(m.get("toAddress"))]
@@ -305,7 +312,8 @@ def _traer_casilla(z, account_id, direccion, estado, primera):
             "hilo": clave_hilo(str(m.get("threadId") or ""), asunto, contacto), "fecha": t,
             "de": de[0][1], "de_nombre": de_nombre, "para": para, "cc": cc, "asunto": asunto,
             "vista_previa": (m.get("summary") or "").strip(),
-            "texto": texto[:MAX_TEXTO_GUARDADO], "adjuntos": bool(tiene_adj), "archivos": archivos,
+            "texto": texto[:MAX_TEXTO_GUARDADO], "html": html, "adjuntos": bool(tiene_adj), "archivos": archivos,
+            "no_leido": previo.get("no_leido", False),
             "enviado": bool(enviado), "contacto": contacto,
             "analisis": previo.get("analisis"), "en_db": False,
             "intentos_adj": previo.get("intentos_adj", 0) + (1 if previo else 0),
@@ -317,6 +325,20 @@ def _traer_casilla(z, account_id, direccion, estado, primera):
             nuevos.append(msg)
         ultimos[account_id] = max(ultimos.get(account_id, 0), t)
         estado["ultimo_ms"] = max(estado["ultimo_ms"], t)
+    # Estado "no leído" igual que en Zoho (solo bandeja de entrada).
+    try:
+        sin_leer = set()
+        for carpeta, enviados in elegidas:
+            if not enviados:
+                sin_leer |= z.no_leidos(account_id, carpeta["folderId"])
+        for i, m in estado["mensajes"].items():
+            if m.get("cuenta_id") == account_id or (primera and not m.get("cuenta_id")):
+                nuevo = (i in sin_leer) and not m.get("enviado")
+                if bool(m.get("no_leido")) != nuevo:
+                    m["no_leido"] = nuevo
+                    estado["_cambio_leidos"] = True
+    except Exception as e:
+        print(f"::warning::No pude leer qué correos están sin leer: {str(e)[:200]}")
     return nuevos, len(candidatos) - len(nuevos)
 
 
@@ -699,7 +721,8 @@ def main():
     if "--preparar" in sys.argv:
         i = sys.argv.index("--preparar")
         preparar_turno(estado, clave, sys.argv[i + 1], sys.argv[i + 2])
-    cambio = bool(nuevos or completados or analizados or estado.pop("_hilos_actualizados", 0)) or not estado["ultima_sync"]
+    cambio = bool(nuevos or completados or analizados or estado.pop("_hilos_actualizados", 0)
+                  or estado.pop("_cambio_leidos", False)) or not estado["ultima_sync"]
     estado["ultima_sync"] = datetime.now(TZ).strftime("%Y-%m-%d %H:%M")
     recortar(estado)
     avisar(estado, analizados)

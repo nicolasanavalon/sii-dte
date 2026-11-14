@@ -137,9 +137,20 @@ class Zoho:
     def carpetas(self, account_id):
         return self.get(f"/accounts/{account_id}/folders")["data"]
 
-    def listar(self, account_id, folder_id, start=1, limit=100):
-        return self.get(f"/accounts/{account_id}/messages/view", folderId=folder_id,
+    def listar(self, account_id, folder_id, start=1, limit=100, status=None):
+        return self.get(f"/accounts/{account_id}/messages/view", folderId=folder_id, status=status,
                         start=start, limit=limit, sortorder="false", includeto="true").get("data", [])
+
+    def no_leidos(self, account_id, folder_id, maximo=2000):
+        """Ids de los correos que en Zoho siguen sin leer en esa carpeta."""
+        ids, start = set(), 1
+        while start <= maximo:
+            pagina = self.listar(account_id, folder_id, start=start, limit=200, status="unread")
+            ids |= {str(m["messageId"]) for m in pagina}
+            if len(pagina) < 200:
+                break
+            start += 200
+        return ids
 
     def contenido(self, account_id, folder_id, message_id):
         """HTML del correo INCLUYENDO la cadena citada (historial de respuestas/reenvíos)."""
@@ -196,6 +207,20 @@ def html_a_texto(contenido: str) -> str:
     texto = re.sub(r"[ \t]+", " ", texto)
     texto = re.sub(r"\n\s*\n\s*\n+", "\n\n", texto)
     return texto.strip()
+
+
+MAX_HTML = 250_000
+
+
+def limpiar_html(contenido: str):
+    """HTML del correo listo para mostrarse aislado (sin scripts, formularios ni eventos). None si es muy grande."""
+    if not contenido:
+        return None
+    h = re.sub(r"(?is)<(script|iframe|object|embed|noscript)\b[^>]*>.*?</\1\s*>", "", contenido)
+    h = re.sub(r"(?is)</?(script|iframe|object|embed|form|meta|base|link|noscript)\b[^>]*>", "", h)
+    h = re.sub(r"(?i)\s+on[a-z]+\s*=\s*(\"[^\"]*\"|'[^']*'|[^\s>]+)", "", h)
+    h = re.sub(r"(?i)(href|src)\s*=\s*([\"']?)\s*javascript:[^\"'>\s]*\2", r"\1=\2#\2", h)
+    return h if len(h) <= MAX_HTML else None
 
 
 def direcciones(campo) -> list:
