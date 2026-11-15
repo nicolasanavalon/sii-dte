@@ -169,6 +169,8 @@ header{display:flex; flex-wrap:wrap; align-items:center; justify-content:space-b
 .xls thead th{position:sticky; top:0; z-index:2; height:20px}
 .xls tbody th{position:sticky; left:0; z-index:1}
 .xls th.esq{left:0; z-index:3}
+.xls-lienzo{position:relative; width:max-content}
+.xls-img{position:absolute; pointer-events:none; object-fit:fill}
 .zoom-xls{display:flex; gap:6px; align-items:center; margin:6px 0 0}
 .zoom-xls button{min-width:36px}
 .visor-doc{display:block; width:100%; height:75vh; border:1px solid var(--line); border-radius:6px; background:#fff; margin:6px 0}
@@ -524,6 +526,7 @@ function pintarCorreo(){
         : `<div class="cuerpo">${resaltar(m.texto || m.vista_previa || "(sin contenido)", terms)}</div>`}</div>
     ${m.html ? `<button class="enlace small" data-vertexto>${verTexto ? "Ver con el formato original" : "Ver como texto simple" + (terms.length ? " (con lo buscado resaltado)" : "")}</button>` : ""}
     ${hilo.length > 1 ? `<h3>Conversación (${hilo.length} correos)</h3><div class="hilo">${[...hilo].reverse().map(x => fila(x)).join("")}</div>` : ""}`;
+  if (document.querySelector(".xls-img")) requestAnimationFrame(posicionarImagenes);
   const fr = $("#read iframe.correo-html");
   if (fr) fr.addEventListener("load", () => { try { const d = fr.contentDocument; fr.style.height = Math.max(120, d.documentElement.scrollHeight, d.body.scrollHeight) + 2 + "px";
       d.querySelectorAll("a[href]").forEach(x => { x.target = "_blank"; x.rel = "noopener"; }); } catch(e) { fr.style.height = "70vh"; } });
@@ -552,7 +555,60 @@ function cargarExcelJS(){
     sc.onload = () => ok(window.ExcelJS); sc.onerror = () => { _exceljs = null; mal(new Error("No se pudo cargar el lector de Excel; usa Descargar.")); };
     document.head.appendChild(sc); });
 }
+// Respaldo: algunos programas guardan rutas internas absolutas ("/xl/…") que ExcelJS no entiende; se pasan a relativas.
+let _jszip = null;
+function cargarJSZip(){
+  return _jszip ||= new Promise((ok, mal) => { const sc = document.createElement("script");
+    sc.src = "https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js";
+    sc.onload = () => ok(window.JSZip); sc.onerror = () => { _jszip = null; mal(new Error("sin JSZip")); }; document.head.appendChild(sc); });
+}
+// Lectura directa del .xlsx (es un zip): imágenes de cada hoja y, si hace falta, una copia sin dibujos.
+const rutaZip = (dir, t) => { if (t.startsWith("/")) return t.slice(1); const p = dir ? dir.split("/") : [];
+  for (const x of t.split("/")) { if (x === "..") p.pop(); else if (x && x !== ".") p.push(x); } return p.join("/"); };
+const xmlDe = async (zip, ruta) => { const f = zip.file(ruta); return f ? new DOMParser().parseFromString(await f.async("string"), "application/xml") : null; };
+const porNombre = (nodo, nombre) => [...nodo.getElementsByTagName("*")].filter(e => e.localName === nombre);
+const relsDe = async (zip, ruta) => {   // {id: {tipo, destino}} de la parte "ruta"
+  const dir = ruta.split("/").slice(0, -1).join("/"), x = await xmlDe(zip, (dir ? dir + "/" : "") + "_rels/" + ruta.split("/").pop() + ".rels"), out = {};
+  if (x) for (const r of porNombre(x, "Relationship")) out[r.getAttribute("Id")] = {tipo: r.getAttribute("Type") || "", destino: rutaZip(dir, r.getAttribute("Target") || "")};
+  return out;
+};
+async function imagenesXlsx(zip){   // {nombreHoja: [{src, c, co, f, fo, c2…/w…}]}
+  const out = {}, wbx = await xmlDe(zip, "xl/workbook.xml"); if (!wbx) return out;
+  const wrels = await relsDe(zip, "xl/workbook.xml");
+  for (const h of porNombre(wbx, "sheet")) {
+    const rid = [...h.attributes].find(a => a.localName === "id"), hoja = rid && wrels[rid.value]; if (!hoja) continue;
+    const srels = await relsDe(zip, hoja.destino), lista = [];
+    for (const d of Object.values(srels).filter(r => /\/drawing$/.test(r.tipo))) {
+      const dx = await xmlDe(zip, d.destino); if (!dx) continue;
+      const drels = await relsDe(zip, d.destino);
+      for (const an of porNombre(dx, "twoCellAnchor").concat(porNombre(dx, "oneCellAnchor"))) {
+        const blip = porNombre(an, "blip")[0], emb = blip && [...blip.attributes].find(a => a.localName === "embed");
+        const media = emb && drels[emb.value] && zip.file(drels[emb.value].destino); if (!media) continue;
+        const num = (n, k) => +((porNombre(n, k)[0] || {}).textContent || 0);
+        const de = porNombre(an, "from")[0], a = porNombre(an, "to")[0], ext = porNombre(an, "ext")[0];
+        const ext2 = (drels[emb.value].destino.split(".").pop() || "png").toLowerCase().replace("jpg", "jpeg");
+        const img = {src: `data:image/${ext2};base64,${await media.async("base64")}`, c: num(de, "col"), co: num(de, "colOff") / 9525, f: num(de, "row"), fo: num(de, "rowOff") / 9525};
+        if (a) Object.assign(img, {c2: num(a, "col"), c2o: num(a, "colOff") / 9525, f2: num(a, "row"), f2o: num(a, "rowOff") / 9525});
+        else if (ext) Object.assign(img, {w: Math.round(+ext.getAttribute("cx") / 9525), h: Math.round(+ext.getAttribute("cy") / 9525)});
+        lista.push(img);
+      }
+    }
+    out[h.getAttribute("name")] = lista;
+  }
+  return out;
+}
+async function xlsxSinDibujos(zip){   // copia sin dibujos, para cuando ExcelJS no entiende el formato de las imágenes
+  for (const n of Object.keys(zip.files)) {
+    if (/^xl\/worksheets\/_rels\/.+\.rels$/.test(n)) zip.file(n, (await zip.file(n).async("string")).replace(/<Relationship\b[^>]*\/drawing"[^>]*\/>/g, ""));
+    else if (/^xl\/worksheets\/[^/]+\.xml$/.test(n)) zip.file(n, (await zip.file(n).async("string")).replace(/<(\w+:)?drawing\b[^>]*\/>/g, ""));
+    else if (/^xl\/drawings\//.test(n)) zip.remove(n);
+  }
+  return new Uint8Array(await zip.generateAsync({type: "uint8array"}));
+}
 const MAX_FILAS_XLS = 500, MAX_COLS_XLS = 40;
+// En el celular la planilla parte ajustada al ancho de la pantalla (como Zoho); en el computador, a tamaño real.
+const zoomInicial = h => { if (!h || !h.ancho) return 1; const disp = Math.min(innerWidth, 1400) - (innerWidth <= 860 ? 70 : 520);
+  return Math.max(0.4, Math.min(1, Math.round(disp / h.ancho * 20) / 20)); };
 const letraCol = n => { let s = ""; for (n++; n > 0; n = Math.floor((n - 1) / 26)) s = String.fromCharCode(65 + (n - 1) % 26) + s; return s; };
 // Colores "AARRGGBB" (Excel no usa la transparencia AA) o "RRGGBB"; los colores de tema no traen código y se omiten.
 const colorArgb = c => !c || !c.argb ? "" : /^[0-9A-F]{8}$/i.test(c.argb) ? "#" + c.argb.slice(2) : /^[0-9A-F]{6}$/i.test(c.argb) ? "#" + c.argb : "";
@@ -572,7 +628,7 @@ function textoCelda(v, fmt){
   }
   return String(v);
 }
-function dibujarHoja(m){   // m = {cols:[px], filas:[{h, celdas:[{t, est, num}]}], combinadas:[[f1,c1,f2,c2]], corte}
+function dibujarHoja(m){   // m = {cols:[px], filas:[{h, celdas:[{t, est, num}]}], combinadas:[[f1,c1,f2,c2]], imagenes:[…], corte}
   const tapado = new Set(), span = {};
   for (const [f1, c1, f2, c2] of m.combinadas) {
     span[f1 + ":" + c1] = [f2 - f1 + 1, c2 - c1 + 1];
@@ -585,14 +641,16 @@ function dibujarHoja(m){   // m = {cols:[px], filas:[{h, celdas:[{t, est, num}]}
     for (let c = 0; c < m.cols.length; c++) {
       if (tapado.has(f + ":" + c)) continue;
       const x = fila.celdas[c] || {}, sp = span[f + ":" + c];
-      h += `<td${sp ? ` rowspan="${sp[0]}" colspan="${sp[1]}"` : ""}${x.est ? ` style="${x.est}"` : ""}${x.num ? ' class="n"' : ""}>${esc(x.t || "")}</td>`;
+      h += `<td${sp ? ` rowspan="${sp[0]}" colspan="${sp[1]}"` : ""}${x.est ? ` style="${esc(x.est)}"` : ""}${x.num ? ' class="n"' : ""}>${esc(x.t || "")}</td>`;
     }
     h += "</tr>";
   });
-  return h + "</tbody></table>" + (m.corte ? `<p class="small muted" style="padding:6px 8px">Se muestran las primeras ${MAX_FILAS_XLS} filas; descarga el archivo para verlo completo.</p>` : "");
+  const imgs = (m.imagenes || []).map(i => `<img class="xls-img" alt="" src="${i.src}" data-c="${i.c}" data-co="${i.co}" data-f="${i.f}" data-fo="${i.fo}"${i.c2 != null ? ` data-c2="${i.c2}" data-c2o="${i.c2o}" data-f2="${i.f2}" data-f2o="${i.f2o}"` : ""}${i.w ? ` data-w="${i.w}" data-h="${i.h}"` : ""}>`).join("");
+  return `<div class="xls-lienzo">` + h + "</tbody></table>" + imgs + "</div>" + (m.corte ? `<p class="small muted" style="padding:6px 8px">Se muestran las primeras ${MAX_FILAS_XLS} filas; descarga el archivo para verlo completo.</p>` : "");
 }
 function estiloCelda(c){
   const e = [], f = c.font || {}, a = c.alignment || {}, fill = c.fill || {}, b = c.border || {};
+  if (f.name && /^[\w .-]+$/.test(f.name)) e.push(`font-family:'${f.name}', ${/times|georgia|garamond|cambria|serif/i.test(f.name) ? "Georgia, serif" : "Arial, sans-serif"}`);
   if (f.bold) e.push("font-weight:700"); if (f.italic) e.push("font-style:italic"); if (f.underline) e.push("text-decoration:underline");
   if (f.size && f.size !== 11) e.push(`font-size:${Math.round(f.size * 1.2)}px`);
   const fc = colorArgb(f.color); if (fc && fc.toUpperCase() !== "#000000") e.push("color:" + fc);
@@ -607,26 +665,47 @@ function estiloCelda(c){
   }
   return e.join(";");
 }
+function posicionarImagenes(){
+  for (const lz of document.querySelectorAll(".xls-lienzo")) {
+    const ths = lz.querySelectorAll("thead th"), filas = lz.querySelectorAll("tbody tr"), t = lz.querySelector("table");
+    const x = c => c + 1 < ths.length ? ths[c + 1].offsetLeft : t.offsetWidth;
+    const y = f => f < filas.length ? filas[f].offsetTop : t.offsetHeight;
+    for (const im of lz.querySelectorAll(".xls-img")) {
+      const d = im.dataset, l = x(+d.c) + +d.co, tp = y(+d.f) + +d.fo;
+      im.style.left = l + "px"; im.style.top = tp + "px";
+      if (d.c2 != null) { im.style.width = Math.max(8, x(+d.c2) + +d.c2o - l) + "px"; im.style.height = Math.max(8, y(+d.f2) + +d.f2o - tp) + "px"; }
+      else if (d.w) { im.style.width = d.w + "px"; im.style.height = d.h + "px"; }
+    }
+  }
+}
 async function hojasExcel(blob, nombre){
   const datos = new Uint8Array(await blob.arrayBuffer());
   if (/\.xlsx$|\.xlsm$/i.test(nombre || "")) {
     try {
-      const EJ = await cargarExcelJS(), wb = new EJ.Workbook();
-      await wb.xlsx.load(datos.buffer);
+      const [EJ, X, JZ] = await Promise.all([cargarExcelJS(), cargarXLSX().catch(() => null), cargarJSZip().catch(() => null)]);
+      const zip = JZ ? await JZ.loadAsync(datos) : null, imgsPorHoja = zip ? await imagenesXlsx(zip).catch(() => ({})) : {};
+      let wb = new EJ.Workbook();
+      try { await wb.xlsx.load(datos.buffer.slice(0)); }
+      catch(e) { if (!zip) throw e; wb = new EJ.Workbook(); await wb.xlsx.load((await xlsxSinDibujos(zip)).buffer); }
+      const sj = X ? X.read(datos, {type: "array", cellDates: false}) : null;   // textos tal como los muestra Excel
       const hojas = [];
       wb.eachSheet(ws => {
         if (ws.state && ws.state !== "visible") return;
         const nf = Math.min(ws.rowCount || 0, MAX_FILAS_XLS), nc = Math.min(ws.columnCount || 0, MAX_COLS_XLS);
         if (!nf || !nc) { hojas.push({nombre: ws.name, html: '<p class="small muted" style="padding:8px">Hoja vacía.</p>'}); return; }
         const cols = [...Array(nc)].map((_, c) => Math.round(((ws.getColumn(c + 1).width || 8.43) * 7) + 5));
+        const hs = sj && sj.Sheets[ws.name];
         const filas = [...Array(nf)].map((_, f) => {
           const r = ws.getRow(f + 1);
           return {h: Math.max(18, Math.round((r.height || 15) * 4 / 3)), celdas: [...Array(nc)].map((_, c) => {
-            const cel = r.getCell(c + 1), v = cel.value;
-            const num = typeof v === "number" || (v && typeof v === "object" && typeof v.result === "number");
-            return {t: textoCelda(v, cel.numFmt), est: estiloCelda(cel), num};
+            const cel = r.getCell(c + 1), v = cel.value, s1 = hs && hs[X.utils.encode_cell({r: f, c})];
+            const num = s1 ? s1.t === "n" : typeof v === "number" || (v && typeof v === "object" && typeof v.result === "number");
+            let t = s1 ? (s1.w != null ? s1.w : String(s1.v ?? "")) : textoCelda(v, cel.numFmt);
+            if (/Invalid Date/.test(t)) t = "";
+            return {t, est: estiloCelda(cel), num};
           })};
         });
+        const imagenes = (imgsPorHoja[ws.name] || []).filter(im => im.f < nf && im.c < nc);
         const combinadas = [];
         for (const rango of ((ws.model || {}).merges || [])) {
           const m = /^([A-Z]+)(\d+):([A-Z]+)(\d+)$/.exec(rango); if (!m) continue;
@@ -634,10 +713,11 @@ async function hojasExcel(blob, nombre){
           const f1 = +m[2] - 1, c1 = col(m[1]), f2 = Math.min(+m[4] - 1, nf - 1), c2 = Math.min(col(m[3]), nc - 1);
           if (f1 < nf && c1 < nc && (f2 > f1 || c2 > c1)) combinadas.push([f1, c1, f2, c2]);
         }
-        hojas.push({nombre: ws.name, html: dibujarHoja({cols, filas, combinadas, corte: (ws.rowCount || 0) > MAX_FILAS_XLS})});
+        hojas.push({nombre: ws.name, ancho: 38 + cols.reduce((a, b) => a + b, 0),
+                    html: dibujarHoja({cols, filas, combinadas, imagenes, corte: (ws.rowCount || 0) > MAX_FILAS_XLS})});
       });
       if (hojas.length) return hojas;
-    } catch(e) { /* si falla, se intenta sin formato */ }
+    } catch(e) { console.warn("Excel con formato falló:", e); }   // si falla, se intenta sin formato
   }
   const X = await cargarXLSX();
   const wb = X.read(datos, {type: "array", cellDates: true});
@@ -650,7 +730,7 @@ async function hojasExcel(blob, nombre){
       const cel = ws[X.utils.encode_cell({r: f, c})]; return cel ? {t: cel.w != null ? cel.w : textoCelda(cel.v), num: cel.t === "n"} : {};
     })}));
     const combinadas = (ws["!merges"] || []).map(m => [m.s.r, m.s.c, Math.min(m.e.r, nf - 1), Math.min(m.e.c, nc - 1)]).filter(([a, b]) => a < nf && b < nc);
-    return {nombre, html: dibujarHoja({cols, filas, combinadas, corte: r.e.r + 1 > MAX_FILAS_XLS})};
+    return {nombre, ancho: 38 + cols.reduce((a, b) => a + b, 0), html: dibujarHoja({cols, filas, combinadas, corte: r.e.r + 1 > MAX_FILAS_XLS})};
   });
 }
 
@@ -680,13 +760,13 @@ async function archivo(f){
 
 async function abrirAdjunto(m, i, ver){
   const f = m.archivos[i];
-  if (visor.url && visor.ref === f.ref) { if (ver) { visor.ver = true; if (esPlanilla(f.nombre) && !visor.hojas) { visor.hojas = await hojasExcel(await (await fetch(visor.url)).blob(), f.nombre).catch(() => null); visor.hoja = 0; visor.zoom = innerWidth <= 600 ? 0.8 : 1; } pintarCorreo(); } else descargar(visor.url, f.nombre); return; }
+  if (visor.url && visor.ref === f.ref) { if (ver) { visor.ver = true; if (esPlanilla(f.nombre) && !visor.hojas) { visor.hojas = await hojasExcel(await (await fetch(visor.url)).blob(), f.nombre).catch(() => null); visor.hoja = 0; visor.zoom = zoomInicial((visor.hojas || [])[0]); } pintarCorreo(); } else descargar(visor.url, f.nombre); return; }
   if (visor.url) URL.revokeObjectURL(visor.url);
   visor = {ref: f.ref, cargando: true}; pintarCorreo();
   try {
     const blob = await archivo(f);
     visor = {ref: f.ref, url: URL.createObjectURL(blob), tipo: blob.type, ver};
-    if (esPlanilla(f.nombre)) try { visor.hojas = await hojasExcel(blob, f.nombre); visor.hoja = 0; visor.zoom = innerWidth <= 600 ? 0.8 : 1; }
+    if (esPlanilla(f.nombre)) try { visor.hojas = await hojasExcel(blob, f.nombre); visor.hoja = 0; visor.zoom = zoomInicial(visor.hojas[0]); }
       catch (e) { visor.hojas = [{nombre: "", html: `<p class="small" style="color:var(--alta)">No pude mostrar esta planilla (${esc(e.message)}). Usa “Descargar / abrir”.</p>`}]; }
     if (!ver) descargar(visor.url, f.nombre);
   } catch (e) { visor = {ref: f.ref, error: e.message}; }
