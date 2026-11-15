@@ -56,4 +56,6 @@ jobs:
           ZOHO_TALLER_CLIENT_ID: ${{ secrets.ZOHO_TALLER_CLIENT_ID }}
           ZOHO_TALLER_CLIENT_SECRET: ${{ secrets.ZOHO_TALLER_CLIENT_SECRET }}
           ZOHO_DC: ${{ vars.ZOHO_DC }}
+          GMAIL_CORREO: ${{ secrets.GMAIL_CORREO }}
+          GMAIL_CLAVE: ${{ secrets.GMAIL_CLAVE }}
         run: python correo/enviar.py

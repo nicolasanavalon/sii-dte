@@ -241,6 +241,14 @@ def traer_nuevos(estado, clave):
             n, c = _traer_casilla(z, acc_id, principal, estado, primera=(n_casillas == 1))
             nuevos += n
             completados += c
+    if env("GMAIL_CORREO") and env("GMAIL_CLAVE"):
+        try:
+            n, c = _traer_gmail(estado)
+            nuevos += n
+            completados += c
+            n_casillas += 1
+        except Exception as e:
+            print(f"::warning::Gmail: {str(e)[:300]}")
     if ADJ_DIR and Path(ADJ_DIR).is_dir():
         vigentes = {f.get("ref") for m in estado["mensajes"].values() for f in m.get("archivos", []) if f.get("ref")}
         for archivo in Path(ADJ_DIR).glob("*.bin"):
@@ -249,6 +257,102 @@ def traer_nuevos(estado, clave):
     print(f"Zoho: {n_casillas} casilla(s) leída(s); {len(nuevos)} correos nuevos"
           + (f", {completados} antiguos completados con cadena y adjuntos." if completados else "."))
     return nuevos, completados
+
+
+def _traer_gmail(estado):
+    """La casilla de Gmail (IMAP): mismos datos que una casilla de Zoho, con id "g<id de Gmail>"."""
+    import gmail as G
+    from extraer import texto_de
+    from zoho import html_a_texto, limpiar_html
+    correo = env("GMAIL_CORREO").lower()
+    g = _ZOHO.get("gmail") or _ZOHO.setdefault("gmail", G.Gmail(correo, env("GMAIL_CLAVE")))
+    acc = "gmail:" + correo
+    estado["propios"] = sorted(set(estado.get("propios", [])) | {correo})
+    if correo not in estado.setdefault("cuentas", []):
+        estado["cuentas"].append(correo)
+    estado.setdefault("etiquetas", {})[correo] = env("GMAIL_ETIQUETA", "Gmail")
+    estado.setdefault("cuentas_ids", {})[correo] = acc
+    propios = set(estado["propios"])
+
+    inicio = int((time.time() - int(env("CORREO_DIAS_INICIALES", "30")) * 86400) * 1000)
+    ultimos, relleno = estado.setdefault("ultimo_por_cuenta", {}), estado.setdefault("relleno", {})
+    relleno.setdefault(acc, True)
+    tope = int(env("CORREO_MAX_POR_CORRIDA", "150"))
+    if RAPIDO and ultimos.get(acc) and not relleno.get(acc):
+        tope = 40
+    carpetas = [("INBOX", False)] + ([(g.carpeta_enviados(), True)] if g.carpeta_enviados() else [])
+    candidatos, sin_leer = [], set()
+    for carpeta, enviados in carpetas:
+        for uid, gid, th, ms, nl in g.listar(carpeta, inicio):
+            mid = "g" + gid
+            if nl and not enviados:
+                sin_leer.add(mid)
+            if mid not in estado["mensajes"] and ms >= inicio:
+                candidatos.append((carpeta, enviados, uid, gid, th, ms))
+    candidatos.sort(key=lambda x: x[5])
+    if len(candidatos) > tope:
+        candidatos, relleno[acc] = candidatos[-tope:], True
+    else:
+        relleno[acc] = False
+    promo = g.promociones("INBOX", inicio) if any(not c[1] for c in candidatos) else set()
+
+    nuevos = []
+    for carpeta, enviados_carpeta, uid, gid, th, ms in candidatos:
+        mid = "g" + gid
+        try:
+            msg = g.mensaje(carpeta, uid)
+        except Exception as e:
+            print(f"::warning::Gmail: no pude leer un correo: {str(e)[:200]}")
+            continue
+        texto, html, adjuntos = G.partes(msg)
+        texto = texto or html_a_texto(html)
+        archivos = []
+        for i, (nombre, datos) in enumerate(adjuntos[:10]):
+            ref = None
+            try:
+                contenido = texto_de(nombre, datos) if len(datos) <= 12 * 1024 * 1024 else ""
+                if ADJ_DIR and datos and len(datos) <= 12 * 1024 * 1024:
+                    ref = ref_adjunto(mid, str(i))
+                    Path(ADJ_DIR).mkdir(parents=True, exist_ok=True)
+                    (Path(ADJ_DIR) / f"{ref}.bin").write_bytes(cripto.cifrar_bytes(datos, env("CORREO_CLAVE")))
+            except Exception as e:
+                contenido = f"(no se pudo leer: {type(e).__name__})"
+            archivos.append({"nombre": nombre, "tamano": len(datos), "texto": contenido, "ref": ref})
+        de = G.direcciones(msg["From"]) or [("", "")]
+        para = [a for _, a in G.direcciones(msg["To"])]
+        cc = [a for _, a in G.direcciones(msg["Cc"])]
+        enviado = enviados_carpeta or de[0][1].lower() in propios
+        if enviado:
+            otros = [a for a in para + cc if a.lower() not in propios]
+            contacto = otros[0] if otros else (para[0] if para else de[0][1])
+        else:
+            contacto = de[0][1]
+        contacto = (contacto or "(desconocido)").lower()
+        asunto = (G._dec(msg["Subject"]) or "(sin asunto)").strip()
+        t = G.fecha_ms(msg, ms)
+        m = {"v": 2, "id": mid, "cuenta_id": acc, "cuenta": correo, "carpeta": carpeta, "thread_zoho": th,
+             "hilo": clave_hilo(th, asunto, contacto), "fecha": t, "de": de[0][1], "de_nombre": de[0][0],
+             "para": para, "cc": cc, "asunto": asunto, "vista_previa": re.sub(r"\s+", " ", texto)[:200].strip(),
+             "texto": texto[:MAX_TEXTO_GUARDADO], "html": limpiar_html(html) if html else None,
+             "adjuntos": bool(archivos), "archivos": archivos, "no_leido": mid in sin_leer, "enviado": bool(enviado),
+             "contacto": contacto, "analisis": None, "en_db": False, "intentos_adj": 0, "intentos_archivo": 0,
+             "message_id": str(msg["Message-ID"] or ""), "referencias": str(msg["References"] or "")[-1500:]}
+        if not enviado and uid in promo and carpeta == "INBOX":
+            m["boletin"], m["carpeta_nombre"] = True, "Promociones"
+        if not enviado and de[0][0]:
+            m["nombre_contacto"] = de[0][0]
+        estado["mensajes"][mid] = m
+        nuevos.append(m)
+        ultimos[acc] = max(ultimos.get(acc, 0), t)
+    for i, m in estado["mensajes"].items():
+        if m.get("cuenta_id") == acc:
+            nl = (i in sin_leer) and not m.get("enviado")
+            if bool(m.get("no_leido")) != nl:
+                m["no_leido"] = nl
+                estado["_cambio_leidos"] = True
+    if nuevos:
+        print(f"Gmail: {len(nuevos)} correos nuevos.")
+    return nuevos, 0
 
 
 def _traer_casilla(z, account_id, direccion, estado, primera):

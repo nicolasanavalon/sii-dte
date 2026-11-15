@@ -46,6 +46,8 @@ def main():
         propios = archivos_adjuntados(p.get("adj_nuevos"), clave)   # archivos que adjuntaste en la página
     except Exception as e:
         sys.exit(f"❌ No pude recuperar los archivos adjuntados: {str(e)[:300]}")
+    if str(p.get("cuenta_id", "")).startswith("gmail:"):
+        return enviar_gmail(p, modo, para, cc, asunto, texto, propios)
     for nombre, cid, sec, rt in sync.conexiones(clave):
         z = Zoho(cid, sec, rt)
         try:
@@ -71,6 +73,28 @@ def main():
                       + (f" y {len(cc)} en copia" if cc else "") + (f", con {len(adjuntos)} adjunto(s)." if adjuntos else "."))
                 return
     sys.exit("❌ No encontré la casilla de Zoho de ese correo.")
+
+
+def _gmail():
+    import gmail
+    if not (sync.env("GMAIL_CORREO") and sync.env("GMAIL_CLAVE")):
+        sys.exit("❌ Falta configurar Gmail (secretos GMAIL_CORREO y GMAIL_CLAVE).")
+    return gmail, gmail.Gmail(sync.env("GMAIL_CORREO"), sync.env("GMAIL_CLAVE"))
+
+
+def enviar_gmail(p, modo, para, cc, asunto, texto, adjuntos):
+    G, g = _gmail()
+    adjuntos = list(adjuntos)
+    try:
+        if modo == "reenviar" and p.get("con_adjuntos") and str(p.get("message_id", "")).startswith("g"):
+            adjuntos += G.partes(g.mensaje_por_id(str(p["message_id"])[1:]))[2][:10]
+        responde = p.get("mid_cabecera") if modo == "responder" else None
+        g.enviar(para, cc, asunto, texto, adjuntos, responde_a=responde, referencias=p.get("referencias") or None)
+    except G.GmailError as e:
+        sys.exit(f"❌ {e}")
+    que = {"responder": "Respuesta enviada", "nuevo": "Correo enviado", "reenviar": "Correo reenviado"}[modo]
+    print(f"✅ {que} desde Gmail a {len(para)} destinatario(s)" + (f" y {len(cc)} en copia" if cc else "")
+          + (f", con {len(adjuntos)} adjunto(s)." if adjuntos else "."))
 
 
 def _gh(url, crudo=False):
@@ -135,6 +159,15 @@ def marcar_leidos(p, clave):
         return {str(k): [str(x) for x in v][:500] for k, v in (p.get(clave_ids) or {}).items() if isinstance(v, list)}
     pedidos, pedidos_no = lista("ids"), lista("ids_no")
     hechos, hechos_no, fallas = 0, 0, []
+    gm = [k for k in set(pedidos) | set(pedidos_no) if k.startswith("gmail:")]
+    if gm:
+        try:
+            _, g = _gmail()
+            for k in gm:
+                hechos += g.marcar([x[1:] for x in pedidos.pop(k, []) if x.startswith("g")], leidos=True)
+                hechos_no += g.marcar([x[1:] for x in pedidos_no.pop(k, []) if x.startswith("g")], leidos=False)
+        except Exception as e:
+            fallas.append(f"Gmail: {str(e)[:200]}")
     for nombre, cid, sec, rt in sync.conexiones(clave):
         z = Zoho(cid, sec, rt)
         try:
