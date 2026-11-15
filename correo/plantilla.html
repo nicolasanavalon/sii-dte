@@ -992,13 +992,13 @@ function contextoGeneral(q){
 const MODELOS_QA = ["openai/gpt-oss-120b", "llama-3.3-70b-versatile", "openai/gpt-oss-20b", "llama-3.1-8b-instant"];
 // IA gratuita: Gemini de Google (principal) y Groq (respaldo). Primero los modelos reservados para la página.
 const SIN_PENSAR = new Set();   // modelos de Gemini que no aceptan "thinkingConfig"
-async function llamarModelo(ia, modelo, sistema, usuario, json){
+async function llamarModelo(ia, modelo, sistema, usuario, json, signal){
   if (modelo.startsWith("gemini")) {
     const pedir = pensar => fetch(`https://generativelanguage.googleapis.com/v1beta/models/${modelo}:generateContent?key=${encodeURIComponent(ia.clave_gemini)}`, { method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ systemInstruction: { parts: [{ text: sistema }] }, contents: [{ role: "user", parts: [{ text: usuario }] }],
         generationConfig: Object.assign({ temperature: 0.2, maxOutputTokens: 4096 }, json ? { responseMimeType: "application/json" } : {},
-          pensar ? { thinkingConfig: { thinkingLevel: "low" } } : {}) }) }).catch(() => null);
+          pensar ? { thinkingConfig: { thinkingLevel: "low" } } : {}) }), signal }).catch(() => null);
     let r = await pedir(!SIN_PENSAR.has(modelo));          // pensar poco = responder rápido
     if (r && r.status === 400 && !SIN_PENSAR.has(modelo)) { SIN_PENSAR.add(modelo); r = await pedir(false); }
     if (!r || !r.ok) return { r };
@@ -1009,20 +1009,35 @@ async function llamarModelo(ia, modelo, sistema, usuario, json){
     headers: { "Authorization": "Bearer " + ia.clave, "Content-Type": "application/json" },
     body: JSON.stringify(Object.assign({ model: modelo, temperature: 0.2, max_tokens: 1500,
       messages: [{ role: "system", content: sistema }, { role: "user", content: usuario }] },
-      modelo.includes("gpt-oss") ? { reasoning_effort: "low" } : {}, json ? { response_format: { type: "json_object" } } : {})) }).catch(() => null);
+      modelo.includes("gpt-oss") ? { reasoning_effort: "low" } : {}, json ? { response_format: { type: "json_object" } } : {})), signal }).catch(() => null);
   if (!r || !r.ok) return { r };
   const j = await r.json();
   return { r, texto: j.choices[0].message.content || "" };
 }
-async function groq(sistema, usuario, json = false){
+// Modelos que no respondieron a tiempo: se saltan 30 minutos (así la siguiente pregunta no espera de nuevo).
+const LENTOS = (() => { try { return JSON.parse(localStorage.getItem("correo_ia_lentos") || "{}"); } catch(e) { return {}; } })();
+const marcarLento = m => { LENTOS[m] = Date.now() + 30 * 60000; try { localStorage.setItem("correo_ia_lentos", JSON.stringify(LENTOS)); } catch(e) {} };
+const ESPERA_IA = 20000;    // máximo por modelo; si no responde, se pasa al siguiente
+
+async function groq(sistema, usuario, json = false, avance = () => {}){
   const ia = D._ia;
   if (!ia || !(ia.clave || ia.clave_gemini)) throw new Error("La IA todavía no está activada (falta la clave gratuita de Gemini o de Groq).");
   const cuenta = (ia.modelos && ia.modelos.length ? ia.modelos : MODELOS_QA)
     .filter(m => m.startsWith("gemini") ? ia.clave_gemini : ia.clave);
-  const modelos = [ia.modelo, ...(ia.reservados || []).filter(m => cuenta.includes(m)), ...cuenta].filter((m, i, a) => m && a.indexOf(m) === i);
+  // Orden: los reservados rápidos (Gemini flash más nuevo, mejor de Groq), otros flash, y los "pro" (lentos) al final.
+  const res = (ia.reservados || []).filter(m => cuenta.includes(m)), pro = m => /pro/.test(m) && m.startsWith("gemini");
+  const orden = [ia.modelo, ...res.filter(m => !pro(m)), ...cuenta.filter(m => !pro(m) && !/lite/.test(m)), ...cuenta.filter(m => !pro(m)), ...cuenta]
+    .filter((m, i, a) => m && a.indexOf(m) === i);
+  const ahora = Date.now(), modelos = [...orden.filter(m => !(LENTOS[m] > ahora)), ...orden.filter(m => LENTOS[m] > ahora)];
   let error = "La IA no pudo responder.", limite = false;
-  for (const modelo of modelos) {
-    const { r, texto } = await llamarModelo(ia, modelo, sistema, usuario, json);
+  for (const modelo of modelos.slice(0, 6)) {
+    const nombre = modelo.startsWith("gemini") ? "Gemini" : "Groq", ini = Date.now(), ctl = new AbortController();
+    avance(`Pensando con ${nombre}…`);
+    const reloj = setInterval(() => avance(`Pensando con ${nombre}… (${Math.round((Date.now() - ini) / 1000)} s)`), 1000);
+    const corte = setTimeout(() => ctl.abort(), ESPERA_IA);
+    const { r, texto } = await llamarModelo(ia, modelo, sistema, usuario, json, ctl.signal).catch(() => ({ r: null }));
+    clearInterval(reloj); clearTimeout(corte);
+    if (!r && ctl.signal.aborted) { marcarLento(modelo); error = "La IA tardó demasiado; prueba de nuevo."; avance(`${nombre} tardó mucho, probando otro…`); continue; }
     if (r && r.ok && texto && texto.trim()) return texto.replace(/<think>[\s\S]*?<\/think>/g, "").trim();
     if (r && r.status === 429) {
       const txt = await r.text().catch(() => ""), dia = /per ?day|TPD|RPD/i.test(txt), m = txt.match(/(?:try again|retry) in ([\dhms.]+)/);
@@ -1153,7 +1168,8 @@ $("#formAsk").addEventListener("submit", async ev => {
   const btn = $("#btnAsk"); btn.disabled = true;
   try {
     const contexto = ctxHilo ? `CONVERSACIÓN COMPLETA (todos sus correos, la cadena citada y el texto de los adjuntos):\n${textoHilo(HILOS[ctxHilo], 13000)}` : contextoGeneral(q);
-    const r = await groq(INSTRUCCION, `Fecha de hoy: ${hoyISO()}.\n\n${contexto}\n\nPREGUNTA DE NICOLÁS: ${q}`);
+    const r = await groq(INSTRUCCION, `Fecha de hoy: ${hoyISO()}.\n\n${contexto}\n\nPREGUNTA DE NICOLÁS: ${q}`, false,
+      t => { const a = item.querySelector(".a"); if (a) a.innerHTML = `<p class="muted">${esc(t)}</p>`; });
     item.querySelector(".a").innerHTML = md(r || "Sin respuesta.");
   } catch (e) { item.querySelector(".a").innerHTML = `<p class="muted">${esc(e.message)}</p>`; }
   finally { btn.disabled = false; }
