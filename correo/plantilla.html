@@ -161,10 +161,16 @@ header{display:flex; flex-wrap:wrap; align-items:center; justify-content:space-b
 .adj-acc{display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin-bottom:8px}
 .adj-acc strong{margin-right:auto; overflow-wrap:anywhere}
 .visor-img{display:block; max-width:100%; border-radius:6px; margin:6px 0}
-.visor-xls{overflow:auto; max-height:75vh; border:1px solid var(--line); border-radius:6px; margin:6px 0; background:#fff}
-.visor-xls table{border-collapse:collapse; font-size:12.5px; font-variant-numeric:tabular-nums}
-.visor-xls td{border:1px solid #e3e6ec; padding:3px 7px; white-space:nowrap; vertical-align:top}
-.visor-xls tr:first-child td{background:#f4f6f9; font-weight:600; position:sticky; top:0}
+.visor-xls{overflow:auto; max-height:75vh; border:1px solid #c8c8c8; margin:6px 0; background:#fff; -webkit-overflow-scrolling:touch}
+.xls{border-collapse:collapse; table-layout:fixed; width:max-content; font:13px/1.25 Aptos, Calibri, "Segoe UI", Arial, sans-serif; color:#000; background:#fff}
+.xls td{border:1px solid #e1e1e1; padding:1px 4px; white-space:nowrap; overflow:hidden; text-overflow:clip; vertical-align:bottom}
+.xls td.n{text-align:right}
+.xls th{background:#f3f3f3; color:#555; font-weight:400; font-size:11.5px; border:1px solid #d4d4d4; padding:0 3px; text-align:center}
+.xls thead th{position:sticky; top:0; z-index:2; height:20px}
+.xls tbody th{position:sticky; left:0; z-index:1}
+.xls th.esq{left:0; z-index:3}
+.zoom-xls{display:flex; gap:6px; align-items:center; margin:6px 0 0}
+.zoom-xls button{min-width:36px}
 .visor-doc{display:block; width:100%; height:75vh; border:1px solid var(--line); border-radius:6px; background:#fff; margin:6px 0}
 .adj-texto pre{white-space:pre-wrap; overflow-wrap:anywhere; font:12px/1.45 var(--f-mono); max-height:360px; overflow:auto; margin:6px 0 0}
 .hoja{background:#fff; color:#1f2328; border:1px solid var(--line); border-radius:8px; overflow:hidden}
@@ -537,15 +543,114 @@ function cargarXLSX(){
     sc.onload = () => ok(window.XLSX); sc.onerror = () => { _xlsx = null; mal(new Error("No se pudo cargar el lector de Excel; usa Descargar.")); };
     document.head.appendChild(sc); });
 }
-async function hojasExcel(blob){
+// Visor tipo Excel: ExcelJS lee el formato (negritas, colores, bordes, celdas combinadas, anchos) de los .xlsx;
+// los .xls/.ods antiguos se leen con SheetJS (sin formato). Se dibuja con letras de columna y números de fila.
+let _exceljs = null;
+function cargarExcelJS(){
+  return _exceljs ||= new Promise((ok, mal) => { const sc = document.createElement("script");
+    sc.src = "https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.4.0/exceljs.min.js";
+    sc.onload = () => ok(window.ExcelJS); sc.onerror = () => { _exceljs = null; mal(new Error("No se pudo cargar el lector de Excel; usa Descargar.")); };
+    document.head.appendChild(sc); });
+}
+const MAX_FILAS_XLS = 500, MAX_COLS_XLS = 40;
+const letraCol = n => { let s = ""; for (n++; n > 0; n = Math.floor((n - 1) / 26)) s = String.fromCharCode(65 + (n - 1) % 26) + s; return s; };
+// Colores "AARRGGBB" (Excel no usa la transparencia AA) o "RRGGBB"; los colores de tema no traen código y se omiten.
+const colorArgb = c => !c || !c.argb ? "" : /^[0-9A-F]{8}$/i.test(c.argb) ? "#" + c.argb.slice(2) : /^[0-9A-F]{6}$/i.test(c.argb) ? "#" + c.argb : "";
+function textoCelda(v, fmt){
+  if (v == null) return "";
+  if (typeof v === "object" && !(v instanceof Date)) {
+    if ("result" in v) v = v.result; else if (v.richText) return v.richText.map(x => x.text).join(""); else if (v.text) return String(v.text); else if (v.error) return v.error;
+    if (v == null) return "";
+  }
+  if (v instanceof Date) return v.toLocaleDateString("es-CL", {timeZone: "UTC"});
+  if (typeof v === "number") {
+    if (/%/.test(fmt || "")) return (v * 100).toLocaleString("es-CL", {maximumFractionDigits: 2}) + "%";
+    const dec = /0\.(0+)/.exec(fmt || ""), d = dec ? dec[1].length : (Number.isInteger(v) ? 0 : 2);
+    const t = v.toLocaleString("es-CL", {minimumFractionDigits: fmt && dec ? d : 0, maximumFractionDigits: d,
+      useGrouping: /#,##|,0/.test(fmt || "")});       // formato "General": sin separador de miles, como Excel
+    return /\$/.test(fmt || "") ? "$" + t : t;
+  }
+  return String(v);
+}
+function dibujarHoja(m){   // m = {cols:[px], filas:[{h, celdas:[{t, est, num}]}], combinadas:[[f1,c1,f2,c2]], corte}
+  const tapado = new Set(), span = {};
+  for (const [f1, c1, f2, c2] of m.combinadas) {
+    span[f1 + ":" + c1] = [f2 - f1 + 1, c2 - c1 + 1];
+    for (let f = f1; f <= f2; f++) for (let c = c1; c <= c2; c++) if (f !== f1 || c !== c1) tapado.add(f + ":" + c);
+  }
+  let h = `<table class="xls"><colgroup><col style="width:38px">${m.cols.map(w => `<col style="width:${w}px">`).join("")}</colgroup>`;
+  h += `<thead><tr><th class="esq"></th>${m.cols.map((_, c) => `<th>${letraCol(c)}</th>`).join("")}</tr></thead><tbody>`;
+  m.filas.forEach((fila, f) => {
+    h += `<tr style="height:${fila.h}px"><th>${f + 1}</th>`;
+    for (let c = 0; c < m.cols.length; c++) {
+      if (tapado.has(f + ":" + c)) continue;
+      const x = fila.celdas[c] || {}, sp = span[f + ":" + c];
+      h += `<td${sp ? ` rowspan="${sp[0]}" colspan="${sp[1]}"` : ""}${x.est ? ` style="${x.est}"` : ""}${x.num ? ' class="n"' : ""}>${esc(x.t || "")}</td>`;
+    }
+    h += "</tr>";
+  });
+  return h + "</tbody></table>" + (m.corte ? `<p class="small muted" style="padding:6px 8px">Se muestran las primeras ${MAX_FILAS_XLS} filas; descarga el archivo para verlo completo.</p>` : "");
+}
+function estiloCelda(c){
+  const e = [], f = c.font || {}, a = c.alignment || {}, fill = c.fill || {}, b = c.border || {};
+  if (f.bold) e.push("font-weight:700"); if (f.italic) e.push("font-style:italic"); if (f.underline) e.push("text-decoration:underline");
+  if (f.size && f.size !== 11) e.push(`font-size:${Math.round(f.size * 1.2)}px`);
+  const fc = colorArgb(f.color); if (fc && fc.toUpperCase() !== "#000000") e.push("color:" + fc);
+  const bg = fill.type === "pattern" && fill.pattern !== "none" ? colorArgb(fill.fgColor) : ""; if (bg) e.push("background:" + bg);
+  if (a.horizontal && /center|right|left/.test(a.horizontal)) e.push("text-align:" + (a.horizontal.includes("center") ? "center" : a.horizontal));
+  if (a.vertical) e.push("vertical-align:" + (a.vertical === "middle" ? "middle" : a.vertical === "top" ? "top" : "bottom"));
+  if (a.wrapText) e.push("white-space:normal");
+  for (const lado of ["top", "right", "bottom", "left"]) {
+    const l = b[lado]; if (!l || !l.style) continue;
+    const ancho = /thick/.test(l.style) ? 2 : /medium/.test(l.style) ? 1.5 : 1;
+    e.push(`border-${lado}:${ancho}px ${/dash|dot/.test(l.style) ? "dashed" : l.style === "double" ? "double" : "solid"} ${colorArgb(l.color) || "#444"}`);
+  }
+  return e.join(";");
+}
+async function hojasExcel(blob, nombre){
+  const datos = new Uint8Array(await blob.arrayBuffer());
+  if (/\.xlsx$|\.xlsm$/i.test(nombre || "")) {
+    try {
+      const EJ = await cargarExcelJS(), wb = new EJ.Workbook();
+      await wb.xlsx.load(datos.buffer);
+      const hojas = [];
+      wb.eachSheet(ws => {
+        if (ws.state && ws.state !== "visible") return;
+        const nf = Math.min(ws.rowCount || 0, MAX_FILAS_XLS), nc = Math.min(ws.columnCount || 0, MAX_COLS_XLS);
+        if (!nf || !nc) { hojas.push({nombre: ws.name, html: '<p class="small muted" style="padding:8px">Hoja vacía.</p>'}); return; }
+        const cols = [...Array(nc)].map((_, c) => Math.round(((ws.getColumn(c + 1).width || 8.43) * 7) + 5));
+        const filas = [...Array(nf)].map((_, f) => {
+          const r = ws.getRow(f + 1);
+          return {h: Math.max(18, Math.round((r.height || 15) * 4 / 3)), celdas: [...Array(nc)].map((_, c) => {
+            const cel = r.getCell(c + 1), v = cel.value;
+            const num = typeof v === "number" || (v && typeof v === "object" && typeof v.result === "number");
+            return {t: textoCelda(v, cel.numFmt), est: estiloCelda(cel), num};
+          })};
+        });
+        const combinadas = [];
+        for (const rango of ((ws.model || {}).merges || [])) {
+          const m = /^([A-Z]+)(\d+):([A-Z]+)(\d+)$/.exec(rango); if (!m) continue;
+          const col = l => [...l].reduce((n, ch) => n * 26 + ch.charCodeAt(0) - 64, 0) - 1;
+          const f1 = +m[2] - 1, c1 = col(m[1]), f2 = Math.min(+m[4] - 1, nf - 1), c2 = Math.min(col(m[3]), nc - 1);
+          if (f1 < nf && c1 < nc && (f2 > f1 || c2 > c1)) combinadas.push([f1, c1, f2, c2]);
+        }
+        hojas.push({nombre: ws.name, html: dibujarHoja({cols, filas, combinadas, corte: (ws.rowCount || 0) > MAX_FILAS_XLS})});
+      });
+      if (hojas.length) return hojas;
+    } catch(e) { /* si falla, se intenta sin formato */ }
+  }
   const X = await cargarXLSX();
-  const wb = X.read(new Uint8Array(await blob.arrayBuffer()), {type: "array", cellDates: true});
+  const wb = X.read(datos, {type: "array", cellDates: true});
   return wb.SheetNames.map(nombre => {
     const ws = wb.Sheets[nombre];
-    if (!ws["!ref"]) return {nombre, html: '<p class="small muted">Hoja vacía.</p>'};
-    const r = X.utils.decode_range(ws["!ref"]), corte = r.e.r > 1500;
-    if (corte) { r.e.r = 1500; ws["!ref"] = X.utils.encode_range(r); }
-    return {nombre, html: X.utils.sheet_to_html(ws, {header: "", footer: ""}) + (corte ? '<p class="small muted">Se muestran las primeras 1.500 filas; descarga el archivo para verlo completo.</p>' : "")};
+    if (!ws["!ref"]) return {nombre, html: '<p class="small muted" style="padding:8px">Hoja vacía.</p>'};
+    const r = X.utils.decode_range(ws["!ref"]), nf = Math.min(r.e.r + 1, MAX_FILAS_XLS), nc = Math.min(r.e.c + 1, MAX_COLS_XLS);
+    const cols = [...Array(nc)].map((_, c) => Math.round((((ws["!cols"] || [])[c] || {}).wch || 8.43) * 7 + 5));
+    const filas = [...Array(nf)].map((_, f) => ({h: 20, celdas: [...Array(nc)].map((_, c) => {
+      const cel = ws[X.utils.encode_cell({r: f, c})]; return cel ? {t: cel.w != null ? cel.w : textoCelda(cel.v), num: cel.t === "n"} : {};
+    })}));
+    const combinadas = (ws["!merges"] || []).map(m => [m.s.r, m.s.c, Math.min(m.e.r, nf - 1), Math.min(m.e.c, nc - 1)]).filter(([a, b]) => a < nf && b < nc);
+    return {nombre, html: dibujarHoja({cols, filas, combinadas, corte: r.e.r + 1 > MAX_FILAS_XLS})};
   });
 }
 
@@ -557,7 +662,7 @@ function panelAdjunto(m, i, terms){
       ${f.ref ? `${sePuedeVer(f.nombre) ? `<button class="btn sec" data-ver="${i}">👁 Ver aquí</button>` : ""}<button class="btn" data-bajar="${i}">⬇ Descargar / abrir</button>`
               : `<span class="small muted">El archivo original se está guardando; estará disponible en la próxima sincronización.</span>`}</div>
     ${v.cargando ? `<p class="small muted">Abriendo el archivo…</p>` : ""}${v.error ? `<p class="small" style="color:var(--alta)">${esc(v.error)}</p>` : ""}
-    ${v.url && v.ver && v.hojas ? `${v.hojas.length > 1 ? `<div class="chips">${v.hojas.map((h, k) => `<button class="chip" data-hoja="${k}" aria-pressed="${k === (v.hoja || 0)}">${esc(h.nombre)}</button>`).join("")}</div>` : ""}<div class="visor-xls">${v.hojas[v.hoja || 0].html}</div>`
+    ${v.url && v.ver && v.hojas ? `${v.hojas.length > 1 ? `<div class="chips">${v.hojas.map((h, k) => `<button class="chip" data-hoja="${k}" aria-pressed="${k === (v.hoja || 0)}">${esc(h.nombre)}</button>`).join("")}</div>` : ""}<div class="zoom-xls"><button class="chip" data-zoomxls="-1" aria-label="Alejar">−</button><span class="small muted">${Math.round((v.zoom || 1) * 100)}%</span><button class="chip" data-zoomxls="1" aria-label="Acercar">+</button></div><div class="visor-xls"><div style="zoom:${v.zoom || 1}">${v.hojas[v.hoja || 0].html}</div></div>`
       : v.url && v.ver ? (v.tipo.startsWith("image/") ? `<img class="visor-img" src="${v.url}" alt="${esc(f.nombre)}">` : `<iframe class="visor-doc" src="${v.url}" title="${esc(f.nombre)}"></iframe>`) : ""}
     <details ${!(v.url && v.ver) ? "open" : ""}><summary class="small muted">Texto leído del archivo (lo que usa la IA)</summary>
       <pre>${legible ? resaltar(f.texto, terms) : "No se encontró texto en este archivo."}</pre></details></div>`;
@@ -575,13 +680,13 @@ async function archivo(f){
 
 async function abrirAdjunto(m, i, ver){
   const f = m.archivos[i];
-  if (visor.url && visor.ref === f.ref) { if (ver) { visor.ver = true; if (esPlanilla(f.nombre) && !visor.hojas) { visor.hojas = await hojasExcel(await (await fetch(visor.url)).blob()).catch(() => null); visor.hoja = 0; } pintarCorreo(); } else descargar(visor.url, f.nombre); return; }
+  if (visor.url && visor.ref === f.ref) { if (ver) { visor.ver = true; if (esPlanilla(f.nombre) && !visor.hojas) { visor.hojas = await hojasExcel(await (await fetch(visor.url)).blob(), f.nombre).catch(() => null); visor.hoja = 0; visor.zoom = innerWidth <= 600 ? 0.8 : 1; } pintarCorreo(); } else descargar(visor.url, f.nombre); return; }
   if (visor.url) URL.revokeObjectURL(visor.url);
   visor = {ref: f.ref, cargando: true}; pintarCorreo();
   try {
     const blob = await archivo(f);
     visor = {ref: f.ref, url: URL.createObjectURL(blob), tipo: blob.type, ver};
-    if (esPlanilla(f.nombre)) try { visor.hojas = await hojasExcel(blob); visor.hoja = 0; }
+    if (esPlanilla(f.nombre)) try { visor.hojas = await hojasExcel(blob, f.nombre); visor.hoja = 0; visor.zoom = innerWidth <= 600 ? 0.8 : 1; }
       catch (e) { visor.hojas = [{nombre: "", html: `<p class="small" style="color:var(--alta)">No pude mostrar esta planilla (${esc(e.message)}). Usa “Descargar / abrir”.</p>`}]; }
     if (!ver) descargar(visor.url, f.nombre);
   } catch (e) { visor = {ref: f.ref, error: e.message}; }
@@ -1184,12 +1289,13 @@ function irA(v){
   if (v === "preguntar") { pintarCtx(); $("#qAsk").focus(); }
 }
 document.addEventListener("click", ev => {
-  const t = ev.target.closest("[data-v],[data-m],[data-f],[data-cu],[data-back],[data-more],[data-askthread],[data-noctx],[data-sug],[data-responder],[data-r],[data-adj],[data-vertexto],[data-ver],[data-bajar],[data-nuevo],[data-recuperar],[data-noleido],[data-hoja],[data-quitaradj],[data-carpeta]");
+  const t = ev.target.closest("[data-v],[data-m],[data-f],[data-cu],[data-back],[data-more],[data-askthread],[data-noctx],[data-sug],[data-responder],[data-r],[data-adj],[data-vertexto],[data-ver],[data-bajar],[data-nuevo],[data-recuperar],[data-noleido],[data-hoja],[data-quitaradj],[data-carpeta],[data-zoomxls]");
   if (!t) return;
   if (t.dataset.adj !== undefined) { const i = +t.dataset.adj; leerBorrador(); adjAbierto = adjAbierto === i ? null : i; pintarCorreo(); return; }
   if (t.dataset.ver !== undefined || t.dataset.bajar !== undefined) { const mm = MSGS.find(x => x.id === abierto); if (mm) abrirAdjunto(mm, +(t.dataset.ver ?? t.dataset.bajar), t.dataset.ver !== undefined); return; }
   if (t.dataset.quitaradj !== undefined && borrador) { leerBorrador(); borrador.nuevos.splice(+t.dataset.quitaradj, 1); borrador.estado = ""; pintarCorreo(); return; }
   if (t.dataset.carpeta) { carpeta = t.dataset.carpeta; limite = 150; abierto = null; pintarFiltros(); pintarLista(); pintarCorreo(); if (innerWidth <= 860) scrollTo(0, 0); return; }
+  if (t.dataset.zoomxls) { visor.zoom = Math.min(2, Math.max(0.4, Math.round(((visor.zoom || 1) + 0.2 * +t.dataset.zoomxls) * 10) / 10)); pintarCorreo(); return; }
   if (t.dataset.hoja !== undefined) { visor.hoja = +t.dataset.hoja; pintarCorreo(); return; }
   if ("vertexto" in t.dataset) { leerBorrador(); verTexto = !verTexto; pintarCorreo(); return; }
   const m = MSGS.find(x => x.id === abierto);
