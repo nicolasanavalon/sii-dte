@@ -1076,6 +1076,7 @@ async function enviar(m){
     const cuenta = b.cuenta || (m && m.cuenta) || "";
     const paquete = await cifrar({ modo: b.modo, cuenta, cuenta_id: ((D.cuentas_ids || {})[cuenta]) || (m && m.cuenta_id) || "",
                                    message_id: m ? m.id : "", carpeta: m ? (m.carpeta || "") : "", con_adjuntos: !!b.con_adjuntos,
+                                   mid_cabecera: m ? (m.message_id || "") : "", referencias: m ? (m.referencias || "") : "",
                                    para: listaCorreos(b.para), cc: listaCorreos(b.cc), asunto: b.asunto, texto: b.texto, ts: Date.now(),
                                    adj_nuevos: partes ? { id, n: partes } : null });
     const api = `https://api.github.com/repos/${gh.repo}/actions/workflows/correo_enviar.yml`;

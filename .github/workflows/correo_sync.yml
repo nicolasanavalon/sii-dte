@@ -90,6 +90,9 @@ jobs:
           ZOHO_DC: ${{ vars.ZOHO_DC }}
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GMAIL_CORREO: ${{ secrets.GMAIL_CORREO }}
+          GMAIL_CLAVE: ${{ secrets.GMAIL_CLAVE }}
+          GMAIL_ETIQUETA: ${{ vars.GMAIL_ETIQUETA }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           CORREO_TELEGRAM: "0"   # avisos de correo nuevo: solo en el iPhone (app), no por Telegram
