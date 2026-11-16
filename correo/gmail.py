@@ -15,6 +15,7 @@ from email.message import EmailMessage
 from email.utils import getaddresses, make_msgid, parsedate_to_datetime
 
 IMAP, SMTP = "imap.gmail.com", "smtp.gmail.com"
+imaplib._MAXLINE = 200_000_000     # la lista de todos los correos de una casilla grande supera el límite de 1 MB
 
 
 class GmailError(RuntimeError):
