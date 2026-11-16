@@ -1140,7 +1140,7 @@ def avisar_celular(estado, nuevos):
     p["subs"] = vigentes
 
 
-def avanzar_historial(estado, hasta):
+def avanzar_historial(estado, hasta, max_paginas=8):
     """Agrega al índice del historial páginas de correos antiguos (todas las carpetas), hasta la hora `hasta`."""
     import historial as H
     cur, paginas = estado.setdefault("hist_cursor", {}), 0
@@ -1156,7 +1156,7 @@ def avanzar_historial(estado, hasta):
                 print(f"::warning::No pude contar los correos de {direccion}: {str(e)[:150]}")
         for c in _CARPETAS_HIST[acc]:
             fid, k = str(c["folderId"]), cur.setdefault(acc, {})
-            while k.get(fid) != "fin" and time.time() < hasta and paginas < 8:     # sin apurar a Zoho
+            while k.get(fid) != "fin" and time.time() < hasta and paginas < max_paginas:     # sin apurar a Zoho
                 paginas += 1
                 pagina = z.listar(acc, fid, start=k.get(fid, 1), limit=100)
                 enviados = str(c.get("folderType", "")).lower() == "sent"
@@ -1168,7 +1168,7 @@ def avanzar_historial(estado, hasta):
                                "s": str(m.get("subject") or ""), "r": str(m.get("summary") or "")[:220],
                                "j": 1 if m.get("hasAttachment") in (True, "1", 1) else 0, "th": str(m.get("threadId") or "")})
                 k[fid] = "fin" if len(pagina) < 100 else k.get(fid, 1) + 100
-            if time.time() >= hasta or paginas >= 8:
+            if time.time() >= hasta or paginas >= max_paginas:
                 break
     g = _ZOHO.get("gmail")
     if g and env("GMAIL_CORREO"):
@@ -1242,20 +1242,7 @@ def una_vuelta(estado, clave, rapido):
     estilo = not rapido and actualizar_estilo(estado)
     t2 = time.time()
     analizados = analizar_pendientes(estado)
-    t3 = time.time()
-    try:
-        avanzar_historial(estado, max(time.time() + 6, min(LIMITE_VUELTA + 5, time.time() + 15)))   # índice, de a poco
-    except Exception as e:
-        print(f"::warning::Historial: {str(e)[:200]}")
-    try:                                              # correos antiguos: descargar y analizar con IA, de a poco
-        import archivo as A
-        import historial as H
-        A.descargar(H.HIST, set(estado["mensajes"]), CUENTAS_Z, _ZOHO.get("gmail") if env("GMAIL_CORREO") else None,
-                    hasta=max(time.time() + 6, min(LIMITE_VUELTA + 12, time.time() + 12)))
-        A.analizar(H.HIST, hasta=LIMITE_VUELTA + 20)
-    except Exception as e:
-        print(f"::warning::Archivo: {str(e)[:200]}")
-    print(f"  tiempos: Zoho {t1 - t0:.0f} s · estilo {t2 - t1:.0f} s · resúmenes {t3 - t2:.0f} s · historial {time.time() - t3:.0f} s")
+    print(f"  tiempos: Zoho {t1 - t0:.0f} s · estilo {t2 - t1:.0f} s · resúmenes {time.time() - t2:.0f} s")
     cambio = bool(nuevos or completados or analizados or estilo or estado.pop("_cambio_otro", False)
                   or estado.pop("_hilos_actualizados", 0)
                   or estado.pop("_cambio_leidos", False)) or not estado["ultima_sync"]
@@ -1276,14 +1263,15 @@ def vigilar(estado, clave, minutos):
     os.environ.setdefault("CORREO_MAX_POR_CORRIDA", "15") # correos antiguos por vuelta (de a poco, sin atrasar lo nuevo)
     if not env("CORREO_MAX_POR_CORRIDA"):
         os.environ["CORREO_MAX_POR_CORRIDA"] = "15"
-    import archivo as A
     import historial as H
-    H.cargar(clave)
-    A.cargar(clave)
+    H.cargar(clave)                  # índice del historial (lo arma el archivista): para traer correos antiguos a pedido
     fin = time.time() + minutos * 60
-    ultima_completa, ultima_pub, pendiente_pub, vuelta = 0.0, time.time(), False, 0
+    ultima_completa, ultima_pub, pendiente_pub, vuelta, ultimo_hist = 0.0, time.time(), False, 0, time.time()
     while time.time() < fin:
         inicio = time.time()
+        if inicio - ultimo_hist > 600 and refrescar_rama(env("CORREO_ARCH_DIR"), "correo-archivo"):
+            H.cargar(clave)
+            ultimo_hist = inicio
         completa = inicio - ultima_completa > 600           # cada 10 min: completar antiguos (de a poco)
         try:
             cambio = una_vuelta(estado, clave, rapido=not completa)
@@ -1296,25 +1284,12 @@ def vigilar(estado, clave, minutos):
         datos_dir = env("CORREO_DATOS_DIR")
         if datos_dir:
             caja = Path(datos_dir) / "caja.json"
-            H.guardar(clave, cada=0 if time.time() + 120 > fin else 300)
-            A.guardar(clave, cada=0 if time.time() + 120 > fin else 300)
-            try:     # avance por casilla (cifrado: solo lo ve quien tiene la contraseña)
-                av = A.avance(estado, H.HIST, estado.get("etiquetas", {}), TOTALES)
-                if av != _AVANCE.get("ultimo"):
-                    _AVANCE.update(ultimo=av, caja=cripto.cifrar({"cuentas": av, "t": int(time.time() * 1000)}, clave))
-            except Exception as e:
-                print(f"::warning::Avance: {str(e)[:150]}")
             if not caja.exists():
                 generar_html(estado, clave)
                 cambio = True
             v = hashlib.sha1(caja.read_bytes()).hexdigest()[:16] if caja.exists() else ""
             (Path(datos_dir) / "version.json").write_text(json.dumps(
-                {"v": v, "t": datetime.now(TZ).strftime("%Y-%m-%d %H:%M"), "ms": int(time.time() * 1000),
-                 "h": hashlib.sha1((Path(datos_dir) / "historial.json").read_bytes()).hexdigest()[:16]
-                 if (Path(datos_dir) / "historial.json").exists() else "",
-                 "ar": hashlib.sha1((Path(datos_dir) / "archivo.json").read_bytes()).hexdigest()[:16]
-                 if (Path(datos_dir) / "archivo.json").exists() else "",
-                 "a": _AVANCE.get("caja")}))
+                {"v": v, "t": datetime.now(TZ).strftime("%Y-%m-%d %H:%M"), "ms": int(time.time() * 1000)}))
         pendiente_pub = pendiente_pub or cambio
         publicar = pendiente_pub and time.time() - ultima_pub > 3600    # la página publicada se renueva cada hora
         if publicar:
@@ -1327,5 +1302,91 @@ def vigilar(estado, clave, minutos):
         time.sleep(max(5.0, 60 - (time.time() - inicio)))
 
 
+def refrescar_rama(carpeta, rama):
+    """Trae lo último de una rama ya clonada (para leer lo que guarda el otro proceso)."""
+    import subprocess
+    if not carpeta or not (Path(carpeta) / ".git").exists():
+        return False
+    r = subprocess.run(f'git -C "{carpeta}" fetch -q --depth 1 origin {rama} && git -C "{carpeta}" reset -q --hard FETCH_HEAD',
+                       shell=True, capture_output=True)
+    return r.returncode == 0
+
+
+def _json_cifrado(ruta, clave, defecto):
+    try:
+        return cripto.descifrar(json.loads(Path(ruta).read_text(encoding="utf-8")), clave)
+    except Exception:
+        return defecto
+
+
+def archivar(clave, minutos):
+    """ARCHIVISTA (workflow "Correo: archivo"): todo el día indexa, descarga y analiza con IA el historial completo
+    de las casillas, sin atrasar al vigilante. Guarda en la rama correo-archivo (todo cifrado)."""
+    import subprocess
+    import archivo as A
+    import historial as H
+    import ia
+    from zoho import Zoho
+    ia.MAX_ESPERA, ia.TIMEOUT = 30, 75
+    arch_dir = Path(env("CORREO_ARCH_DIR"))
+    arch_dir.mkdir(parents=True, exist_ok=True)
+    H.cargar(clave)
+    A.cargar(clave)
+    prog = _json_cifrado(arch_dir / "progreso.json", clave, {"hist_cursor": {}})
+    estado = cargar_estado(clave)
+    if not prog.get("hist_cursor") and estado.get("hist_cursor"):
+        prog["hist_cursor"] = estado["hist_cursor"]          # sigue donde iba el vigilante
+    for nombre, cid, sec, rt in conexiones(clave):
+        try:
+            z = Zoho(cid, sec, rt)
+            for acc_id, _, principal in z.cuentas():
+                CUENTAS_Z[acc_id] = (z, principal)
+        except Exception as e:
+            print(f"::warning::Archivista: no pude conectar '{nombre}': {str(e)[:150]}")
+    gmail = None
+    if env("GMAIL_CORREO") and env("GMAIL_CLAVE"):
+        import gmail as G
+        gmail = _ZOHO["gmail"] = G.Gmail(env("GMAIL_CORREO"), env("GMAIL_CLAVE"))
+    fin, ultimo_estado, ultimo_guardado, vuelta = time.time() + minutos * 60, time.time(), 0.0, 0
+    while time.time() < fin:
+        t = time.time()
+        if t - ultimo_estado > 600 and refrescar_rama(env("CORREO_DATOS_DIR"), "correo-datos"):
+            estado, ultimo_estado = cargar_estado(clave), t     # para saber qué correos ya están en la bandeja
+        hechos = 0
+        try:
+            antes = len(H.HIST)
+            avanzar_historial(prog, t + 25, max_paginas=40)
+            hechos += len(H.HIST) - antes
+        except Exception as e:
+            print(f"::warning::Historial: {str(e)[:200]}")
+        try:
+            hechos += A.descargar(H.HIST, set(estado["mensajes"]), CUENTAS_Z, gmail, hasta=time.time() + 40, maximo=80)
+            hechos += A.analizar(H.HIST, hasta=time.time() + 60)
+        except Exception as e:
+            print(f"::warning::Archivo: {str(e)[:200]}")
+        final = time.time() + 150 > fin
+        if time.time() - ultimo_guardado > 300 or final:
+            H.guardar(clave, cada=0)
+            A.guardar(clave, cada=0)
+            av = A.avance(estado, H.HIST, estado.get("etiquetas", {}), TOTALES)
+            (arch_dir / "progreso.json").write_text(json.dumps(cripto.cifrar(prog, clave)), encoding="utf-8")
+            sha = lambda f: hashlib.sha1((arch_dir / f).read_bytes()).hexdigest()[:16] if (arch_dir / f).exists() else ""
+            (arch_dir / "arch_version.json").write_text(json.dumps({
+                "h": sha("historial.json"), "ar": sha("archivo.json"), "ms": int(time.time() * 1000),
+                "a": cripto.cifrar({"cuentas": av, "t": int(time.time() * 1000)}, clave)}))
+            if env("CORREO_GUARDAR"):
+                subprocess.run(["bash", env("CORREO_GUARDAR")], check=False)
+            ultimo_guardado = time.time()
+            print("Avance: " + " · ".join(f"{c['n']} {c['pct']}% analizado ({c['analizados']}/{c['total']}), índice {c['pct_indice']}%"
+                                          for c in av), flush=True)
+        vuelta += 1
+        if not hechos:
+            time.sleep(60)          # nada que hacer (o la IA en su límite diario): esperar un poco
+    print(f"Archivista: {vuelta} vueltas.")
+
+
 if __name__ == "__main__":
+    if "--archivar" in sys.argv:
+        archivar(env("CORREO_CLAVE"), float(sys.argv[sys.argv.index("--archivar") + 1]))
+        sys.exit(0)
     main()

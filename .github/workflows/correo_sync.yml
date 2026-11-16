@@ -58,6 +58,12 @@ jobs:
               || { mkdir -p "$RUNNER_TEMP/$r" && git -C "$RUNNER_TEMP/$r" init -q; }
           done
           mkdir -p "$RUNNER_TEMP/adjuntos/adj"
+          # Historial completo: lo arma el archivista en la rama correo-archivo (aquí solo se lee).
+          if git clone -q --depth 1 --branch correo-archivo "$REPO_URL" "$RUNNER_TEMP/archivo"; then
+            rm -f "$RUNNER_TEMP/datos/historial.json" "$RUNNER_TEMP/datos/archivo.json"   # copias antiguas
+          else
+            mkdir -p "$RUNNER_TEMP/archivo"
+          fi
           cat > "$RUNNER_TEMP/guardar.sh" <<'EOS'
           # $1 = 1 si cambiaron los datos; $2 = 1 si toca renovar la página publicada (cada hora, si hubo cambios)
           subir() {   # rama de un solo commit (sin historial): no llena el repo
@@ -78,6 +84,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           CORREO_GUARDAR: ${{ runner.temp }}/guardar.sh
           CORREO_DATOS_DIR: ${{ runner.temp }}/datos
+          CORREO_ARCH_DIR: ${{ runner.temp }}/archivo
           CORREO_ADJ_DIR: ${{ runner.temp }}/adjuntos/adj
           CORREO_SALIDA: ${{ runner.temp }}/index.html
           CORREO_CLAVE: ${{ secrets.CORREO_CLAVE }}

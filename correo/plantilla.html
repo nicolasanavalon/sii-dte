@@ -482,13 +482,13 @@ const HISTORIAL = { lista: null, cargando: false, version: "", porId: {} };
 const correosDe = t => (String(t || "").match(/[^\s<>,;"']+@[^\s<>,;"']+/g) || []).map(x => x.toLowerCase());
 async function cargarHistorial(){
   if (HISTORIAL.cargando) return;
-  let v = null; try { v = await deDatos("version.json"); } catch(e) {}
+  let v = null; try { v = await deDatos("arch_version.json", "correo-archivo"); } catch(e) {}
   if (HISTORIAL.lista && (!v || (v.h === HISTORIAL.version && v.ar === HISTORIAL.varchivo))) return;
   HISTORIAL.cargando = true; pintarLista();
   try {
-    const crudo = await abrirCaja(await deDatos("historial.json"), CLAVE);
+    const crudo = await abrirCaja(await deDatos("historial.json", "correo-archivo"), CLAVE);
     let arch = {c: {}, h: {}};
-    try { arch = await abrirCaja(await deDatos("archivo.json"), CLAVE); } catch(e) {}
+    try { arch = await abrirCaja(await deDatos("archivo.json", "correo-archivo"), CLAVE); } catch(e) {}
     HISTORIAL.hilos = arch.h || {};
     HISTORIAL.lista = crudo.map(e => { const de = correosDe(e.de)[0] || e.de, h = {
       id: e.i, hist: true, cuenta_id: e.a, cuenta: e.c, carpeta: e.f, carpeta_nombre: e.fn, enviado: !!e.e, fecha: e.t,
@@ -1534,9 +1534,9 @@ let versionActual = null, buscando = false;
 const horaTxt = ms => new Date(ms || Date.now()).toLocaleTimeString("es-CL", {hour: "2-digit", minute: "2-digit"});
 function sinc(txt, gira){ $("#sincTxt").innerHTML = esc(txt); $("#buscarAhora").innerHTML = (gira ? '<span class="girando">🔄</span>' : "🔄") + '<span class="pc"> Buscar ahora</span>'; }
 
-async function deDatos(archivo){
+async function deDatos(archivo, rama = "correo-datos"){
   const gh = (D && D._envio) || {}, repo = gh.repo || (D && D._repo) || "nicolasanavalon/sii-dte";
-  const url = `https://api.github.com/repos/${repo}/contents/${archivo}?ref=correo-datos`;
+  const url = `https://api.github.com/repos/${repo}/contents/${archivo}?ref=${rama}`;
   const h = { "Accept": "application/vnd.github.raw" };
   if (gh.token) h.Authorization = "Bearer " + gh.token;
   let r = await fetch(url, { headers: h, cache: "no-store" });
@@ -1544,7 +1544,7 @@ async function deDatos(archivo){
   if (!r.ok) throw new Error("HTTP " + r.status);
   return r.json();
 }
-let AVANCE = null, avanceCaja = "";
+let AVANCE = null, avanceCaja = "", avanceRevisado = 0;
 async function leerAvance(v){
   if (!v || !v.a || JSON.stringify(v.a) === avanceCaja) return;
   try { AVANCE = await abrirCaja(v.a, CLAVE); avanceCaja = JSON.stringify(v.a); if (!$("#panelAvance").hidden) pintarAvance(); } catch(e) {}
@@ -1562,14 +1562,15 @@ function pintarAvance(){
     : '<p class="muted small" style="margin:0">El vigilante está calculando el avance; vuelve a abrir esto en un par de minutos.</p>'}
     <p class="muted small" style="margin:0">Incluye todos los correos, desde el más antiguo, recibidos y enviados. La IA gratuita tiene un límite diario: el análisis avanza solo, de a poco${AVANCE && AVANCE.t ? " (actualizado " + horaTxt(AVANCE.t) + ")" : ""}</p>`;
 }
-$("#verAvance").addEventListener("click", () => { const p = $("#panelAvance"); p.hidden = !p.hidden; if (!p.hidden) pintarAvance(); });
+$("#verAvance").addEventListener("click", () => { const p = $("#panelAvance"); p.hidden = !p.hidden;
+  if (!p.hidden) { pintarAvance(); deDatos("arch_version.json", "correo-archivo").then(leerAvance).catch(() => {}); } });
 
 async function revisarZoho(manual){
   if (buscando || !D) return; buscando = true;
   if (manual) sinc("Revisando…", true);
   try {
     const v = await deDatos("version.json");
-    leerAvance(v);
+    if (Date.now() - avanceRevisado > 120000) { avanceRevisado = Date.now(); deDatos("arch_version.json", "correo-archivo").then(leerAvance).catch(() => {}); }
     let n = 0;
     if (v.v && v.v !== versionActual) {
       const caja = await deDatos("caja.json");
