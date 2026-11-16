@@ -57,7 +57,10 @@ header{display:flex; flex-wrap:wrap; align-items:center; justify-content:space-b
 /* Correos */
 .toolbar{display:flex; flex-wrap:wrap; gap:8px; align-items:center}
 .search{flex:1 1 320px; min-width:0; position:relative}
-.search input{width:100%; padding:11px 14px 11px 38px; border:1px solid var(--line); border-radius:10px; background:var(--panel)}
+.search input{width:100%; padding:11px 42px 11px 38px; border:1px solid var(--line); border-radius:10px; background:var(--panel)}
+.limpiar-busca{position:absolute; right:8px; top:50%; transform:translateY(-50%); border:0; background:var(--soft); color:var(--muted);
+  width:28px; height:28px; border-radius:50%; cursor:pointer; font-size:14px; display:grid; place-items:center}
+.search input::-webkit-search-cancel-button{display:none}
 .search svg{position:absolute; left:12px; top:50%; transform:translateY(-50%); color:var(--muted)}
 .chips{display:flex; gap:6px; flex-wrap:wrap}
 .campo-busca{padding:10px 10px; border:1px solid var(--line); border-radius:10px; background:var(--panel); font:inherit; color:var(--ink)}
@@ -308,7 +311,7 @@ textarea{font:inherit}
         <option value="todo">Todo</option><option value="asunto">Asunto</option><option value="de">De</option>
         <option value="para">Para / Cc</option><option value="texto">Texto</option></select>
       <label class="search"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
-        <input id="busca" type="search" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" placeholder="Buscar en correos y adjuntos: nombre, factura, monto, RUT…" aria-label="Buscar"></label>
+        <input id="busca" type="search" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" placeholder="Buscar en correos y adjuntos: nombre, factura, monto, RUT…" aria-label="Buscar"><button type="button" class="limpiar-busca" id="limpiarBusca" hidden aria-label="Borrar la búsqueda" title="Borrar la búsqueda">✕</button></label>
       <div class="chips" id="filtros"></div>
     </div>
     <div class="split" id="split">
@@ -400,7 +403,16 @@ async function sincLeidos(){
 /* ---------- descifrar ---------- */
 const b64 = s => Uint8Array.from(atob(s), c => c.charCodeAt(0));
 let CAJA_ACTUAL = CAJA;
-async function abrir(clave){ return abrirCaja(CAJA, clave); }
+// Los últimos datos (cifrados) se guardan en el teléfono: la app abre al tiro con lo último que viste.
+async function cajaLocal(){ try { const c = await caches.open("correo"); const r = await c.match("caja"); return r ? await r.json() : null; } catch(e) { return null; } }
+async function guardarCajaLocal(caja){ try { const c = await caches.open("correo"); await c.put("caja", new Response(JSON.stringify(caja))); } catch(e) {} }
+async function abrir(clave){
+  const local = await cajaLocal();
+  if (local && local.ct && CAJA && local.ct !== CAJA.ct) {
+    try { const d = await abrirCaja(local, clave); CAJA_ACTUAL = local; return d; } catch(e) {}
+  }
+  return abrirCaja(CAJA, clave);
+}
 async function abrirCaja(CAJA, clave){
   const pw = await crypto.subtle.importKey("raw", new TextEncoder().encode(clave), "PBKDF2", false, ["deriveKey"]);
   const key = await crypto.subtle.deriveKey({name:"PBKDF2", salt:b64(CAJA.salt), iterations:CAJA.iter, hash:"SHA-256"}, pw, {name:"AES-GCM", length:256}, false, ["decrypt"]);
@@ -421,7 +433,8 @@ function construir(refresco = false){
   $("#estado").textContent = `${MSGS.length} correos${CUENTAS.length > 1 ? " · " + CUENTAS.length + " casillas" : ""}`;
   $("#hintIA").textContent = D._ia && (D._ia.clave || D._ia.clave_gemini) ? `Responde la IA gratuita (${D._ia.clave_gemini ? "Gemini de Google" + (D._ia.clave ? ", con Groq de respaldo" : "") : "Groq"}) usando tus correos y adjuntos. Puede equivocarse: revisa el correo citado.` : "La IA se activa cuando guardes la clave gratuita de Gemini (GEMINI_API_KEY) o de Groq (GROQ_API_KEY).";
   pintarFiltros(); pintarLista();
-  if (!refresco || !abierto) pintarCorreo();
+  if (!refresco || !abierto || abierto === pendienteAbrir) pintarCorreo();
+  if (pendienteAbrir) abrirPendiente();
   programarLeidos(3000);
 }
 
@@ -590,6 +603,7 @@ function pintarCorreo(){
     return;
   }
   if (abierto === "__nuevo__" && borrador && borrador.modo === "nuevo") { $("#read").innerHTML = `<div class="readbar"><button class="back" data-back>← Volver a la lista</button></div>${redactor()}`; return; }
+  if (!m && abierto && abierto === pendienteAbrir) { $("#read").innerHTML = `<div class="readbar"><button class="back" data-back>← Volver a la lista</button></div><p class="vacio">📩 Trayendo el correo nuevo… (unos segundos)</p>`; return; }
   if (!m) { $("#read").innerHTML = `<p class="vacio">Elige un correo de la lista para leerlo.</p>`; return; }
   const terms = terminos(), hilo = HILOS[m.hilo] || [m], h = (D.hilos || {})[m.hilo] || {}, a = m.analisis || {};
   const legible = f => f.texto && !String(f.texto).startsWith("(");
@@ -1008,17 +1022,21 @@ async function subirArchivos(lista, id, gh, avance){
   const b64 = await paqueteArchivos(lista), TROZO = 64000, n = Math.ceil(b64.length / TROZO);
   const url = `https://api.github.com/repos/${gh.repo}/actions/workflows/correo_trozo.yml/dispatches`;
   const h = { "Authorization": "Bearer " + gh.token, "Accept": "application/vnd.github+json" };
-  for (let k = 0; k < n; k++) {
-    let ok = false;
-    for (let intento = 0; intento < 4 && !ok; intento++) {
+  let listos = 0, siguiente = 0;
+  const pausa = n > 40 ? 800 : 0;                     // GitHub limita los pedidos por minuto
+  const subir = async k => {
+    for (let intento = 0; intento < 12; intento++) {
+      await visible();                                // si el iPhone pausó la app, sigue al volver
       const r = await fetch(url, { method: "POST", headers: h, body: JSON.stringify({ ref: "main", inputs: { id: `trozo-${id}-${k}`, datos: b64.slice(k * TROZO, (k + 1) * TROZO) } }) }).catch(() => null);
-      ok = !!(r && r.ok);
-      if (!ok) await new Promise(r2 => setTimeout(r2, 3000 * (intento + 1)));
+      if (r && r.ok) return;
+      await new Promise(ok => setTimeout(ok, Math.min(30000, 2000 * (intento + 1))));
     }
-    if (!ok) throw new Error("No se pudieron subir los adjuntos (GitHub no respondió).");
-    avance(Math.round(100 * (k + 1) / n));
-    if (n > 40) await new Promise(r2 => setTimeout(r2, 700));   // GitHub limita los pedidos por minuto
-  }
+    throw new Error("No se pudieron subir los adjuntos (GitHub no respondió).");
+  };
+  const trabajador = async () => {
+    while (siguiente < n) { const k = siguiente++; await subir(k); avance(Math.round(100 * ++listos / n)); if (pausa) await new Promise(ok => setTimeout(ok, pausa)); }
+  };
+  await Promise.all([...Array(Math.min(n, n > 40 ? 2 : 4))].map(trabajador));    // varias partes a la vez
   return n;
 }
 const listaCorreos = t => t.split(/[,;\s]+/).map(x => x.trim()).filter(Boolean);
@@ -1151,17 +1169,31 @@ function agregarLocales(){
   MSGS.sort((a, b) => b.fecha - a.fecha);
 }
 
+// Espera a que la app vuelva a estar en pantalla (el iPhone pausa las apps en segundo plano).
+const visible = () => document.visibilityState === "visible" ? Promise.resolve()
+  : new Promise(ok => { const f = () => { if (document.visibilityState === "visible") { document.removeEventListener("visibilitychange", f); ok(); } }; document.addEventListener("visibilitychange", f); });
+// Envío en segundo plano: el editor se cierra AL TIRO y el correo queda en la lista como "enviando…";
+// los adjuntos se suben de fondo y, si el iPhone pausa la app, el envío sigue al volver a ella.
 async function enviar(m){
   const b = borrador, gh = D._envio, id = Math.random().toString(36).slice(2, 10);
   const nombreAccion = {responder: "Respuesta", reenviar: "Reenvío", nuevo: "Correo"}[b.modo];
-  b.confirmar = false; b.ocupado = "enviando…"; pintarCorreo();
-  let local = null;
+  const nuevos = b.nuevos || [];
+  if (nuevos.reduce((t, f) => t + f.datos.length, 0) > MAX_ADJ) { b.estado = "✗ Los adjuntos suman más de 5 MB."; b.clase = "mal"; b.confirmar = false; pintarCorreo(); return; }
+  const cuenta = b.cuenta || (m && m.cuenta) || "";
+  const copia = {...b, ocupado: "", confirmar: false, estado: "", obs: null};
+  const local = { id: "local-" + id, local: true, estadoLocal: "enviando", enviado: true, fecha: Date.now(), cuenta,
+    de: cuenta, de_nombre: "Tú", para: listaCorreos(b.para), cc: listaCorreos(b.cc), asunto: b.asunto, texto: b.texto,
+    vista_previa: b.texto.slice(0, 160), archivos: nuevos.map(f => ({nombre: f.nombre})), hilo: m ? m.hilo : "local-" + id, analisis: null };
+  LOCALES.push(local); agregarLocales(); indexar(local);
+  borrador = null; if (abierto === "__nuevo__") abierto = null;
+  pintarFiltros(); pintarLista(); pintarCorreo();
+  const para = esc(local.para.join(", "));
+  aviso(`📤 Enviando ${nombreAccion.toLowerCase()} a ${para}${nuevos.length ? " (subiendo adjuntos…)" : "…"}`, "", 0);
   try {
-    const nuevos = b.nuevos || [];
-    if (nuevos.reduce((t, f) => t + f.datos.length, 0) > MAX_ADJ) throw new Error("Los adjuntos suman más de 5 MB.");
     let partes = 0;
-    if (nuevos.length) partes = await subirArchivos(nuevos, id, gh, pct => { b.ocupado = `subiendo adjuntos ${pct}%…`; pintarCorreo(); });
-    const cuenta = b.cuenta || (m && m.cuenta) || "";
+    if (nuevos.length) partes = await subirArchivos(nuevos, id, gh, pct => {
+      local.vista_previa = `Subiendo adjuntos ${pct}%… ` + b.texto.slice(0, 120); pintarLista();
+      aviso(`📤 Enviando ${nombreAccion.toLowerCase()} a ${para} · adjuntos ${pct}%`, "", 0); });
     const paquete = await cifrar({ modo: b.modo, cuenta, cuenta_id: ((D.cuentas_ids || {})[cuenta]) || (m && m.cuenta_id) || "",
                                    message_id: m ? m.id : "", carpeta: m ? (m.carpeta || "") : "", con_adjuntos: !!b.con_adjuntos,
                                    mid_cabecera: m ? (m.message_id || "") : "", referencias: m ? (m.referencias || "") : "",
@@ -1169,39 +1201,34 @@ async function enviar(m){
                                    adj_nuevos: partes ? { id, n: partes } : null });
     const api = `https://api.github.com/repos/${gh.repo}/actions/workflows/correo_enviar.yml`;
     const h = { "Authorization": "Bearer " + gh.token, "Accept": "application/vnd.github+json" };
-    const r = await fetch(api + "/dispatches", { method: "POST", headers: h, body: JSON.stringify({ ref: "main", inputs: { paquete: JSON.stringify(paquete), id } }) });
-    if (!r.ok) throw new Error(r.status === 401 || r.status === 403 ? "La llave de GitHub no tiene permiso para enviar." : `GitHub no aceptó el envío (${r.status}).`);
-
-    // Aceptado: cerrar el editor y mostrarlo ya en la lista.
-    const copia = {...b, ocupado: "", confirmar: false, estado: "", obs: null};
-    local = { id: "local-" + id, local: true, estadoLocal: "enviando", enviado: true, fecha: Date.now(), cuenta,
-      de: cuenta, de_nombre: "Tú", para: listaCorreos(b.para), cc: listaCorreos(b.cc), asunto: b.asunto, texto: b.texto,
-      vista_previa: b.texto.slice(0, 160), archivos: nuevos.map(f => ({nombre: f.nombre})), hilo: m ? m.hilo : "local-" + id, analisis: null, _idx: norm(b.asunto + " " + b.texto + " " + b.para) };
-    LOCALES.push(local); agregarLocales();
-    borrador = null; if (abierto === "__nuevo__") abierto = null;
-    pintarFiltros(); pintarLista(); pintarCorreo();
-    aviso(`📤 Enviando ${nombreAccion.toLowerCase()} a ${esc(local.para.join(", "))}…`, "", 0);
-
-    for (let i = 0; i < 60; i++) {
+    let r = null;
+    for (let intento = 0; intento < 8 && !(r && r.ok); intento++) {
+      await visible();
+      r = await fetch(api + "/dispatches", { method: "POST", headers: h, body: JSON.stringify({ ref: "main", inputs: { paquete: JSON.stringify(paquete), id } }) }).catch(() => null);
+      if (r && (r.status === 401 || r.status === 403)) throw new Error("La llave de GitHub no tiene permiso para enviar.");
+      if (!(r && r.ok)) await new Promise(ok => setTimeout(ok, 3000 * (intento + 1)));
+    }
+    if (!(r && r.ok)) throw new Error(`GitHub no aceptó el envío${r ? " (" + r.status + ")" : ""}.`);
+    local.vista_previa = b.texto.slice(0, 160); pintarLista();
+    aviso(`📤 Enviando ${nombreAccion.toLowerCase()} a ${para}…`, "", 0);
+    for (let i = 0; i < 80; i++) {
       await new Promise(ok => setTimeout(ok, i < 10 ? 2500 : 5000));
-      const j = await (await fetch(api + "/runs?per_page=10&event=workflow_dispatch", { headers: h, cache: "no-store" })).json().catch(() => ({}));
+      await visible();
+      const j = await (await fetch(api + "/runs?per_page=10&event=workflow_dispatch", { headers: h, cache: "no-store" }).catch(() => ({json: () => ({})}))).json().catch(() => ({}));
       const run = (j.workflow_runs || []).find(x => (x.display_title || "").includes(id));
       if (run && run.status === "completed") {
         if (run.conclusion === "success") {
           local.estadoLocal = "enviado"; pintarLista();
-          aviso(`✓ ${nombreAccion} enviad${b.modo === "reenviar" ? "o" : b.modo === "nuevo" ? "o" : "a"} a ${esc(local.para.join(", "))}`, "bien", 6000);
+          aviso(`✓ ${nombreAccion} enviad${b.modo === "reenviar" ? "o" : b.modo === "nuevo" ? "o" : "a"} a ${para}`, "bien", 6000);
           setTimeout(() => revisarZoho(false), 70000);      // el vigilante lo trae de Zoho en ~1 minuto
         } else falla(local, copia, m, "No se pudo enviar (Zoho lo rechazó).");
         return;
       }
     }
-    aviso("El envío sigue en proceso; revisa en unos minutos tus Enviados en Zoho.", "", 8000);
-  } catch (e) {
-    if (local) falla(local, {...b}, m, e.message);
-    else { b.estado = "✗ " + e.message; b.clase = "mal"; b.ocupado = ""; pintarCorreo(); }
-  }
+    aviso("El envío sigue en proceso; revisa en unos minutos tus Enviados.", "", 8000);
+  } catch (e) { falla(local, copia, m, e.message); }
 }
-let recuperable = null;
+
 function falla(local, copia, m, motivo){
   LOCALES = LOCALES.filter(x => x !== local); MSGS = MSGS.filter(x => x !== local);
   if (HILOS[local.hilo]) HILOS[local.hilo] = HILOS[local.hilo].filter(x => x !== local);
@@ -1524,7 +1551,13 @@ document.addEventListener("click", ev => {
 document.addEventListener("input", ev => { if (ev.target.closest(".compose")) { leerBorrador();
   for (const k of ["revisar", "mejorar"]) { const b = document.querySelector(`[data-r="${k}"]`); if (b && !borrador.ocupado) b.disabled = !borrador.texto.trim(); } } });
 let tBusca;
-$("#busca").addEventListener("input", ev => { clearTimeout(tBusca); tBusca = setTimeout(() => { busca = ev.target.value.trim(); limite = 150; if (busca) cargarHistorial(); pintarLista(); pintarCorreo(); }, 150); });
+$("#busca").addEventListener("input", ev => { $("#limpiarBusca").hidden = !ev.target.value; clearTimeout(tBusca); tBusca = setTimeout(() => { busca = ev.target.value.trim(); limite = 150; if (busca) cargarHistorial(); pintarLista(); pintarCorreo(); }, 150); });
+// ✕ (o Esc): borra la búsqueda y vuelve a mostrar todos los correos.
+function limpiarBusqueda(){ $("#busca").value = ""; $("#limpiarBusca").hidden = true; busca = ""; limite = 150;
+  if (abierto && !MSGS.some(m => m.id === abierto)) abierto = null; pintarLista(); pintarCorreo(); }
+$("#limpiarBusca").addEventListener("click", () => { limpiarBusqueda(); $("#busca").blur(); });
+$("#busca").addEventListener("keydown", ev => { if (ev.key === "Escape") limpiarBusqueda(); });
+$("#busca").addEventListener("search", ev => { if (!ev.target.value) limpiarBusqueda(); });
 $("#campoBusca").addEventListener("change", ev => { campoBusca = ev.target.value; limite = 150; pintarLista(); pintarCorreo(); $("#busca").focus(); });
 
 /* ---------- correos nuevos: casi en tiempo real ---------- */
@@ -1577,7 +1610,7 @@ async function revisarZoho(manual){
       if (caja && caja.ct && caja.ct !== CAJA_ACTUAL.ct) {
         const antes = new Set(MSGS.map(m => m.id));
         const nuevoD = await abrirCaja(caja, CLAVE);
-        CAJA_ACTUAL = caja; leerBorrador(); D = nuevoD; construir(true); prepararAvisos();
+        CAJA_ACTUAL = caja; leerBorrador(); D = nuevoD; construir(true); prepararAvisos(); guardarCajaLocal(caja);
         n = MSGS.filter(m => !antes.has(m.id) && !m.local).length;
       }
       versionActual = v.v;
@@ -1610,11 +1643,24 @@ setInterval(() => { if (D && document.visibilityState === "visible") { revisarZo
 document.addEventListener("visibilitychange", () => { if (D && document.visibilityState === "visible") { revisarZoho(false); revisarVersionPagina(); } });
 
 /* ---------- entrar ---------- */
+// Al tocar un aviso del iPhone se abre ese correo (si aún no llega a la app, apenas llegue).
+let pendienteAbrir = decodeURIComponent((location.hash.match(/#m=([^&]+)/) || [])[1] || "") || null;
+function abrirPendiente(){
+  if (!pendienteAbrir || !D) return;
+  const m = MSGS.find(x => x.id === pendienteAbrir);
+  abierto = pendienteAbrir; irA("correos");
+  if (m) { carpeta = m.enviado ? "enviados" : "entrada"; marcarLeido(m.id); pendienteAbrir = null; history.replaceState(null, "", location.pathname + location.search); }
+  pintarFiltros(); pintarLista(); pintarCorreo(); if (innerWidth <= 860) scrollTo(0, 0);
+}
+if ("serviceWorker" in navigator) navigator.serviceWorker.addEventListener("message", ev => {
+  if (ev.data && ev.data.abrir) { pendienteAbrir = String(ev.data.abrir); abrirPendiente(); buscando = false; revisarZoho(true); }
+});
+
 async function entrar(clave, recordar){
   D = await abrir(clave); CLAVE = clave;
   if (recordar) ss.set("correo_clave", clave);
   $("#bloqueo").hidden = true; $("#appwrap").hidden = false;
-  construir(); irA("correos");
+  construir(); irA("correos"); abrirPendiente();
   revisarZoho(false);
   prepararAvisos();
 }
