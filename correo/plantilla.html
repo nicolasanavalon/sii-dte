@@ -116,6 +116,13 @@ header{display:flex; flex-wrap:wrap; align-items:center; justify-content:space-b
 .sinc{display:flex; align-items:center; gap:8px; flex-wrap:wrap}
 .acciones{display:flex; align-items:center; gap:10px 18px; flex-wrap:wrap}
 .movil{display:none}
+.avance{position:fixed; z-index:30; top:calc(env(safe-area-inset-top, 0px) + 70px); right:16px; left:auto; width:min(420px, calc(100vw - 32px));
+  background:var(--panel); border:1px solid var(--line); border-radius:12px; box-shadow:0 12px 32px rgba(20,26,40,.18); padding:14px 16px; display:flex; flex-direction:column; gap:12px}
+.avance h3{display:flex; justify-content:space-between; align-items:center}
+.avance .fila-av{display:flex; flex-direction:column; gap:4px; font-size:13.5px}
+.avance .barra2{height:8px; border-radius:99px; background:var(--soft); overflow:hidden}
+.avance .barra2 i{display:block; height:100%; background:var(--accent)}
+.avance .barra2.idx i{background:#9db0e8}
 .row .avatar.mini, .row .clip{display:none}
 /* App en la pantalla de inicio del iPhone: el iPhone difumina la franja de arriba; el contenido parte más abajo. */
 @media (display-mode: standalone) and (max-width:860px){ .app{padding-top:calc(env(safe-area-inset-top, 0px) + 34px)} }
@@ -276,6 +283,7 @@ textarea{font:inherit}
   </form>
 </div>
 
+<div class="avance" id="panelAvance" hidden></div>
 <div id="appwrap" class="app" hidden>
   <header>
     <div hidden><h1>Bandeja Zoho</h1><div class="muted small" id="estado"></div><div class="progreso" id="progreso"></div></div>
@@ -288,6 +296,7 @@ textarea{font:inherit}
       <div class="sinc"><button class="chip" id="buscarAhora" title="Buscar correos nuevos en Zoho">🔄<span class="pc"> Buscar ahora</span></button><span class="small muted" id="sincTxt"></span></div>
       <button class="btn" id="nuevo" data-nuevo>✉️<span class="pc"> Nuevo correo</span><span class="movil"> Nuevo</span></button>
       <button class="chip" id="avisos" hidden title="Activar burbuja y avisos">🔔<span class="pc"> Activar burbuja y avisos</span></button>
+      <button class="chip" id="verAvance" title="Avance: correos indexados y analizados por la IA">📊<span class="pc"> Avance</span></button>
       <button class="chip" id="salir" title="Olvidar la contraseña en este dispositivo"><span class="pc">Cerrar sesión</span><span class="movil">Salir</span></button>
     </div>
   </header>
@@ -474,17 +483,22 @@ const correosDe = t => (String(t || "").match(/[^\s<>,;"']+@[^\s<>,;"']+/g) || [
 async function cargarHistorial(){
   if (HISTORIAL.cargando) return;
   let v = null; try { v = await deDatos("version.json"); } catch(e) {}
-  if (HISTORIAL.lista && (!v || v.h === HISTORIAL.version)) return;
+  if (HISTORIAL.lista && (!v || (v.h === HISTORIAL.version && v.ar === HISTORIAL.varchivo))) return;
   HISTORIAL.cargando = true; pintarLista();
   try {
     const crudo = await abrirCaja(await deDatos("historial.json"), CLAVE);
+    let arch = {c: {}, h: {}};
+    try { arch = await abrirCaja(await deDatos("archivo.json"), CLAVE); } catch(e) {}
+    HISTORIAL.hilos = arch.h || {};
     HISTORIAL.lista = crudo.map(e => { const de = correosDe(e.de)[0] || e.de, h = {
       id: e.i, hist: true, cuenta_id: e.a, cuenta: e.c, carpeta: e.f, carpeta_nombre: e.fn, enviado: !!e.e, fecha: e.t,
       de, de_nombre: e.dn || String(e.de || "").replace(/<[^>]*>/g, "").replace(/"/g, "").trim(), para: correosDe(e.pa), cc: correosDe(e.cc),
       asunto: e.s || "(sin asunto)", vista_previa: e.r || "", archivos: [], adj: !!e.j, hilo: "hist-" + e.i, analisis: null };
+      const a = (arch.c || {})[e.i];
+      if (a) { h.texto = a.tx || ""; h.hilo_arch = a.h; if (a.r) { h.analisis = {resumen: a.r, importancia: a.i}; h.vista_previa = a.r; } }
       indexar(h); return h; }).sort((a, b) => b.fecha - a.fecha);
     HISTORIAL.porId = Object.fromEntries(HISTORIAL.lista.map(h => [h.id, h]));
-    HISTORIAL.version = v ? v.h : "";
+    HISTORIAL.version = v ? v.h : ""; HISTORIAL.varchivo = v ? v.ar : "";
   } catch(e) { HISTORIAL.error = "El historial aún se está armando (el vigilante lo completa de a poco)."; }
   HISTORIAL.cargando = false; pintarLista();
 }
@@ -568,8 +582,10 @@ function pintarCorreo(){
     $("#read").innerHTML = `<div class="readbar"><button class="back" data-back>← Volver a la lista</button></div>
       <h2 class="asunto">${esc(h.asunto)}</h2>
       <div class="muted small">${h.enviado ? "Para: " + esc(h.para.join(", ")) : "De: " + esc(h.de_nombre || h.de) + " &lt;" + esc(h.de) + "&gt;"} · ${esc(fmtF(h.fecha))} · ${esc(etiqueta(h.cuenta))}${h.carpeta_nombre ? " · " + esc(h.carpeta_nombre) : ""}</div>
-      <div class="hist-caja"><span class="muted small">📁 Correo antiguo del historial: aquí solo está el resumen de Zoho/Gmail.</span>
-        ${h.vista_previa ? `<p style="margin:0">${esc(h.vista_previa)}…</p>` : ""}
+      <div class="hist-caja"><span class="muted small">📁 Correo antiguo del historial${h.analisis ? " · ✨ analizado por la IA" : ": aún no lo analiza la IA (avanza de a poco)"}.</span>
+        ${h.vista_previa ? `<p style="margin:0">${esc(h.vista_previa)}</p>` : ""}
+        ${(HISTORIAL.hilos || {})[h.hilo_arch] ? `<div><strong class="small">Resumen de la conversación</strong><p style="margin:4px 0 0">${esc(HISTORIAL.hilos[h.hilo_arch].resumen)}</p>
+          ${(HISTORIAL.hilos[h.hilo_arch].puntos_clave || []).length ? `<ul style="margin:6px 0 0">${HISTORIAL.hilos[h.hilo_arch].puntos_clave.map(x => `<li>${esc(x)}</li>`).join("")}</ul>` : ""}</div>` : ""}
         <div class="actions"><button class="btn" data-traer="${esc(h.id)}" ${pidiendo ? "disabled" : ""}>${pidiendo ? "Trayendo… (aprox. 1 minuto)" : "📥 Traer correo completo (texto y adjuntos)"}</button></div></div>`;
     return;
   }
@@ -1245,6 +1261,25 @@ function contextoGeneral(q){
     if (texto.length + bloque.length > 10000) break;
     texto += bloque;
   }
+  // Correos antiguos (historial analizado): los que mejor coinciden con la pregunta.
+  if (HISTORIAL.lista && terms.length && texto.length < 9000) {
+    const ya = new Set(MSGS.map(m => m.id)), cand = [];
+    for (const h of HISTORIAL.lista) {
+      if (ya.has(h.id) || (cuentaSel && h.cuenta !== cuentaSel)) continue;
+      let sc = 0; for (const t of terms) { if ((h._as + " " + h._de).includes(t)) sc += 4; if (h._idx.includes(t)) sc += 2; }
+      if (sc) cand.push([sc + h.fecha / 1e14, h]);
+    }
+    cand.sort((a, b) => b[0] - a[0]);
+    const vistos = new Set();
+    for (const [, h] of cand.slice(0, 25)) {
+      const hl = (HISTORIAL.hilos || {})[h.hilo_arch];
+      let b = `\n### Correo antiguo "${h.asunto}" ${h.enviado ? "enviado a " + (h.para[0] || "") : "de " + (h.de_nombre || h.de)} (${fmtF(h.fecha)})\n` +
+        (h.analisis ? "Resumen: " + h.analisis.resumen + "\n" : "") + (h.texto ? "Texto: " + h.texto.slice(0, 500) + "\n" : "");
+      if (hl && !vistos.has(h.hilo_arch)) { vistos.add(h.hilo_arch); b += `Resumen de la conversación: ${hl.resumen}\n${(hl.puntos_clave || []).length ? "Puntos clave: " + hl.puntos_clave.join("; ") + "\n" : ""}`; }
+      if (texto.length + b.length > 13000) break;
+      texto += b;
+    }
+  }
   const indice = base.slice(0, 60).map(m => `- ${fmtL(m.fecha)} | ${m.enviado ? "enviado a " + (m.para[0] || "") : (m.de_nombre || m.de)} | ${m.asunto}`).join("\n");
   return `ÚLTIMOS CORREOS (índice):\n${indice.slice(0, 3000)}\n\nCORREOS RELACIONADOS CON LA PREGUNTA:${texto || "\n(ninguno coincide con las palabras de la pregunta)"}`;
 }
@@ -1427,6 +1462,7 @@ $("#formAsk").addEventListener("submit", async ev => {
   $("#qa").prepend(item);
   const btn = $("#btnAsk"); btn.disabled = true;
   try {
+    if (!ctxHilo) await Promise.race([cargarHistorial(), new Promise(r => setTimeout(r, 8000))]);
     const contexto = ctxHilo ? `CONVERSACIÓN COMPLETA (todos sus correos, la cadena citada y el texto de los adjuntos):\n${textoHilo(HILOS[ctxHilo], 13000)}` : contextoGeneral(q);
     const r = await groq(INSTRUCCION, `Fecha de hoy: ${hoyISO()}.\n\n${contexto}\n\nPREGUNTA DE NICOLÁS: ${q}`, false,
       t => { const a = item.querySelector(".a"); if (a) a.innerHTML = `<p class="muted">${esc(t)}</p>`; });
@@ -1442,12 +1478,13 @@ function irA(v){
   if (v === "preguntar") { pintarCtx(); $("#qAsk").focus(); }
 }
 document.addEventListener("click", ev => {
-  const t = ev.target.closest("[data-v],[data-m],[data-f],[data-cu],[data-back],[data-more],[data-askthread],[data-noctx],[data-sug],[data-responder],[data-r],[data-adj],[data-vertexto],[data-ver],[data-bajar],[data-nuevo],[data-recuperar],[data-noleido],[data-hoja],[data-quitaradj],[data-carpeta],[data-zoomxls],[data-traer]");
+  const t = ev.target.closest("[data-v],[data-m],[data-f],[data-cu],[data-back],[data-more],[data-askthread],[data-noctx],[data-sug],[data-responder],[data-r],[data-adj],[data-vertexto],[data-ver],[data-bajar],[data-nuevo],[data-recuperar],[data-noleido],[data-hoja],[data-quitaradj],[data-carpeta],[data-zoomxls],[data-traer],[data-cerraravance]");
   if (!t) return;
   if (t.dataset.adj !== undefined) { const i = +t.dataset.adj; leerBorrador(); adjAbierto = adjAbierto === i ? null : i; pintarCorreo(); return; }
   if (t.dataset.ver !== undefined || t.dataset.bajar !== undefined) { const mm = MSGS.find(x => x.id === abierto); if (mm) abrirAdjunto(mm, +(t.dataset.ver ?? t.dataset.bajar), t.dataset.ver !== undefined); return; }
   if (t.dataset.quitaradj !== undefined && borrador) { leerBorrador(); borrador.nuevos.splice(+t.dataset.quitaradj, 1); borrador.estado = ""; pintarCorreo(); return; }
   if (t.dataset.carpeta) { carpeta = t.dataset.carpeta; limite = 150; abierto = null; pintarFiltros(); pintarLista(); pintarCorreo(); if (innerWidth <= 860) scrollTo(0, 0); return; }
+  if ("cerraravance" in t.dataset) { $("#panelAvance").hidden = true; return; }
   if (t.dataset.traer) { const h = HISTORIAL.porId[t.dataset.traer]; if (h) traerCompleto(h); return; }
   if (t.dataset.zoomxls) { visor.zoom = Math.min(2, Math.max(0.4, Math.round(((visor.zoom || 1) + 0.2 * +t.dataset.zoomxls) * 10) / 10)); pintarCorreo(); return; }
   if (t.dataset.hoja !== undefined) { visor.hoja = +t.dataset.hoja; pintarCorreo(); return; }
@@ -1507,11 +1544,32 @@ async function deDatos(archivo){
   if (!r.ok) throw new Error("HTTP " + r.status);
   return r.json();
 }
+let AVANCE = null, avanceCaja = "";
+async function leerAvance(v){
+  if (!v || !v.a || JSON.stringify(v.a) === avanceCaja) return;
+  try { AVANCE = await abrirCaja(v.a, CLAVE); avanceCaja = JSON.stringify(v.a); if (!$("#panelAvance").hidden) pintarAvance(); } catch(e) {}
+}
+const num = n => Number(n || 0).toLocaleString("es-CL");
+function pintarAvance(){
+  const p = $("#panelAvance");
+  const filas = AVANCE && AVANCE.cuentas || [];
+  p.innerHTML = `<h3>📊 Avance del análisis <button class="chip" data-cerraravance aria-label="Cerrar">✕</button></h3>
+    ${filas.length ? filas.map(c => `<div class="fila-av"><strong>${esc(c.n)}</strong>
+      <span>Analizados por la IA: <b>${c.pct}%</b> <span class="muted">(${num(c.analizados)} de ${num(c.total)})</span></span>
+      <div class="barra2"><i style="width:${Math.min(100, c.pct)}%"></i></div>
+      <span class="muted small">En el índice para buscar: ${c.pct_indice}% (${num(c.conocidos)} de ${num(c.total)})</span>
+      <div class="barra2 idx"><i style="width:${Math.min(100, c.pct_indice)}%"></i></div></div>`).join("")
+    : '<p class="muted small" style="margin:0">El vigilante está calculando el avance; vuelve a abrir esto en un par de minutos.</p>'}
+    <p class="muted small" style="margin:0">Incluye todos los correos, desde el más antiguo, recibidos y enviados. La IA gratuita tiene un límite diario: el análisis avanza solo, de a poco${AVANCE && AVANCE.t ? " (actualizado " + horaTxt(AVANCE.t) + ")" : ""}</p>`;
+}
+$("#verAvance").addEventListener("click", () => { const p = $("#panelAvance"); p.hidden = !p.hidden; if (!p.hidden) pintarAvance(); });
+
 async function revisarZoho(manual){
   if (buscando || !D) return; buscando = true;
   if (manual) sinc("Revisando…", true);
   try {
     const v = await deDatos("version.json");
+    leerAvance(v);
     let n = 0;
     if (v.v && v.v !== versionActual) {
       const caja = await deDatos("caja.json");

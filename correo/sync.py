@@ -210,6 +210,22 @@ _ZOHO = {}
 CUENTAS_Z = {}           # account_id de Zoho -> (cliente, dirección): para el historial y los pedidos de la página
 _CARPETAS_HIST = {}
 _UIDS_GMAIL = {}
+_AVANCE = {}
+TOTALES = {}             # dirección -> cantidad total de correos en la casilla (para el % de avance)
+
+
+def total_carpeta(z, acc, fid):
+    """Cantidad de correos de una carpeta de Zoho (búsqueda por saltos: unas 15 consultas, una vez por corrida)."""
+    hay = lambda n: bool(z.listar(acc, fid, start=n, limit=1))
+    if not hay(1):
+        return 0
+    lo, hi = 1, 1000
+    while hay(hi):
+        lo, hi = hi, hi * 2
+    while hi - lo > 1:
+        mid = (lo + hi) // 2
+        lo, hi = (mid, hi) if hay(mid) else (lo, mid)
+    return lo
 NO_HISTORIAL = {"trash", "spam", "drafts", "outbox", "templates", "papelera", "borradores", "plantillas", "bandeja de salida"}
 LIMITE_VUELTA = 0.0      # en el vigilante: hora tope de cada vuelta (para revisar Zoho siempre cada minuto)
 CARPETAS_EXTRA = {"newsletter", "newsletters", "notification", "notifications", "notificaciones", "boletines"}
@@ -1130,6 +1146,11 @@ def avanzar_historial(estado, hasta):
             _CARPETAS_HIST[acc] = [c for c in z.carpetas(acc)
                                    if str(c.get("folderType", "")).lower() not in NO_HISTORIAL
                                    and str(c.get("folderName", "")).lower() not in NO_HISTORIAL]
+            try:
+                TOTALES[direccion] = sum(total_carpeta(z, acc, str(c["folderId"])) for c in _CARPETAS_HIST[acc])
+                print(f"Historial: la casilla {direccion} tiene {TOTALES[direccion]} correos.")
+            except Exception as e:
+                print(f"::warning::No pude contar los correos de {direccion}: {str(e)[:150]}")
         for c in _CARPETAS_HIST[acc]:
             fid, k = str(c["folderId"]), cur.setdefault(acc, {})
             while k.get(fid) != "fin" and time.time() < hasta and paginas < 8:     # sin apurar a Zoho
@@ -1150,11 +1171,12 @@ def avanzar_historial(estado, hasta):
     if g and env("GMAIL_CORREO"):
         acc, correo = "gmail:" + env("GMAIL_CORREO").lower(), env("GMAIL_CORREO").lower()
         k = cur.setdefault(acc, {})
-        if k.get("todos") == "fin":
+        if k.get("todos") == "fin" and correo in TOTALES:
             return
         carpeta = g.carpeta_todos()
         if acc not in _UIDS_GMAIL:
             _UIDS_GMAIL[acc] = list(reversed(g.uids_todos(carpeta)))      # más nuevos primero
+            TOTALES[correo] = len(_UIDS_GMAIL[acc])
         uids, pos = _UIDS_GMAIL[acc], k.get("todos", 0)
         while pos < len(uids) and time.time() < hasta:
             for gid, th, enviado, ms, h in g.cabeceras(carpeta, uids[pos:pos + 300]):
@@ -1219,9 +1241,17 @@ def una_vuelta(estado, clave, rapido):
     analizados = analizar_pendientes(estado)
     t3 = time.time()
     try:
-        avanzar_historial(estado, min(LIMITE_VUELTA + 5, time.time() + 25))   # índice del historial, de a poco
+        avanzar_historial(estado, min(LIMITE_VUELTA + 5, time.time() + 15))   # índice del historial, de a poco
     except Exception as e:
         print(f"::warning::Historial: {str(e)[:200]}")
+    try:                                              # correos antiguos: descargar y analizar con IA, de a poco
+        import archivo as A
+        import historial as H
+        A.descargar(H.HIST, set(estado["mensajes"]), CUENTAS_Z, _ZOHO.get("gmail") if env("GMAIL_CORREO") else None,
+                    hasta=min(LIMITE_VUELTA + 12, time.time() + 12))
+        A.analizar(H.HIST, hasta=LIMITE_VUELTA + 20)
+    except Exception as e:
+        print(f"::warning::Archivo: {str(e)[:200]}")
     print(f"  tiempos: Zoho {t1 - t0:.0f} s · estilo {t2 - t1:.0f} s · resúmenes {t3 - t2:.0f} s · historial {time.time() - t3:.0f} s")
     cambio = bool(nuevos or completados or analizados or estilo or estado.pop("_cambio_otro", False)
                   or estado.pop("_hilos_actualizados", 0)
@@ -1243,8 +1273,10 @@ def vigilar(estado, clave, minutos):
     os.environ.setdefault("CORREO_MAX_POR_CORRIDA", "15") # correos antiguos por vuelta (de a poco, sin atrasar lo nuevo)
     if not env("CORREO_MAX_POR_CORRIDA"):
         os.environ["CORREO_MAX_POR_CORRIDA"] = "15"
+    import archivo as A
     import historial as H
     H.cargar(clave)
+    A.cargar(clave)
     fin = time.time() + minutos * 60
     ultima_completa, ultima_pub, pendiente_pub, vuelta = 0.0, time.time(), False, 0
     while time.time() < fin:
@@ -1262,6 +1294,13 @@ def vigilar(estado, clave, minutos):
         if datos_dir:
             caja = Path(datos_dir) / "caja.json"
             H.guardar(clave, cada=0 if time.time() + 120 > fin else 300)
+            A.guardar(clave, cada=0 if time.time() + 120 > fin else 300)
+            try:     # avance por casilla (cifrado: solo lo ve quien tiene la contraseña)
+                av = A.avance(estado, H.HIST, estado.get("etiquetas", {}), TOTALES)
+                if av != _AVANCE.get("ultimo"):
+                    _AVANCE.update(ultimo=av, caja=cripto.cifrar({"cuentas": av, "t": int(time.time() * 1000)}, clave))
+            except Exception as e:
+                print(f"::warning::Avance: {str(e)[:150]}")
             if not caja.exists():
                 generar_html(estado, clave)
                 cambio = True
@@ -1269,7 +1308,10 @@ def vigilar(estado, clave, minutos):
             (Path(datos_dir) / "version.json").write_text(json.dumps(
                 {"v": v, "t": datetime.now(TZ).strftime("%Y-%m-%d %H:%M"), "ms": int(time.time() * 1000),
                  "h": hashlib.sha1((Path(datos_dir) / "historial.json").read_bytes()).hexdigest()[:16]
-                 if (Path(datos_dir) / "historial.json").exists() else ""}))
+                 if (Path(datos_dir) / "historial.json").exists() else "",
+                 "ar": hashlib.sha1((Path(datos_dir) / "archivo.json").read_bytes()).hexdigest()[:16]
+                 if (Path(datos_dir) / "archivo.json").exists() else "",
+                 "a": _AVANCE.get("caja")}))
         pendiente_pub = pendiente_pub or cambio
         publicar = pendiente_pub and time.time() - ultima_pub > 3600    # la página publicada se renueva cada hora
         if publicar:
