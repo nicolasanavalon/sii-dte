@@ -211,6 +211,7 @@ CUENTAS_Z = {}           # account_id de Zoho -> (cliente, dirección): para el 
 _CARPETAS_HIST = {}
 _UIDS_GMAIL = {}
 _AVANCE = {}
+_POR_AVISAR = []
 TOTALES = {}             # dirección -> cantidad total de correos en la casilla (para el % de avance)
 
 
@@ -1120,7 +1121,7 @@ def avisar_celular(estado, nuevos):
     n = sum(1 for m in estado["mensajes"].values() if not m.get("enviado") and m.get("no_leido"))
     if len(lista) <= 3:
         mensajes = [{"titulo": m.get("de_nombre") or m["de"], "cuerpo": m.get("asunto") or "(sin asunto)", "n": n,
-                     "tag": m["id"]} for m in lista]
+                     "tag": m["id"], "id": m["id"]} for m in lista]
     else:
         mensajes = [{"titulo": f"{len(lista)} correos nuevos", "n": n, "tag": "varios",
                      "cuerpo": " · ".join((m.get("de_nombre") or m["de"]) for m in lista[:6])}]
@@ -1234,10 +1235,7 @@ def una_vuelta(estado, clave, rapido):
     except Exception as e:
         print(f"::warning::Pedidos de la página: {str(e)[:200]}")
     avisar(estado, [], nuevos)                       # aviso inmediato, sin esperar el resumen de la IA
-    try:
-        avisar_celular(estado, nuevos)
-    except Exception as e:
-        print(f"::warning::No pude avisar al celular: {str(e)[:200]}")
+    _POR_AVISAR.extend(nuevos)       # se avisa al celular después de guardar los datos (ver vigilar)
     t1 = time.time()
     estilo = not rapido and actualizar_estilo(estado)
     t2 = time.time()
@@ -1296,6 +1294,12 @@ def vigilar(estado, clave, minutos):
             ultima_pub, pendiente_pub = time.time(), False
         if env("CORREO_GUARDAR"):
             subprocess.run(["bash", env("CORREO_GUARDAR"), "1" if cambio else "0", "1" if publicar else "0"], check=False)
+        if _POR_AVISAR:              # ya guardado: al tocar el aviso, el correo está disponible en la app
+            try:
+                avisar_celular(estado, list(_POR_AVISAR))
+            except Exception as e:
+                print(f"::warning::No pude avisar al celular: {str(e)[:200]}")
+            _POR_AVISAR.clear()
         vuelta += 1
         print(f"Vuelta {vuelta} ({'completa' if completa else 'rápida'}) en {time.time() - inicio:.0f} s"
               + (" · con cambios" if cambio else ""), flush=True)
