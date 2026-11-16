@@ -60,6 +60,10 @@ header{display:flex; flex-wrap:wrap; align-items:center; justify-content:space-b
 .search input{width:100%; padding:11px 14px 11px 38px; border:1px solid var(--line); border-radius:10px; background:var(--panel)}
 .search svg{position:absolute; left:12px; top:50%; transform:translateY(-50%); color:var(--muted)}
 .chips{display:flex; gap:6px; flex-wrap:wrap}
+.campo-busca{padding:10px 10px; border:1px solid var(--line); border-radius:10px; background:var(--panel); font:inherit; color:var(--ink)}
+.row.hist{background:repeating-linear-gradient(0deg, transparent, transparent)}
+.tag.hist{background:#eef1f6; color:#4a5568}
+.hist-caja{border:1px dashed var(--line); border-radius:10px; padding:14px 16px; display:flex; flex-direction:column; gap:10px}
 .split{display:grid; grid-template-columns:minmax(300px, 420px) minmax(0, 1fr); gap:12px; align-items:start}
 .list{background:var(--panel); border:1px solid var(--line); border-radius:var(--r); overflow:hidden}
 .count{padding:8px 14px; border-bottom:1px solid var(--line); font-size:12.5px; color:var(--muted)}
@@ -135,7 +139,9 @@ header{display:flex; flex-wrap:wrap; align-items:center; justify-content:space-b
   #vCorreos .toolbar .carpetas .pc{display:none}
   #vCorreos .toolbar .carpetas button{padding:8px 11px}
   #vCorreos .toolbar .search{flex:1 1 0}
-  #vCorreos .toolbar .chips{flex-basis:100%}
+  #vCorreos .toolbar .chips{flex:1}
+  #vCorreos .toolbar .campo-busca{order:5; padding:7px 8px; font-size:15px}
+  #vCorreos .toolbar .chips{order:6}
   .acciones{width:100%; flex-wrap:nowrap; gap:6px}
   .acciones .sinc{flex:1; min-width:0; flex-wrap:nowrap; gap:6px}
   #sincTxt{min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; font-size:12px}
@@ -289,6 +295,9 @@ textarea{font:inherit}
   <section id="vCorreos">
     <div class="toolbar" style="margin-bottom:10px">
       <div class="seg carpetas" id="carpetas" role="tablist" aria-label="Carpetas"></div>
+      <select id="campoBusca" class="campo-busca" aria-label="Buscar en">
+        <option value="todo">Todo</option><option value="asunto">Asunto</option><option value="de">De</option>
+        <option value="para">Para / Cc</option><option value="texto">Texto</option></select>
       <label class="search"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
         <input id="busca" type="search" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" placeholder="Buscar en correos y adjuntos: nombre, factura, monto, RUT…" aria-label="Buscar"></label>
       <div class="chips" id="filtros"></div>
@@ -399,7 +408,7 @@ function construir(refresco = false){
   agregarLocales();
   CUENTAS = [...new Set(MSGS.map(m => m.cuenta).filter(Boolean))];
   armarAgenda();
-  for (const m of MSGS) m._idx = norm(m.asunto + " " + m.de + " " + (m.de_nombre || "") + " " + m.para.join(" ") + " " + (m.texto || m.vista_previa || "") + " " + m.archivos.map(a => a.nombre + " " + (a.texto || "")).join(" "));
+  for (const m of MSGS) indexar(m);
   $("#estado").textContent = `${MSGS.length} correos${CUENTAS.length > 1 ? " · " + CUENTAS.length + " casillas" : ""}`;
   $("#hintIA").textContent = D._ia && (D._ia.clave || D._ia.clave_gemini) ? `Responde la IA gratuita (${D._ia.clave_gemini ? "Gemini de Google" + (D._ia.clave ? ", con Groq de respaldo" : "") : "Groq"}) usando tus correos y adjuntos. Puede equivocarse: revisa el correo citado.` : "La IA se activa cuando guardes la clave gratuita de Gemini (GEMINI_API_KEY) o de Groq (GROQ_API_KEY).";
   pintarFiltros(); pintarLista();
@@ -437,12 +446,64 @@ function pintarProgreso(){
 const etiqueta = c => ((D && D.etiquetas) || {})[c] || (/gary/i.test(c || "") ? "Gary" : (c || "").split("@")[0]);
 
 const terminos = () => norm(busca).split(/\s+/).filter(Boolean);
+let campoBusca = "todo";
+// Índices de búsqueda por campo (asunto, de, para/cc, texto) y uno general.
+function indexar(m){
+  m._as = norm(m.asunto); m._de = norm(m.de + " " + (m.de_nombre || "")); m._pa = norm(m.para.join(" ") + " " + m.cc.join(" "));
+  m._tx = norm((m.texto || m.vista_previa || "") + " " + m.archivos.map(a => a.nombre + " " + (a.texto || "")).join(" "));
+  m._idx = m._as + " " + m._de + " " + m._pa + " " + m._tx;
+}
+const campoDe = m => ({asunto: m._as, de: m._de, para: m._pa, texto: m._tx}[campoBusca] ?? m._idx);
 function visibles(){
   const terms = terminos();
-  return MSGS.filter(m => (!cuentaSel || m.cuenta === cuentaSel) &&
+  const propios = MSGS.filter(m => (!cuentaSel || m.cuenta === cuentaSel) &&
     (terms.length || (carpeta === "enviados" ? m.enviado : !m.enviado)) &&     // al buscar: en todas las carpetas
     (filtro === "todos" || (filtro === "noleidos" && noLeido(m)) || (filtro === "adjuntos" && m.archivos.length)) &&
-    terms.every(t => m._idx.includes(t)));
+    terms.every(t => campoDe(m).includes(t)));
+  if (!terms.length || filtro === "noleidos" || !HISTORIAL.lista) return propios;
+  // Al buscar: también los correos antiguos del historial (índice liviano de todas las casillas y carpetas).
+  const ya = new Set(MSGS.map(m => m.id));
+  const viejos = HISTORIAL.lista.filter(h => !ya.has(h.id) && (!cuentaSel || h.cuenta === cuentaSel) &&
+    (filtro !== "adjuntos" || h.adj) && terms.every(t => campoDe(h).includes(t))).slice(0, 300);
+  return [...propios, ...viejos];
+}
+
+/* ---------- historial completo (correos antiguos): se descarga solo al buscar ---------- */
+const HISTORIAL = { lista: null, cargando: false, version: "", porId: {} };
+const correosDe = t => (String(t || "").match(/[^\s<>,;"']+@[^\s<>,;"']+/g) || []).map(x => x.toLowerCase());
+async function cargarHistorial(){
+  if (HISTORIAL.cargando) return;
+  let v = null; try { v = await deDatos("version.json"); } catch(e) {}
+  if (HISTORIAL.lista && (!v || v.h === HISTORIAL.version)) return;
+  HISTORIAL.cargando = true; pintarLista();
+  try {
+    const crudo = await abrirCaja(await deDatos("historial.json"), CLAVE);
+    HISTORIAL.lista = crudo.map(e => { const de = correosDe(e.de)[0] || e.de, h = {
+      id: e.i, hist: true, cuenta_id: e.a, cuenta: e.c, carpeta: e.f, carpeta_nombre: e.fn, enviado: !!e.e, fecha: e.t,
+      de, de_nombre: e.dn || String(e.de || "").replace(/<[^>]*>/g, "").replace(/"/g, "").trim(), para: correosDe(e.pa), cc: correosDe(e.cc),
+      asunto: e.s || "(sin asunto)", vista_previa: e.r || "", archivos: [], adj: !!e.j, hilo: "hist-" + e.i, analisis: null };
+      indexar(h); return h; }).sort((a, b) => b.fecha - a.fecha);
+    HISTORIAL.porId = Object.fromEntries(HISTORIAL.lista.map(h => [h.id, h]));
+    HISTORIAL.version = v ? v.h : "";
+  } catch(e) { HISTORIAL.error = "El historial aún se está armando (el vigilante lo completa de a poco)."; }
+  HISTORIAL.cargando = false; pintarLista();
+}
+let pedidosTraer = {};
+async function traerCompleto(h){
+  const gh = D._envio; if (!gh || !gh.token) return;
+  pedidosTraer[h.id] = Date.now(); pintarCorreo();
+  try {
+    const paquete = await cifrar({ modo: "traer", ids: [h.id], ts: Date.now() });
+    const r = await fetch(`https://api.github.com/repos/${gh.repo}/actions/workflows/correo_trozo.yml/dispatches`, { method: "POST",
+      headers: { "Authorization": "Bearer " + gh.token, "Accept": "application/vnd.github+json" },
+      body: JSON.stringify({ ref: "main", inputs: { id: "trozo-ped" + Math.random().toString(36).slice(2, 10) + "-0", datos: JSON.stringify(paquete) } }) });
+    if (!r.ok) throw new Error("GitHub no aceptó el pedido (" + r.status + ")");
+    const fin = Date.now() + 4 * 60000;
+    const t = setInterval(async () => {
+      await revisarZoho(false);
+      if (MSGS.some(m => m.id === h.id) || Date.now() > fin) { clearInterval(t); delete pedidosTraer[h.id]; pintarLista(); pintarCorreo(); }
+    }, 15000);
+  } catch(e) { delete pedidosTraer[h.id]; aviso("No se pudo pedir el correo: " + esc(e.message), "mal", 8000); pintarCorreo(); }
 }
 
 // Resalta los términos sin importar tildes ni mayúsculas (la normalización mantiene el largo del texto).
@@ -474,18 +535,19 @@ function fila(m, terms = []){
   const quien = m.enviado ? "Para: " + (m.para[0] || "") : (m.de_nombre || m.de);
   const n = (HILOS[m.hilo] || []).length;
   const dir = m.enviado ? (m.para[0] || "") : m.de;
-  return `<button class="row${noLeido(m) ? " nl" : ""}${terms.length ? " con-busqueda" : ""}" data-m="${esc(m.id)}" aria-current="${abierto === m.id}">
+  return `<button class="row${noLeido(m) ? " nl" : ""}${terms.length ? " con-busqueda" : ""}${m.hist ? " hist" : ""}" data-m="${esc(m.id)}" aria-current="${abierto === m.id}">
     <span class="avatar mini" style="--h:${tono(dir)}" aria-hidden="true">${esc(iniciales(m.enviado ? dir : (m.de_nombre || m.de)))}</span>
     <div class="r1"><span class="who">${resaltar(quien, terms)}</span><span class="when">${fmtL(m.fecha)}</span></div>
     <div class="subj"><span class="subj-t">${resaltar(m.asunto, terms)}</span>${m.archivos.length ? '<span class="clip" aria-label="con adjuntos">📎</span>' : ""}</div>
     <div class="snip">${fragmento(m, terms)}</div>
-    <div class="tags">${m.local ? (m.estadoLocal === "enviando" ? '<span class="tag acc">enviando…</span>' : '<span class="tag ok">✓ enviado</span>') : m.enviado ? '<span class="tag ok">enviado</span>' : ""}${m.boletin ? `<span class="tag">${esc(m.carpeta_nombre || "Newsletter")}</span>` : ""}${m.archivos.length ? `<span class="tag acc">📎 ${m.archivos.length}</span>` : ""}${n > 1 ? `<span class="tag">${n} en la conversación</span>` : ""}${CUENTAS.length > 1 ? `<span class="tag">${esc(etiqueta(m.cuenta))}</span>` : ""}${(m.analisis || {}).importancia === "alta" && !m.enviado ? '<span class="tag alta">importante</span>' : ""}</div>
+    <div class="tags">${m.hist ? `<span class="tag hist">📁 historial${m.carpeta_nombre ? " · " + esc(m.carpeta_nombre) : ""}</span>` : ""}${m.local ? (m.estadoLocal === "enviando" ? '<span class="tag acc">enviando…</span>' : '<span class="tag ok">✓ enviado</span>') : m.enviado ? '<span class="tag ok">enviado</span>' : ""}${m.boletin ? `<span class="tag">${esc(m.carpeta_nombre || "Newsletter")}</span>` : ""}${m.archivos.length ? `<span class="tag acc">📎 ${m.archivos.length}</span>` : ""}${n > 1 ? `<span class="tag">${n} en la conversación</span>` : ""}${CUENTAS.length > 1 ? `<span class="tag">${esc(etiqueta(m.cuenta))}</span>` : ""}${(m.analisis || {}).importancia === "alta" && !m.enviado ? '<span class="tag alta">importante</span>' : ""}</div>
   </button>`;
 }
 
 function pintarLista(){
   const terms = terminos(), ms = visibles();
-  $("#count").textContent = busca ? `${ms.length} correo${ms.length === 1 ? "" : "s"} con "${busca}" (en todas las carpetas)` : `${carpeta === "enviados" ? "Enviados" : "Bandeja de entrada"} · ${ms.length} correo${ms.length === 1 ? "" : "s"}`;
+  const nh = ms.filter(m => m.hist).length;
+  $("#count").textContent = busca ? `${ms.length - nh} correo${ms.length - nh === 1 ? "" : "s"} con "${busca}"` + (nh ? ` · ${nh} más en el historial` : HISTORIAL.cargando ? " · buscando en el historial…" : HISTORIAL.error ? " · " + HISTORIAL.error : "") : `${carpeta === "enviados" ? "Enviados" : "Bandeja de entrada"} · ${ms.length} correo${ms.length === 1 ? "" : "s"}`;
   $("#rows").innerHTML = ms.slice(0, limite).map(m => fila(m, terms)).join("") +
     (ms.length > limite ? `<button class="more" data-more>Mostrar más (${ms.length - limite} restantes)</button>` : "") +
     (ms.length ? "" : `<p class="vacio">No hay correos que coincidan.</p>`);
@@ -501,6 +563,16 @@ const BASE_HTML = `<base target="_blank"><style>html,body{margin:0;background:#f
 
 function pintarCorreo(){
   const m = MSGS.find(x => x.id === abierto);
+  if (!m && HISTORIAL.porId[abierto]) {
+    const h = HISTORIAL.porId[abierto], pidiendo = pedidosTraer[h.id];
+    $("#read").innerHTML = `<div class="readbar"><button class="back" data-back>← Volver a la lista</button></div>
+      <h2 class="asunto">${esc(h.asunto)}</h2>
+      <div class="muted small">${h.enviado ? "Para: " + esc(h.para.join(", ")) : "De: " + esc(h.de_nombre || h.de) + " &lt;" + esc(h.de) + "&gt;"} · ${esc(fmtF(h.fecha))} · ${esc(etiqueta(h.cuenta))}${h.carpeta_nombre ? " · " + esc(h.carpeta_nombre) : ""}</div>
+      <div class="hist-caja"><span class="muted small">📁 Correo antiguo del historial: aquí solo está el resumen de Zoho/Gmail.</span>
+        ${h.vista_previa ? `<p style="margin:0">${esc(h.vista_previa)}…</p>` : ""}
+        <div class="actions"><button class="btn" data-traer="${esc(h.id)}" ${pidiendo ? "disabled" : ""}>${pidiendo ? "Trayendo… (aprox. 1 minuto)" : "📥 Traer correo completo (texto y adjuntos)"}</button></div></div>`;
+    return;
+  }
   if (abierto === "__nuevo__" && borrador && borrador.modo === "nuevo") { $("#read").innerHTML = `<div class="readbar"><button class="back" data-back>← Volver a la lista</button></div>${redactor()}`; return; }
   if (!m) { $("#read").innerHTML = `<p class="vacio">Elige un correo de la lista para leerlo.</p>`; return; }
   const terms = terminos(), hilo = HILOS[m.hilo] || [m], h = (D.hilos || {})[m.hilo] || {}, a = m.analisis || {};
@@ -1370,12 +1442,13 @@ function irA(v){
   if (v === "preguntar") { pintarCtx(); $("#qAsk").focus(); }
 }
 document.addEventListener("click", ev => {
-  const t = ev.target.closest("[data-v],[data-m],[data-f],[data-cu],[data-back],[data-more],[data-askthread],[data-noctx],[data-sug],[data-responder],[data-r],[data-adj],[data-vertexto],[data-ver],[data-bajar],[data-nuevo],[data-recuperar],[data-noleido],[data-hoja],[data-quitaradj],[data-carpeta],[data-zoomxls]");
+  const t = ev.target.closest("[data-v],[data-m],[data-f],[data-cu],[data-back],[data-more],[data-askthread],[data-noctx],[data-sug],[data-responder],[data-r],[data-adj],[data-vertexto],[data-ver],[data-bajar],[data-nuevo],[data-recuperar],[data-noleido],[data-hoja],[data-quitaradj],[data-carpeta],[data-zoomxls],[data-traer]");
   if (!t) return;
   if (t.dataset.adj !== undefined) { const i = +t.dataset.adj; leerBorrador(); adjAbierto = adjAbierto === i ? null : i; pintarCorreo(); return; }
   if (t.dataset.ver !== undefined || t.dataset.bajar !== undefined) { const mm = MSGS.find(x => x.id === abierto); if (mm) abrirAdjunto(mm, +(t.dataset.ver ?? t.dataset.bajar), t.dataset.ver !== undefined); return; }
   if (t.dataset.quitaradj !== undefined && borrador) { leerBorrador(); borrador.nuevos.splice(+t.dataset.quitaradj, 1); borrador.estado = ""; pintarCorreo(); return; }
   if (t.dataset.carpeta) { carpeta = t.dataset.carpeta; limite = 150; abierto = null; pintarFiltros(); pintarLista(); pintarCorreo(); if (innerWidth <= 860) scrollTo(0, 0); return; }
+  if (t.dataset.traer) { const h = HISTORIAL.porId[t.dataset.traer]; if (h) traerCompleto(h); return; }
   if (t.dataset.zoomxls) { visor.zoom = Math.min(2, Math.max(0.4, Math.round(((visor.zoom || 1) + 0.2 * +t.dataset.zoomxls) * 10) / 10)); pintarCorreo(); return; }
   if (t.dataset.hoja !== undefined) { visor.hoja = +t.dataset.hoja; pintarCorreo(); return; }
   if ("vertexto" in t.dataset) { leerBorrador(); verTexto = !verTexto; pintarCorreo(); return; }
@@ -1414,7 +1487,8 @@ document.addEventListener("click", ev => {
 document.addEventListener("input", ev => { if (ev.target.closest(".compose")) { leerBorrador();
   for (const k of ["revisar", "mejorar"]) { const b = document.querySelector(`[data-r="${k}"]`); if (b && !borrador.ocupado) b.disabled = !borrador.texto.trim(); } } });
 let tBusca;
-$("#busca").addEventListener("input", ev => { clearTimeout(tBusca); tBusca = setTimeout(() => { busca = ev.target.value.trim(); limite = 150; pintarLista(); pintarCorreo(); }, 150); });
+$("#busca").addEventListener("input", ev => { clearTimeout(tBusca); tBusca = setTimeout(() => { busca = ev.target.value.trim(); limite = 150; if (busca) cargarHistorial(); pintarLista(); pintarCorreo(); }, 150); });
+$("#campoBusca").addEventListener("change", ev => { campoBusca = ev.target.value; limite = 150; pintarLista(); pintarCorreo(); $("#busca").focus(); });
 
 /* ---------- correos nuevos: casi en tiempo real ---------- */
 // Un "vigilante" en GitHub revisa Zoho cada minuto y guarda los datos (cifrados) en la rama correo-datos.

@@ -122,7 +122,8 @@ def _abrir_estado(caja, clave):
 def recortar(estado):
     if len(estado["mensajes"]) > MAX_MENSAJES:
         orden = sorted(estado["mensajes"].values(), key=lambda m: m["fecha"], reverse=True)
-        estado["mensajes"] = {m["id"]: m for m in orden[:MAX_MENSAJES]}
+        traidos = [m for m in orden if m.get("traido")][:400]      # los que pediste desde la página se conservan
+        estado["mensajes"] = {m["id"]: m for m in orden[:MAX_MENSAJES] + traidos}
 
 
 # ---------------------------------------------------------------- Zoho
@@ -206,6 +207,10 @@ def falta_archivo(m):
 
 
 _ZOHO = {}
+CUENTAS_Z = {}           # account_id de Zoho -> (cliente, dirección): para el historial y los pedidos de la página
+_CARPETAS_HIST = {}
+_UIDS_GMAIL = {}
+NO_HISTORIAL = {"trash", "spam", "drafts", "outbox", "templates", "papelera", "borradores", "plantillas", "bandeja de salida"}
 LIMITE_VUELTA = 0.0      # en el vigilante: hora tope de cada vuelta (para revisar Zoho siempre cada minuto)
 CARPETAS_EXTRA = {"newsletter", "newsletters", "notification", "notifications", "notificaciones", "boletines"}
 
@@ -238,6 +243,7 @@ def traer_nuevos(estado, clave):
             estado["cuenta"] = estado["cuenta"] or principal
             estado.setdefault("etiquetas", {})[principal] = {"principal": "Platón", "taller": "Gary"}.get(nombre, nombre)
             estado.setdefault("cuentas_ids", {})[principal] = acc_id
+            CUENTAS_Z[acc_id] = (z, principal)
             n, c = _traer_casilla(z, acc_id, principal, estado, primera=(n_casillas == 1))
             nuevos += n
             completados += c
@@ -257,6 +263,54 @@ def traer_nuevos(estado, clave):
     print(f"Zoho: {n_casillas} casilla(s) leída(s); {len(nuevos)} correos nuevos"
           + (f", {completados} antiguos completados con cadena y adjuntos." if completados else "."))
     return nuevos, completados
+
+
+def construir_gmail(msg, acc, correo, carpeta, enviados_carpeta, gid, th, ms, estado, sin_leer=(), promo=False):
+    """Guarda en el estado un correo de Gmail ya descargado (texto, HTML limpio y adjuntos cifrados)."""
+    import gmail as G
+    from extraer import texto_de
+    from zoho import html_a_texto, limpiar_html
+    propios = set(estado["propios"])
+    mid = "g" + gid
+    texto, html, adjuntos = G.partes(msg)
+    texto = texto or html_a_texto(html)
+    archivos = []
+    for i, (nombre, datos) in enumerate(adjuntos[:10]):
+        ref = None
+        try:
+            contenido = texto_de(nombre, datos) if len(datos) <= 12 * 1024 * 1024 else ""
+            if ADJ_DIR and datos and len(datos) <= 12 * 1024 * 1024:
+                ref = ref_adjunto(mid, str(i))
+                Path(ADJ_DIR).mkdir(parents=True, exist_ok=True)
+                (Path(ADJ_DIR) / f"{ref}.bin").write_bytes(cripto.cifrar_bytes(datos, env("CORREO_CLAVE")))
+        except Exception as e:
+            contenido = f"(no se pudo leer: {type(e).__name__})"
+        archivos.append({"nombre": nombre, "tamano": len(datos), "texto": contenido, "ref": ref})
+    de = G.direcciones(msg["From"]) or [("", "")]
+    para = [a for _, a in G.direcciones(msg["To"])]
+    cc = [a for _, a in G.direcciones(msg["Cc"])]
+    enviado = enviados_carpeta or de[0][1].lower() in propios
+    if enviado:
+        otros = [a for a in para + cc if a.lower() not in propios]
+        contacto = otros[0] if otros else (para[0] if para else de[0][1])
+    else:
+        contacto = de[0][1]
+    contacto = (contacto or "(desconocido)").lower()
+    asunto = (G._dec(msg["Subject"]) or "(sin asunto)").strip()
+    t = G.fecha_ms(msg, ms)
+    m = {"v": 2, "id": mid, "cuenta_id": acc, "cuenta": correo, "carpeta": carpeta, "thread_zoho": th,
+         "hilo": clave_hilo(th, asunto, contacto), "fecha": t, "de": de[0][1], "de_nombre": de[0][0],
+         "para": para, "cc": cc, "asunto": asunto, "vista_previa": re.sub(r"\s+", " ", texto)[:200].strip(),
+         "texto": texto[:MAX_TEXTO_GUARDADO], "html": limpiar_html(html) if html else None,
+         "adjuntos": bool(archivos), "archivos": archivos, "no_leido": mid in sin_leer, "enviado": bool(enviado),
+         "contacto": contacto, "analisis": None, "en_db": False, "intentos_adj": 0, "intentos_archivo": 0,
+         "message_id": str(msg["Message-ID"] or ""), "referencias": str(msg["References"] or "")[-1500:]}
+    if not enviado and promo:
+        m["boletin"], m["carpeta_nombre"] = True, "Promociones"
+    if not enviado and de[0][0]:
+        m["nombre_contacto"] = de[0][0]
+    estado["mensajes"][mid] = m
+    return m
 
 
 def _traer_gmail(estado):
@@ -298,52 +352,15 @@ def _traer_gmail(estado):
 
     nuevos = []
     for carpeta, enviados_carpeta, uid, gid, th, ms in candidatos:
-        mid = "g" + gid
         try:
             msg = g.mensaje(carpeta, uid)
         except Exception as e:
             print(f"::warning::Gmail: no pude leer un correo: {str(e)[:200]}")
             continue
-        texto, html, adjuntos = G.partes(msg)
-        texto = texto or html_a_texto(html)
-        archivos = []
-        for i, (nombre, datos) in enumerate(adjuntos[:10]):
-            ref = None
-            try:
-                contenido = texto_de(nombre, datos) if len(datos) <= 12 * 1024 * 1024 else ""
-                if ADJ_DIR and datos and len(datos) <= 12 * 1024 * 1024:
-                    ref = ref_adjunto(mid, str(i))
-                    Path(ADJ_DIR).mkdir(parents=True, exist_ok=True)
-                    (Path(ADJ_DIR) / f"{ref}.bin").write_bytes(cripto.cifrar_bytes(datos, env("CORREO_CLAVE")))
-            except Exception as e:
-                contenido = f"(no se pudo leer: {type(e).__name__})"
-            archivos.append({"nombre": nombre, "tamano": len(datos), "texto": contenido, "ref": ref})
-        de = G.direcciones(msg["From"]) or [("", "")]
-        para = [a for _, a in G.direcciones(msg["To"])]
-        cc = [a for _, a in G.direcciones(msg["Cc"])]
-        enviado = enviados_carpeta or de[0][1].lower() in propios
-        if enviado:
-            otros = [a for a in para + cc if a.lower() not in propios]
-            contacto = otros[0] if otros else (para[0] if para else de[0][1])
-        else:
-            contacto = de[0][1]
-        contacto = (contacto or "(desconocido)").lower()
-        asunto = (G._dec(msg["Subject"]) or "(sin asunto)").strip()
-        t = G.fecha_ms(msg, ms)
-        m = {"v": 2, "id": mid, "cuenta_id": acc, "cuenta": correo, "carpeta": carpeta, "thread_zoho": th,
-             "hilo": clave_hilo(th, asunto, contacto), "fecha": t, "de": de[0][1], "de_nombre": de[0][0],
-             "para": para, "cc": cc, "asunto": asunto, "vista_previa": re.sub(r"\s+", " ", texto)[:200].strip(),
-             "texto": texto[:MAX_TEXTO_GUARDADO], "html": limpiar_html(html) if html else None,
-             "adjuntos": bool(archivos), "archivos": archivos, "no_leido": mid in sin_leer, "enviado": bool(enviado),
-             "contacto": contacto, "analisis": None, "en_db": False, "intentos_adj": 0, "intentos_archivo": 0,
-             "message_id": str(msg["Message-ID"] or ""), "referencias": str(msg["References"] or "")[-1500:]}
-        if not enviado and uid in promo and carpeta == "INBOX":
-            m["boletin"], m["carpeta_nombre"] = True, "Promociones"
-        if not enviado and de[0][0]:
-            m["nombre_contacto"] = de[0][0]
-        estado["mensajes"][mid] = m
+        m = construir_gmail(msg, acc, correo, carpeta, enviados_carpeta, gid, th, ms, estado, sin_leer,
+                            promo=(uid in promo and carpeta == "INBOX"))
         nuevos.append(m)
-        ultimos[acc] = max(ultimos.get(acc, 0), t)
+        ultimos[acc] = max(ultimos.get(acc, 0), m["fecha"])
     for i, m in estado["mensajes"].items():
         if m.get("cuenta_id") == acc:
             nl = (i in sin_leer) and not m.get("enviado")
@@ -353,6 +370,62 @@ def _traer_gmail(estado):
     if nuevos:
         print(f"Gmail: {len(nuevos)} correos nuevos.")
     return nuevos, 0
+
+
+def construir_zoho(z, account_id, direccion, carpeta, enviados_carpeta, t, m, estado, boletin=False):
+    """Trae el contenido y adjuntos de un correo de Zoho y lo guarda en el estado. Devuelve (correo, era_nuevo)."""
+    from zoho import direcciones, html_a_texto, limpiar_html
+    propios = set(estado["propios"])
+    mid = str(m["messageId"])
+    fid = str(carpeta["folderId"])
+    try:
+        crudo = z.contenido(account_id, fid, mid)
+        texto, html = html_a_texto(crudo), limpiar_html(crudo)
+    except Exception as e:
+        print(f"::warning::No pude leer el contenido del correo {mid}: {e}")
+        texto, html = "", None
+    tiene_adj = m.get("hasAttachment") in (True, "1", 1)
+    previo_ok = estado["mensajes"].get(mid, {})
+    adj_ok = previo_ok.get("v") == 2 and not falta_archivo(previo_ok) and not any(
+        str(f.get("texto", "")).startswith("(no se pudo descargar") for f in previo_ok.get("archivos", []))
+    if adj_ok:
+        archivos = previo_ok.get("archivos", [])     # solo faltaba el formato original: no se vuelven a bajar
+    else:
+        archivos = leer_archivos(z, account_id, fid, mid) if tiene_adj else []
+    de = direcciones(m.get("fromAddress")) or [("", "")]
+    de_nombre = (m.get("sender") or de[0][0] or "").strip()
+    para = [a for _, a in direcciones(m.get("toAddress"))]
+    cc = [a for _, a in direcciones(m.get("ccAddress"))]
+    enviado = enviados_carpeta or de[0][1] in propios
+    if enviado:
+        otros = [a for a in para + cc if a not in propios]
+        contacto = otros[0] if otros else (para[0] if para else de[0][1])
+    else:
+        contacto = de[0][1]
+    contacto = contacto or "(desconocido)"
+    asunto = (m.get("subject") or "(sin asunto)").strip()
+    previo = estado["mensajes"].get(mid) or {}
+    msg = {
+        "v": 2, "id": mid, "cuenta_id": account_id, "cuenta": direccion, "carpeta": fid,
+        "carpeta_nombre": str(carpeta.get("folderName") or ""),
+        "boletin": boletin,
+        "thread_zoho": str(m.get("threadId") or ""),
+        "hilo": clave_hilo(str(m.get("threadId") or ""), asunto, contacto), "fecha": t,
+        "de": de[0][1], "de_nombre": de_nombre, "para": para, "cc": cc, "asunto": asunto,
+        "vista_previa": (m.get("summary") or "").strip(),
+        "texto": texto[:MAX_TEXTO_GUARDADO], "html": html, "adjuntos": bool(tiene_adj), "archivos": archivos,
+        "no_leido": previo.get("no_leido", False),
+        "enviado": bool(enviado), "contacto": contacto,
+        "analisis": previo.get("analisis"), "en_db": False,
+        "intentos_adj": previo.get("intentos_adj", 0) + (1 if previo else 0),
+        "intentos_archivo": previo.get("intentos_archivo", 0) + (1 if previo and falta_archivo(previo) else 0),
+    }
+    if not enviado and de_nombre:
+        msg["nombre_contacto"] = de_nombre
+    if previo and [f.get("texto") for f in previo.get("archivos", [])] != [f.get("texto") for f in archivos]:
+        estado.get("hilos", {}).pop(msg["hilo"], None)      # el adjunto se leyó mejor: volver a resumir
+    estado["mensajes"][mid] = msg
+    return msg, not previo
 
 
 def _traer_casilla(z, account_id, direccion, estado, primera):
@@ -436,56 +509,9 @@ def _traer_casilla(z, account_id, direccion, estado, primera):
 
     nuevos = []
     for carpeta, enviados_carpeta, t, m in candidatos:
-        mid = str(m["messageId"])
-        fid = str(carpeta["folderId"])
-        try:
-            crudo = z.contenido(account_id, fid, mid)
-            texto, html = html_a_texto(crudo), limpiar_html(crudo)
-        except Exception as e:
-            print(f"::warning::No pude leer el contenido del correo {mid}: {e}")
-            texto, html = "", None
-        tiene_adj = m.get("hasAttachment") in (True, "1", 1)
-        previo_ok = estado["mensajes"].get(mid, {})
-        adj_ok = previo_ok.get("v") == 2 and not falta_archivo(previo_ok) and not any(
-            str(f.get("texto", "")).startswith("(no se pudo descargar") for f in previo_ok.get("archivos", []))
-        if adj_ok:
-            archivos = previo_ok.get("archivos", [])     # solo faltaba el formato original: no se vuelven a bajar
-        else:
-            archivos = leer_archivos(z, account_id, fid, mid) if tiene_adj else []
-        de = direcciones(m.get("fromAddress")) or [("", "")]
-        de_nombre = (m.get("sender") or de[0][0] or "").strip()
-        para = [a for _, a in direcciones(m.get("toAddress"))]
-        cc = [a for _, a in direcciones(m.get("ccAddress"))]
-        enviado = enviados_carpeta or de[0][1] in propios
-        if enviado:
-            otros = [a for a in para + cc if a not in propios]
-            contacto = otros[0] if otros else (para[0] if para else de[0][1])
-        else:
-            contacto = de[0][1]
-        contacto = contacto or "(desconocido)"
-        asunto = (m.get("subject") or "(sin asunto)").strip()
-        previo = estado["mensajes"].get(mid) or {}
-        msg = {
-            "v": 2, "id": mid, "cuenta_id": account_id, "cuenta": direccion, "carpeta": fid,
-            "carpeta_nombre": str(carpeta.get("folderName") or ""),
-            "boletin": es(carpeta, CARPETAS_EXTRA),
-            "thread_zoho": str(m.get("threadId") or ""),
-            "hilo": clave_hilo(str(m.get("threadId") or ""), asunto, contacto), "fecha": t,
-            "de": de[0][1], "de_nombre": de_nombre, "para": para, "cc": cc, "asunto": asunto,
-            "vista_previa": (m.get("summary") or "").strip(),
-            "texto": texto[:MAX_TEXTO_GUARDADO], "html": html, "adjuntos": bool(tiene_adj), "archivos": archivos,
-            "no_leido": previo.get("no_leido", False),
-            "enviado": bool(enviado), "contacto": contacto,
-            "analisis": previo.get("analisis"), "en_db": False,
-            "intentos_adj": previo.get("intentos_adj", 0) + (1 if previo else 0),
-            "intentos_archivo": previo.get("intentos_archivo", 0) + (1 if previo and falta_archivo(previo) else 0),
-        }
-        if not enviado and de_nombre:
-            msg["nombre_contacto"] = de_nombre
-        if previo and [f.get("texto") for f in previo.get("archivos", [])] != [f.get("texto") for f in archivos]:
-            estado.get("hilos", {}).pop(msg["hilo"], None)      # el adjunto se leyó mejor: volver a resumir
-        estado["mensajes"][mid] = msg
-        if not previo:
+        msg, era_nuevo = construir_zoho(z, account_id, direccion, carpeta, enviados_carpeta, t, m, estado,
+                                        boletin=es(carpeta, CARPETAS_EXTRA))
+        if era_nuevo:
             nuevos.append(msg)
         ultimos[account_id] = max(ultimos.get(account_id, 0), t)
         estado["ultimo_ms"] = max(estado["ultimo_ms"], t)
@@ -1042,11 +1068,13 @@ def recoger_suscripciones(estado, clave):
     api = f"https://api.github.com/repos/{repo}/actions/artifacts"
     cambio = False
     for art in (_gh_api(f"{api}?per_page=100").get("artifacts") or []):
-        if not str(art.get("name", "")).startswith("trozo-sub") or art.get("expired"):
+        if not str(art.get("name", "")).startswith(("trozo-sub", "trozo-ped")) or art.get("expired"):
             continue
         try:
             z = zipfile.ZipFile(io.BytesIO(_gh_api(art["archive_download_url"], crudo=True)))
             p = cripto.descifrar(json.loads(z.read("trozo.txt").decode()), clave)
+            if p.get("modo") == "traer":
+                cambio = bool(traer_pedidos(estado, [str(x) for x in p.get("ids", [])])) or cambio
             sub = p.get("sub") or {}
             if p.get("modo") == "suscribir" and str(sub.get("endpoint", "")).startswith("https://") and sub.get("keys"):
                 subs = [x for x in estado.setdefault("push", {}).setdefault("subs", []) if x.get("endpoint") != sub["endpoint"]]
@@ -1093,6 +1121,77 @@ def avisar_celular(estado, nuevos):
     p["subs"] = vigentes
 
 
+def avanzar_historial(estado, hasta):
+    """Agrega al índice del historial páginas de correos antiguos (todas las carpetas), hasta la hora `hasta`."""
+    import historial as H
+    cur, paginas = estado.setdefault("hist_cursor", {}), 0
+    for acc, (z, direccion) in list(CUENTAS_Z.items()):
+        if acc not in _CARPETAS_HIST:
+            _CARPETAS_HIST[acc] = [c for c in z.carpetas(acc)
+                                   if str(c.get("folderType", "")).lower() not in NO_HISTORIAL
+                                   and str(c.get("folderName", "")).lower() not in NO_HISTORIAL]
+        for c in _CARPETAS_HIST[acc]:
+            fid, k = str(c["folderId"]), cur.setdefault(acc, {})
+            while k.get(fid) != "fin" and time.time() < hasta and paginas < 8:     # sin apurar a Zoho
+                paginas += 1
+                pagina = z.listar(acc, fid, start=k.get(fid, 1), limit=100)
+                enviados = str(c.get("folderType", "")).lower() == "sent"
+                for m in pagina:
+                    H.agregar({"i": str(m["messageId"]), "a": acc, "c": direccion, "f": fid, "fn": str(c.get("folderName") or ""),
+                               "e": 1 if enviados else 0, "t": int(float(m.get("receivedTime") or m.get("sentDateInGMT") or 0)),
+                               "de": str(m.get("fromAddress") or ""), "dn": str(m.get("sender") or ""),
+                               "pa": str(m.get("toAddress") or ""), "cc": str(m.get("ccAddress") or ""),
+                               "s": str(m.get("subject") or ""), "r": str(m.get("summary") or "")[:220],
+                               "j": 1 if m.get("hasAttachment") in (True, "1", 1) else 0, "th": str(m.get("threadId") or "")})
+                k[fid] = "fin" if len(pagina) < 100 else k.get(fid, 1) + 100
+            if time.time() >= hasta or paginas >= 8:
+                break
+    g = _ZOHO.get("gmail")
+    if g and env("GMAIL_CORREO"):
+        acc, correo = "gmail:" + env("GMAIL_CORREO").lower(), env("GMAIL_CORREO").lower()
+        k = cur.setdefault(acc, {})
+        if k.get("todos") == "fin":
+            return
+        carpeta = g.carpeta_todos()
+        if acc not in _UIDS_GMAIL:
+            _UIDS_GMAIL[acc] = list(reversed(g.uids_todos(carpeta)))      # más nuevos primero
+        uids, pos = _UIDS_GMAIL[acc], k.get("todos", 0)
+        while pos < len(uids) and time.time() < hasta:
+            for gid, th, enviado, ms, h in g.cabeceras(carpeta, uids[pos:pos + 300]):
+                import gmail as G
+                H.agregar({"i": "g" + gid, "a": acc, "c": correo, "f": carpeta, "fn": "Gmail", "e": 1 if enviado else 0,
+                           "t": G.fecha_ms(h, ms), "de": G._dec(h["From"]), "dn": "", "pa": G._dec(h["To"]),
+                           "cc": G._dec(h["Cc"]), "s": G._dec(h["Subject"]), "r": "", "j": 0, "th": th})
+            pos += 300
+        k["todos"] = "fin" if pos >= len(uids) else pos
+
+
+def traer_pedidos(estado, ids):
+    """Trae COMPLETO (texto, adjuntos) un correo antiguo del historial que pediste abrir en la página."""
+    import historial as H
+    hechos = 0
+    for i in ids[:20]:
+        e = H.HIST.get(str(i))
+        if not e or (str(i) in estado["mensajes"] and estado["mensajes"][str(i)].get("v") == 2):
+            continue
+        try:
+            if e["a"].startswith("gmail:"):
+                g = _ZOHO.get("gmail")
+                m = construir_gmail(g.mensaje_por_id(e["i"][1:]), e["a"], e["c"], e["f"], bool(e["e"]), e["i"][1:], e["th"], e["t"], estado)
+            else:
+                z, direccion = CUENTAS_Z[e["a"]]
+                meta = {"messageId": e["i"], "fromAddress": e["de"], "sender": e["dn"], "toAddress": e["pa"], "ccAddress": e["cc"],
+                        "subject": e["s"], "summary": e["r"], "hasAttachment": e["j"], "threadId": e["th"]}
+                m, _ = construir_zoho(z, e["a"], direccion, {"folderId": e["f"], "folderName": e["fn"]}, bool(e["e"]), e["t"], meta, estado)
+            m["traido"] = True
+            hechos += 1
+        except Exception as ex:
+            print(f"::warning::No pude traer un correo del historial: {str(ex)[:200]}")
+    if hechos:
+        print(f"Historial: {hechos} correo(s) traído(s) completo(s) a pedido.")
+    return hechos
+
+
 def una_vuelta(estado, clave, rapido):
     """Una revisión de Zoho. Devuelve True si cambió algo (y en ese caso deja los datos nuevos escritos)."""
     global RAPIDO, LIMITE_VUELTA
@@ -1103,12 +1202,12 @@ def una_vuelta(estado, clave, rapido):
         import push
         estado["push"]["llaves"] = push.nuevas_llaves()   # llaves de los avisos al celular (se crean una vez)
         estado["_cambio_otro"] = True
+    nuevos, completados = traer_nuevos(estado, clave)
     try:
-        if recoger_suscripciones(estado, clave):
+        if recoger_suscripciones(estado, clave):     # suscripciones de avisos y correos pedidos desde la página
             estado["_cambio_otro"] = True
     except Exception as e:
-        print(f"::warning::Avisos: {str(e)[:200]}")
-    nuevos, completados = traer_nuevos(estado, clave)
+        print(f"::warning::Pedidos de la página: {str(e)[:200]}")
     avisar(estado, [], nuevos)                       # aviso inmediato, sin esperar el resumen de la IA
     try:
         avisar_celular(estado, nuevos)
@@ -1118,7 +1217,12 @@ def una_vuelta(estado, clave, rapido):
     estilo = not rapido and actualizar_estilo(estado)
     t2 = time.time()
     analizados = analizar_pendientes(estado)
-    print(f"  tiempos: Zoho {t1 - t0:.0f} s · estilo {t2 - t1:.0f} s · resúmenes {time.time() - t2:.0f} s")
+    t3 = time.time()
+    try:
+        avanzar_historial(estado, min(LIMITE_VUELTA + 5, time.time() + 25))   # índice del historial, de a poco
+    except Exception as e:
+        print(f"::warning::Historial: {str(e)[:200]}")
+    print(f"  tiempos: Zoho {t1 - t0:.0f} s · estilo {t2 - t1:.0f} s · resúmenes {t3 - t2:.0f} s · historial {time.time() - t3:.0f} s")
     cambio = bool(nuevos or completados or analizados or estilo or estado.pop("_cambio_otro", False)
                   or estado.pop("_hilos_actualizados", 0)
                   or estado.pop("_cambio_leidos", False)) or not estado["ultima_sync"]
@@ -1139,6 +1243,8 @@ def vigilar(estado, clave, minutos):
     os.environ.setdefault("CORREO_MAX_POR_CORRIDA", "15") # correos antiguos por vuelta (de a poco, sin atrasar lo nuevo)
     if not env("CORREO_MAX_POR_CORRIDA"):
         os.environ["CORREO_MAX_POR_CORRIDA"] = "15"
+    import historial as H
+    H.cargar(clave)
     fin = time.time() + minutos * 60
     ultima_completa, ultima_pub, pendiente_pub, vuelta = 0.0, time.time(), False, 0
     while time.time() < fin:
@@ -1155,12 +1261,15 @@ def vigilar(estado, clave, minutos):
         datos_dir = env("CORREO_DATOS_DIR")
         if datos_dir:
             caja = Path(datos_dir) / "caja.json"
+            H.guardar(clave, cada=0 if time.time() + 120 > fin else 300)
             if not caja.exists():
                 generar_html(estado, clave)
                 cambio = True
             v = hashlib.sha1(caja.read_bytes()).hexdigest()[:16] if caja.exists() else ""
             (Path(datos_dir) / "version.json").write_text(json.dumps(
-                {"v": v, "t": datetime.now(TZ).strftime("%Y-%m-%d %H:%M"), "ms": int(time.time() * 1000)}))
+                {"v": v, "t": datetime.now(TZ).strftime("%Y-%m-%d %H:%M"), "ms": int(time.time() * 1000),
+                 "h": hashlib.sha1((Path(datos_dir) / "historial.json").read_bytes()).hexdigest()[:16]
+                 if (Path(datos_dir) / "historial.json").exists() else ""}))
         pendiente_pub = pendiente_pub or cambio
         publicar = pendiente_pub and time.time() - ultima_pub > 3600    # la página publicada se renueva cada hora
         if publicar:
