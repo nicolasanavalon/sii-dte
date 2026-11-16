@@ -367,7 +367,10 @@ def _traer_gmail(estado):
     promo = g.promociones("INBOX", inicio) if any(not c[1] for c in candidatos) else set()
 
     nuevos = []
-    for carpeta, enviados_carpeta, uid, gid, th, ms in candidatos:
+    for carpeta, enviados_carpeta, uid, gid, th, ms in reversed(candidatos):     # los más nuevos primero
+        if LIMITE_VUELTA and time.time() > LIMITE_VUELTA - 18:
+            relleno[acc] = True              # sigue en la próxima vuelta: no atrasar la revisión de correos
+            break
         try:
             msg = g.mensaje(carpeta, uid)
         except Exception as e:
@@ -1241,14 +1244,14 @@ def una_vuelta(estado, clave, rapido):
     analizados = analizar_pendientes(estado)
     t3 = time.time()
     try:
-        avanzar_historial(estado, min(LIMITE_VUELTA + 5, time.time() + 15))   # índice del historial, de a poco
+        avanzar_historial(estado, max(time.time() + 6, min(LIMITE_VUELTA + 5, time.time() + 15)))   # índice, de a poco
     except Exception as e:
         print(f"::warning::Historial: {str(e)[:200]}")
     try:                                              # correos antiguos: descargar y analizar con IA, de a poco
         import archivo as A
         import historial as H
         A.descargar(H.HIST, set(estado["mensajes"]), CUENTAS_Z, _ZOHO.get("gmail") if env("GMAIL_CORREO") else None,
-                    hasta=min(LIMITE_VUELTA + 12, time.time() + 12))
+                    hasta=max(time.time() + 6, min(LIMITE_VUELTA + 12, time.time() + 12)))
         A.analizar(H.HIST, hasta=LIMITE_VUELTA + 20)
     except Exception as e:
         print(f"::warning::Archivo: {str(e)[:200]}")
