@@ -51,6 +51,44 @@ class Gmail:
         self._c = c
         return c
 
+    def carpeta_todos(self):
+        """"Todos" de Gmail (\\All): todo el correo, archivado incluido."""
+        typ, lineas = self.conexion().list()
+        for l in lineas or []:
+            l = l.decode("utf-8", "replace")
+            if "\\All" in l:
+                return l.rsplit(' "/" ', 1)[-1].strip().strip('"')
+        return "INBOX"
+
+    def uids_todos(self, carpeta):
+        self._sel(carpeta)
+        typ, datos = self.conexion().uid("search", None, "ALL")
+        return [u.decode() for u in (datos[0] or b"").split()]
+
+    def cabeceras(self, carpeta, uids):
+        """[(gm_msgid, gm_thrid, enviado, fecha_ms, mensaje_solo_cabeceras)] para el índice del historial."""
+        if not uids:
+            return []
+        self._sel(carpeta)
+        typ, datos = self.conexion().uid("fetch", ",".join(uids),
+                                         "(X-GM-MSGID X-GM-THRID X-GM-LABELS INTERNALDATE BODY.PEEK[HEADER.FIELDS (FROM TO CC SUBJECT DATE)])")
+        out = []
+        for d in datos or []:
+            if not isinstance(d, tuple):
+                continue
+            meta = d[0].decode("utf-8", "replace")
+            m_id, m_th = re.search(r"X-GM-MSGID (\d+)", meta), re.search(r"X-GM-THRID (\d+)", meta)
+            m_fe = re.search(r'INTERNALDATE "([^"]+)"', meta)
+            if not m_id:
+                continue
+            try:
+                ms = int(datetime.strptime(m_fe.group(1).strip(), "%d-%b-%Y %H:%M:%S %z").timestamp() * 1000)
+            except Exception:
+                ms = 0
+            out.append((m_id.group(1), m_th.group(1) if m_th else "", "\\Sent" in meta, ms,
+                        email.message_from_bytes(d[1], policy=email.policy.default)))
+        return out
+
     def carpeta_enviados(self):
         if self._enviados is None:
             typ, lineas = self.conexion().list()
@@ -111,7 +149,7 @@ class Gmail:
         raise GmailError(f"No pude leer el correo {uid}.")
 
     def mensaje_por_id(self, gm_id):
-        for carpeta in ["INBOX", self.carpeta_enviados()]:
+        for carpeta in ["INBOX", self.carpeta_enviados(), self.carpeta_todos()]:
             if not carpeta:
                 continue
             self._sel(carpeta)
