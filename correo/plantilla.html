@@ -187,6 +187,19 @@ header{display:flex; flex-wrap:wrap; align-items:center; justify-content:space-b
 .xls th.esq{left:0; z-index:3}
 .xls-lienzo{position:relative; width:max-content}
 .xls-img{position:absolute; pointer-events:none; object-fit:fill}
+.pantalla{position:fixed; inset:0; z-index:50; background:#f1f2f4; display:flex; flex-direction:column}
+.pbar{display:flex; align-items:center; gap:8px; padding:calc(env(safe-area-inset-top, 0px) + 8px) 10px 8px; background:#fff; border-bottom:1px solid var(--line)}
+.pnombre{flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:15px}
+.pbtn{border:1px solid var(--line); background:#fff; border-radius:10px; min-width:40px; height:40px; font-size:18px; cursor:pointer; color:var(--ink)}
+.pzoom{display:flex; align-items:center; gap:4px; font-size:13px; color:var(--muted)}
+.ptabs{display:flex; gap:6px; overflow-x:auto; padding:8px 10px; background:#fff; border-bottom:1px solid var(--line)}
+.ptabs .chip{flex:none}
+.pcuerpo{flex:1; overflow:auto; -webkit-overflow-scrolling:touch; padding:10px; padding-bottom:calc(env(safe-area-inset-bottom, 0px) + 10px)}
+.pcuerpo canvas{display:block; margin:0 auto 10px; background:#fff; box-shadow:0 1px 4px rgba(0,0,0,.18)}
+.pcuerpo img.pimg{display:block; margin:0 auto; max-width:none}
+.pcuerpo pre{white-space:pre-wrap; background:#fff; padding:14px; border-radius:8px; font:13px/1.5 var(--f-mono)}
+.pcuerpo .xls-caja{background:#fff; width:max-content; margin:0 auto; box-shadow:0 1px 4px rgba(0,0,0,.18)}
+.pcuerpo .cargando{color:var(--muted); text-align:center; padding:40px 0}
 .zoom-xls{display:flex; gap:6px; align-items:center; margin:6px 0 0}
 .zoom-xls button{min-width:36px}
 .visor-doc{display:block; width:100%; height:75vh; border:1px solid var(--line); border-radius:6px; background:#fff; margin:6px 0}
@@ -287,6 +300,13 @@ textarea{font:inherit}
 </div>
 
 <div class="avance" id="panelAvance" hidden></div>
+<div class="pantalla" id="pantalla" hidden role="dialog" aria-modal="true" aria-label="Vista del archivo">
+  <div class="pbar"><button class="pbtn" data-cerrarvisor aria-label="Cerrar">✕</button><strong class="pnombre" id="pNombre"></strong>
+    <div class="pzoom"><button class="pbtn" data-zoomv="-1" aria-label="Alejar">−</button><span id="pZoom">100%</span><button class="pbtn" data-zoomv="1" aria-label="Acercar">+</button></div>
+    <button class="pbtn" data-bajarvisor aria-label="Descargar">⬇</button></div>
+  <div class="ptabs" id="pTabs" hidden></div>
+  <div class="pcuerpo" id="pCuerpo"></div>
+</div>
 <div id="appwrap" class="app" hidden>
   <header>
     <div hidden><h1>Bandeja Zoho</h1><div class="muted small" id="estado"></div><div class="progreso" id="progreso"></div></div>
@@ -709,7 +729,7 @@ async function xlsxSinDibujos(zip){   // copia sin dibujos, para cuando ExcelJS 
 }
 const MAX_FILAS_XLS = 500, MAX_COLS_XLS = 40;
 // En el celular la planilla parte ajustada al ancho de la pantalla (como Zoho); en el computador, a tamaño real.
-const zoomInicial = h => { if (!h || !h.ancho) return 1; const disp = Math.min(innerWidth, 1400) - (innerWidth <= 860 ? 70 : 520);
+const zoomInicial = h => { if (!h || !h.ancho) return 1; const disp = innerWidth - 24;
   return Math.max(0.4, Math.min(1, Math.round(disp / h.ancho * 20) / 20)); };
 const letraCol = n => { let s = ""; for (n++; n > 0; n = Math.floor((n - 1) / 26)) s = String.fromCharCode(65 + (n - 1) % 26) + s; return s; };
 // Colores "AARRGGBB" (Excel no usa la transparencia AA) o "RRGGBB"; los colores de tema no traen código y se omiten.
@@ -841,12 +861,10 @@ function panelAdjunto(m, i, terms){
   const v = visor.ref === f.ref ? visor : {};
   return `<div class="adj-texto">
     <div class="adj-acc"><strong class="small">${esc(f.nombre)}</strong>
-      ${f.ref ? `${sePuedeVer(f.nombre) ? `<button class="btn sec" data-ver="${i}">👁 Ver aquí</button>` : ""}<button class="btn" data-bajar="${i}">⬇ Descargar / abrir</button>`
+      ${f.ref ? `${sePuedeVer(f.nombre) ? `<button class="btn sec" data-ver="${i}">👁 Ver</button>` : ""}<button class="btn" data-bajar="${i}">⬇ Descargar / abrir</button>`
               : `<span class="small muted">El archivo original se está guardando; estará disponible en la próxima sincronización.</span>`}</div>
     ${v.cargando ? `<p class="small muted">Abriendo el archivo…</p>` : ""}${v.error ? `<p class="small" style="color:var(--alta)">${esc(v.error)}</p>` : ""}
-    ${v.url && v.ver && v.hojas ? `${v.hojas.length > 1 ? `<div class="chips">${v.hojas.map((h, k) => `<button class="chip" data-hoja="${k}" aria-pressed="${k === (v.hoja || 0)}">${esc(h.nombre)}</button>`).join("")}</div>` : ""}<div class="zoom-xls"><button class="chip" data-zoomxls="-1" aria-label="Alejar">−</button><span class="small muted">${Math.round((v.zoom || 1) * 100)}%</span><button class="chip" data-zoomxls="1" aria-label="Acercar">+</button></div><div class="visor-xls"><div style="zoom:${v.zoom || 1}">${v.hojas[v.hoja || 0].html}</div></div>`
-      : v.url && v.ver ? (v.tipo.startsWith("image/") ? `<img class="visor-img" src="${v.url}" alt="${esc(f.nombre)}">` : `<iframe class="visor-doc" src="${v.url}" title="${esc(f.nombre)}"></iframe>`) : ""}
-    <details ${!(v.url && v.ver) ? "open" : ""}><summary class="small muted">Texto leído del archivo (lo que usa la IA)</summary>
+    <details open><summary class="small muted">Texto leído del archivo (lo que usa la IA)</summary>
       <pre>${legible ? resaltar(f.texto, terms) : "No se encontró texto en este archivo."}</pre></details></div>`;
 }
 
@@ -860,9 +878,73 @@ async function archivo(f){
   return new Blob([datos], {type: tipoDe(f.nombre)});
 }
 
+/* ---------- vista a pantalla completa (PDF con PDF.js, Excel tipo Excel, fotos y texto) ---------- */
+let _pdfjs = null, pantalla = null;      // pantalla: {nombre, tipo, url, zoom, pdf, hojas, hoja}
+function cargarPDFJS(){
+  return _pdfjs ||= new Promise((ok, mal) => { const sc = document.createElement("script");
+    sc.src = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js";
+    sc.onload = () => { window.pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js"; ok(window.pdfjsLib); };
+    sc.onerror = () => { _pdfjs = null; mal(new Error("No se pudo cargar el lector de PDF.")); }; document.head.appendChild(sc); });
+}
+async function abrirPantalla(f){
+  const esPdf = /\.pdf$/i.test(f.nombre) || visor.tipo === "application/pdf";
+  pantalla = { nombre: f.nombre, url: visor.url, tipo: esPdf ? "pdf" : visor.hojas ? "xls" : (visor.tipo || "").startsWith("image/") ? "img" : "txt",
+               zoom: visor.hojas ? (visor.zoom || 1) : 1, hojas: visor.hojas, hoja: visor.hoja || 0 };
+  $("#pNombre").textContent = f.nombre; $("#pantalla").hidden = false; document.body.style.overflow = "hidden";
+  history.pushState({pantalla: 1}, "");          // el gesto "atrás" del celular cierra la vista
+  await pintarPantalla(true);
+}
+function cerrarPantalla(){
+  if (!pantalla) return;
+  pantalla = null; $("#pantalla").hidden = true; $("#pCuerpo").innerHTML = ""; document.body.style.overflow = "";
+  visor.ver = false;
+}
+window.addEventListener("popstate", () => { if (pantalla) cerrarPantalla(); });
+async function pintarPantalla(nuevo){
+  const p = pantalla, cuerpo = $("#pCuerpo"); if (!p) return;
+  $("#pZoom").textContent = Math.round(p.zoom * 100) + "%";
+  $("#pTabs").hidden = !(p.tipo === "xls" && p.hojas && p.hojas.length > 1);
+  if (p.tipo === "xls") {
+    $("#pTabs").innerHTML = (p.hojas || []).map((h, k) => `<button class="chip" data-phoja="${k}" aria-pressed="${k === p.hoja}">${esc(h.nombre)}</button>`).join("");
+    cuerpo.innerHTML = `<div class="xls-caja" style="zoom:${p.zoom}">${p.hojas[p.hoja].html}</div>`;
+    requestAnimationFrame(posicionarImagenes);
+  } else if (p.tipo === "img") {
+    cuerpo.innerHTML = `<img class="pimg" src="${p.url}" alt="" style="width:${Math.round((cuerpo.clientWidth - 20) * p.zoom)}px">`;
+  } else if (p.tipo === "txt") {
+    cuerpo.innerHTML = `<pre>${esc(await (await fetch(p.url)).text().catch(() => "No se pudo leer el archivo."))}</pre>`;
+    cuerpo.firstElementChild.style.fontSize = Math.round(13 * p.zoom) + "px";
+  } else {
+    if (nuevo) cuerpo.innerHTML = '<p class="cargando">Abriendo el PDF…</p>';
+    try {
+      const lib = await cargarPDFJS();
+      p.pdf = p.pdf || await lib.getDocument(p.url).promise;
+      const ancho = cuerpo.clientWidth - 20, dpr = Math.min(3, window.devicePixelRatio || 1), turno = p.turno = (p.turno || 0) + 1;
+      cuerpo.innerHTML = "";
+      for (let n = 1; n <= Math.min(p.pdf.numPages, 80); n++) {
+        if (pantalla !== p || p.turno !== turno) return;        // se cerró o cambió el zoom: dejar de dibujar
+        const pag = await p.pdf.getPage(n), base = pag.getViewport({scale: 1});
+        const escala = ancho / base.width * p.zoom, vp = pag.getViewport({scale: escala * dpr});
+        const c = document.createElement("canvas"); c.width = vp.width; c.height = vp.height;
+        c.style.width = Math.round(vp.width / dpr) + "px"; c.style.height = Math.round(vp.height / dpr) + "px";
+        cuerpo.appendChild(c);
+        await pag.render({canvasContext: c.getContext("2d"), viewport: vp}).promise;
+      }
+      if (p.pdf.numPages > 80) cuerpo.insertAdjacentHTML("beforeend", '<p class="cargando">Se muestran las primeras 80 páginas; descarga el PDF para verlo completo.</p>');
+    } catch(e) { cuerpo.innerHTML = `<p class="cargando">${esc(e.message || "No se pudo mostrar el PDF.")} Usa ⬇ para descargarlo.</p>`; }
+  }
+}
+document.addEventListener("click", ev => {
+  const t = ev.target.closest("[data-cerrarvisor],[data-zoomv],[data-bajarvisor],[data-phoja]"); if (!t || !pantalla) return;
+  if ("cerrarvisor" in t.dataset) { history.back(); setTimeout(cerrarPantalla, 50); }
+  else if (t.dataset.zoomv) { pantalla.zoom = Math.min(3, Math.max(0.3, Math.round((pantalla.zoom + 0.25 * +t.dataset.zoomv) * 100) / 100)); pintarPantalla(); }
+  else if ("bajarvisor" in t.dataset) descargar(pantalla.url, pantalla.nombre);
+  else if (t.dataset.phoja !== undefined) { pantalla.hoja = +t.dataset.phoja; pintarPantalla(); }
+});
+document.addEventListener("keydown", ev => { if (ev.key === "Escape" && pantalla) { history.back(); setTimeout(cerrarPantalla, 50); } });
+
 async function abrirAdjunto(m, i, ver){
   const f = m.archivos[i];
-  if (visor.url && visor.ref === f.ref) { if (ver) { visor.ver = true; if (esPlanilla(f.nombre) && !visor.hojas) { visor.hojas = await hojasExcel(await (await fetch(visor.url)).blob(), f.nombre).catch(() => null); visor.hoja = 0; visor.zoom = zoomInicial((visor.hojas || [])[0]); } pintarCorreo(); } else descargar(visor.url, f.nombre); return; }
+  if (visor.url && visor.ref === f.ref) { if (ver) { visor.ver = true; if (esPlanilla(f.nombre) && !visor.hojas) { visor.hojas = await hojasExcel(await (await fetch(visor.url)).blob(), f.nombre).catch(() => null); visor.hoja = 0; visor.zoom = zoomInicial((visor.hojas || [])[0]); } pintarCorreo(); abrirPantalla(f); } else descargar(visor.url, f.nombre); return; }
   if (visor.url) URL.revokeObjectURL(visor.url);
   visor = {ref: f.ref, cargando: true}; pintarCorreo();
   try {
@@ -873,6 +955,7 @@ async function abrirAdjunto(m, i, ver){
     if (!ver) descargar(visor.url, f.nombre);
   } catch (e) { visor = {ref: f.ref, error: e.message}; }
   pintarCorreo();
+  if (ver && visor.url) abrirPantalla(f);
 }
 function descargar(url, nombre){ const a = document.createElement("a"); a.href = url; a.download = nombre; a.target = "_blank"; document.body.appendChild(a); a.click(); a.remove(); }
 
