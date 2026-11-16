@@ -63,6 +63,7 @@ header{display:flex; flex-wrap:wrap; align-items:center; justify-content:space-b
 .search input::-webkit-search-cancel-button{display:none}
 .search svg{position:absolute; left:12px; top:50%; transform:translateY(-50%); color:var(--muted)}
 .chips{display:flex; gap:6px; flex-wrap:wrap}
+.salto{display:none}
 .campo-busca{padding:10px 10px; border:1px solid var(--line); border-radius:10px; background:var(--panel); font:inherit; color:var(--ink)}
 .row.hist{background:repeating-linear-gradient(0deg, transparent, transparent)}
 .tag.hist{background:#eef1f6; color:#4a5568}
@@ -149,9 +150,11 @@ header{display:flex; flex-wrap:wrap; align-items:center; justify-content:space-b
   #vCorreos .toolbar .carpetas .pc{display:none}
   #vCorreos .toolbar .carpetas button{padding:8px 11px}
   #vCorreos .toolbar .search{flex:1 1 0}
-  #vCorreos .toolbar .chips{flex:1}
-  #vCorreos .toolbar .campo-busca{order:5; padding:7px 8px; font-size:15px}
-  #vCorreos .toolbar .chips{order:6}
+  #vCorreos .toolbar .carpetas{order:1}
+  #vCorreos .toolbar .search{order:2; flex:1 1 0; min-width:120px}
+  #vCorreos .toolbar .salto{display:block; order:4; flex-basis:100%; height:0}
+  #vCorreos .toolbar .campo-busca{order:5; flex:none; padding:6px 8px; font-size:15px}
+  #vCorreos .toolbar .chips{order:6; flex:1 1 0; min-width:0; flex-wrap:nowrap; overflow-x:auto}
   .acciones{width:100%; flex-wrap:nowrap; gap:6px}
   .acciones .sinc{flex:1; min-width:0; flex-wrap:nowrap; gap:6px}
   #sincTxt{min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; font-size:12px}
@@ -219,6 +222,11 @@ details.resumen summary{cursor:pointer; list-style:none} details.resumen summary
 
 /* Sugerencias de contactos */
 .campo{position:relative}
+.compose .campo-dest{display:flex; flex-wrap:wrap; gap:6px; align-items:center; padding:6px 8px; border:1px solid var(--line); border-radius:8px; background:var(--bg); cursor:text}
+.compose .campo-dest input{flex:1; min-width:140px; border:0; padding:4px 2px; background:transparent; outline:none}
+.compose .campo-dest:focus-within{border-color:var(--accent)}
+.dest{display:inline-flex; align-items:center; gap:4px; background:var(--accent-soft); color:var(--accent); border-radius:999px; padding:3px 4px 3px 10px; font-size:14px; max-width:100%; overflow-wrap:anywhere}
+.dest button{border:0; background:transparent; color:var(--accent); cursor:pointer; font-size:13px; width:22px; height:22px; border-radius:50%}
 .sugs{position:absolute; left:0; right:0; top:100%; margin-top:4px; background:#fff; border:1px solid var(--line); border-radius:8px;
   box-shadow:0 8px 24px rgba(20,26,40,.14); z-index:20; max-height:280px; overflow:auto}
 .sug{display:flex; gap:10px; align-items:center; width:100%; text-align:left; border:0; background:none; padding:8px 12px; cursor:pointer; color:var(--ink)}
@@ -328,6 +336,7 @@ textarea{font:inherit}
   <section id="vCorreos">
     <div class="toolbar" style="margin-bottom:10px">
       <div class="seg carpetas" id="carpetas" role="tablist" aria-label="Carpetas"></div>
+      <span class="salto" aria-hidden="true"></span>
       <select id="campoBusca" class="campo-busca" aria-label="Buscar en">
         <option value="todo">Todo</option><option value="asunto">Asunto</option><option value="de">De</option>
         <option value="para">Para / Cc</option><option value="texto">Texto</option></select>
@@ -1024,9 +1033,9 @@ let sugs = {campo: null, lista: [], sel: 0};
 function tokenActual(valor){ const i = valor.lastIndexOf(","); return [valor.slice(0, i + 1), valor.slice(i + 1).trim()]; }
 function mostrarSugs(input){
   cerrarSugs();
-  const [, t] = tokenActual(input.value), q = norm(t);
+  const q = norm(input.value.trim());
   if (q.length < 1) return;
-  const ya = new Set(input.value.split(",").map(x => x.trim().toLowerCase()));
+  const ya = new Set(destDe(input).map(x => x.toLowerCase()));
   const lista = AGENDA.filter(c => !ya.has(c.email) && c.clave.split(/[\s@._-]+/).some(p => p.startsWith(q)) || (q.length > 2 && c.clave.includes(q) && !ya.has(c.email))).slice(0, 8);
   if (!lista.length) return;
   sugs = {campo: input, lista, sel: 0};
@@ -1040,11 +1049,19 @@ function mostrarSugs(input){
 function cerrarSugs(){ document.querySelectorAll(".sugs").forEach(x => x.remove()); sugs = {campo: null, lista: [], sel: 0}; }
 function elegirSug(i){
   const c = sugs.lista[i], input = sugs.campo; if (!c || !input) return;
-  const [antes] = tokenActual(input.value);
-  input.value = (antes ? antes.replace(/,\s*$/, ", ") : "") + c.email + ", ";
-  cerrarSugs(); input.focus(); leerBorrador();
+  agregarDest(input, c.email);
+  cerrarSugs(); input.focus();
 }
-document.addEventListener("input", ev => { if (ev.target.id === "rPara" || ev.target.id === "rCc") mostrarSugs(ev.target); });
+document.addEventListener("input", ev => {
+  const input = ev.target; if (input.id !== "rPara" && input.id !== "rCc") return;
+  // Respaldo para teclados de celular: al escribir coma, espacio o pegar varias direcciones, quedan como burbujas.
+  if (/[,;\s]/.test(input.value)) {
+    const partes = input.value.split(/[,;\s]+/), ultima = /[,;\s]$/.test(input.value) ? "" : partes.pop();
+    const listas = partes.filter(esCorreo); listas.forEach(e => agregarDest(input, e));
+    if (listas.length) { input.value = ultima; cerrarSugs(); leerBorrador(); }
+  }
+  mostrarSugs(input);
+});
 document.addEventListener("keydown", ev => {
   if (!sugs.campo || ev.target !== sugs.campo) return;
   if (ev.key === "ArrowDown" || ev.key === "ArrowUp") {
@@ -1074,8 +1091,8 @@ function redactor(){
   return `<section class="compose" aria-label="Responder">
     <h3>${{responder: "Tu respuesta", reenviar: "Reenviar", nuevo: "Correo nuevo"}[b.modo]}${b.ocupado ? " · " + esc(b.ocupado) : ""}</h3>
     ${CUENTAS.length > 1 ? `<label>De <select id="rDe" ${b.modo === "nuevo" ? "" : "disabled"}>${CUENTAS.map(c => `<option value="${esc(c)}" ${c === b.cuenta ? "selected" : ""}>${esc(etiqueta(c))} — ${esc(c)}</option>`).join("")}</select></label>` : ""}
-    <label>Para <span class="campo"><input id="rPara" value="${esc(b.para)}" autocomplete="off" inputmode="email" autocorrect="off" autocapitalize="off" spellcheck="false" placeholder="Escribe un nombre o correo…"></span></label>
-    <label>Cc <span class="campo"><input id="rCc" value="${esc(b.cc)}" autocomplete="off" inputmode="email" autocorrect="off" autocapitalize="off" spellcheck="false" placeholder="(opcional)"></span></label>
+    <label>Para ${campoDest("rPara", b.para, "Escribe un nombre o correo…")}</label>
+    <label>Cc ${campoDest("rCc", b.cc, "(opcional)")}</label>
     <label>Asunto <input id="rAsunto" value="${esc(b.asunto)}" autocomplete="off" autocorrect="on" autocapitalize="sentences" spellcheck="true"></label>
     ${b.modo === "reenviar" && (MSGS.find(x => x.id === b.id) || {archivos: []}).archivos.length ? `<label class="check"><input type="checkbox" id="rAdj" ${b.con_adjuntos ? "checked" : ""}> Incluir los adjuntos originales (${MSGS.find(x => x.id === b.id).archivos.length})</label>` : ""}
     <label>Mensaje <textarea id="rTexto" autocorrect="on" autocapitalize="sentences" spellcheck="true" placeholder="Escribe tu respuesta, o usa «Sugerir respuesta».">${esc(b.texto)}</textarea></label>
@@ -1097,9 +1114,39 @@ function redactor(){
     ${b.estado ? `<p class="estadoEnvio ${b.clase}" style="margin:0">${esc(b.estado)}</p>` : ""}
   </section>`;
 }
+/* Destinatarios como "burbujas": al terminar una dirección (Enter, coma, espacio o elegir una sugerencia) queda fija
+   con su ✕ y el campo queda vacío para escribir la siguiente. */
+const esCorreo = x => /^[^@\s,;<>]+@[^@\s,;<>]+\.[^@\s,;<>]+$/.test(String(x || "").trim());
+const burbuja = e => `<span class="dest" data-email="${esc(e)}">${esc(e)}<button type="button" data-quitardest aria-label="Quitar ${esc(e)}">✕</button></span>`;
+function campoDest(id, valor, ph){
+  const partes = listaCorreos(valor || ""), ok = partes.filter(esCorreo), resto = partes.filter(x => !esCorreo(x)).join(" ");
+  return `<span class="campo campo-dest" data-campo="${id}">${ok.map(burbuja).join("")}<input id="${id}" value="${esc(resto)}" autocomplete="off" inputmode="email" autocorrect="off" autocapitalize="off" spellcheck="false" placeholder="${ok.length ? "" : esc(ph)}"></span>`;
+}
+const destDe = input => [...input.parentElement.querySelectorAll(".dest")].map(x => x.dataset.email);
+function agregarDest(input, email){
+  email = String(email || "").trim().replace(/[,;]+$/, "");
+  if (!esCorreo(email)) return false;
+  if (!destDe(input).map(x => x.toLowerCase()).includes(email.toLowerCase())) input.insertAdjacentHTML("beforebegin", burbuja(email));
+  input.value = ""; input.placeholder = ""; leerBorrador(); return true;
+}
+document.addEventListener("keydown", ev => {
+  const input = ev.target; if (input.id !== "rPara" && input.id !== "rCc") return;
+  if (sugs.campo === input && sugs.lista.length && (ev.key === "Enter" || ev.key === "Tab" || ev.key === "ArrowDown" || ev.key === "ArrowUp")) return;   // lo maneja la lista de sugerencias
+  if ((ev.key === "Enter" || ev.key === "," || ev.key === ";" || ev.key === " " || ev.key === "Tab") && input.value.trim()) {
+    if (agregarDest(input, input.value)) { ev.preventDefault(); cerrarSugs(); }
+    else if (ev.key === "Enter") ev.preventDefault();
+  } else if (ev.key === "Enter") ev.preventDefault();
+  else if (ev.key === "Backspace" && !input.value) { const ult = [...input.parentElement.querySelectorAll(".dest")].pop(); if (ult) { ult.remove(); leerBorrador(); } }
+}, true);
+document.addEventListener("focusout", ev => { const t = ev.target; if ((t.id === "rPara" || t.id === "rCc") && t.value.trim()) setTimeout(() => agregarDest(t, t.value), 150); });
+document.addEventListener("click", ev => {
+  const q = ev.target.closest("[data-quitardest]"); if (!q) { const c = ev.target.closest(".campo-dest"); if (c && ev.target === c) c.querySelector("input").focus(); return; }
+  const campo = q.closest(".campo-dest"); q.parentElement.remove(); leerBorrador(); campo.querySelector("input").focus();
+});
 function leerBorrador(){
   if (!borrador || !$("#rTexto")) return;
-  borrador.para = $("#rPara").value; borrador.cc = $("#rCc").value; borrador.asunto = $("#rAsunto").value; borrador.texto = $("#rTexto").value;
+  const dest = id => [...destDe($(id)), $(id).value.trim()].filter(Boolean).join(", ");
+  borrador.para = dest("#rPara"); borrador.cc = dest("#rCc"); borrador.asunto = $("#rAsunto").value; borrador.texto = $("#rTexto").value;
   if ($("#rDe")) borrador.cuenta = $("#rDe").value;
   if ($("#rAdj")) borrador.con_adjuntos = $("#rAdj").checked;
 }
