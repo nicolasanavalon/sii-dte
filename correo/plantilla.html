@@ -289,6 +289,7 @@ textarea{font:inherit}
 </head>
 <body>
 <div id="bloqueo" class="lock">
+  <div class="lockbox" id="abriendo" hidden><h1>Bandeja Zoho</h1><p class="muted" style="margin:0">Abriendo tu correo…</p></div>
   <form id="formClave" class="lockbox">
     <h1>Bandeja Zoho</h1>
     <p class="muted small" style="margin:0">Tus correos están cifrados. Ingresa tu contraseña para verlos.</p>
@@ -422,16 +423,23 @@ async function sincLeidos(){
 
 /* ---------- descifrar ---------- */
 const b64 = s => Uint8Array.from(atob(s), c => c.charCodeAt(0));
-let CAJA_ACTUAL = CAJA;
+let CAJA_ACTUAL = CAJA || {};
 // Los últimos datos (cifrados) se guardan en el teléfono: la app abre al tiro con lo último que viste.
+const REPO = (() => { const h = location.hostname.split(".")[0], p = location.pathname.split("/").filter(Boolean)[0];
+  return location.hostname.endsWith("github.io") && p ? h + "/" + p : "nicolasanavalon/sii-dte"; })();
 async function cajaLocal(){ try { const c = await caches.open("correo"); const r = await c.match("caja"); return r ? await r.json() : null; } catch(e) { return null; } }
-async function guardarCajaLocal(caja){ try { const c = await caches.open("correo"); await c.put("caja", new Response(JSON.stringify(caja))); } catch(e) {} }
+async function guardarCajaLocal(caja, v){ try { const c = await caches.open("correo"); await c.put("caja", new Response(JSON.stringify(caja)));
+  if (v) await c.put("caja-v", new Response(v)); } catch(e) {} }
+async function versionLocal(){ try { const r = await (await caches.open("correo")).match("caja-v"); return r ? await r.text() : null; } catch(e) { return null; } }
 async function abrir(clave){
-  const local = await cajaLocal();
-  if (local && local.ct && CAJA && local.ct !== CAJA.ct) {
-    try { const d = await abrirCaja(local, clave); CAJA_ACTUAL = local; return d; } catch(e) {}
-  }
-  return abrirCaja(CAJA, clave);
+  let caja = await cajaLocal();
+  if (caja && caja.ct) { try { const d = await abrirCaja(caja, clave); CAJA_ACTUAL = caja; versionActual = await versionLocal(); return d; } catch(e) { if (CAJA) caja = null; else throw e; } }
+  if (CAJA && CAJA.ct) { CAJA_ACTUAL = CAJA; return abrirCaja(CAJA, clave); }
+  // Primera vez en este teléfono: se descarga (cifrado) desde GitHub.
+  const r = await fetch(`https://raw.githubusercontent.com/${REPO}/correo-datos/caja.json?t=${Date.now()}`, {cache: "no-store"});
+  if (!r.ok) throw new Error("No pude descargar tus correos (" + r.status + ").");
+  caja = await r.json();
+  const d = await abrirCaja(caja, clave); CAJA_ACTUAL = caja; guardarCajaLocal(caja); return d;
 }
 async function abrirCaja(CAJA, clave){
   const pw = await crypto.subtle.importKey("raw", new TextEncoder().encode(clave), "PBKDF2", false, ["deriveKey"]);
@@ -608,8 +616,39 @@ const ext = n => (String(n).split(".").pop() || "").slice(0, 4).toUpperCase();
 const kb = b => b >= 1048576 ? (b / 1048576).toFixed(1) + " MB" : Math.max(1, Math.round((b || 0) / 1024)) + " KB";
 const BASE_HTML = `<base target="_blank"><style>html,body{margin:0;background:#fff;color:#1f2328}body{padding:18px 20px;font:14px/1.55 -apple-system,"Segoe UI",Roboto,Arial,sans-serif;overflow-wrap:anywhere}img{max-width:100%;height:auto}table{max-width:100%!important}blockquote{margin:8px 0 8px 4px;padding-left:12px;border-left:3px solid #d0d7de;color:#57606a}a{color:#0b57d0}</style>`;
 
+/* ---------- contenido completo de cada correo (HTML y textos largos): se baja solo al abrirlo ---------- */
+const CUERPOS = {};
+let _llaveCuerpos = null;
+function llaveCuerpos(){
+  return _llaveCuerpos ||= (async () => {
+    const pw = await crypto.subtle.importKey("raw", new TextEncoder().encode(CLAVE), "PBKDF2", false, ["deriveKey"]);
+    return crypto.subtle.deriveKey({name: "PBKDF2", salt: b64(D.sal_cuerpos), iterations: 250000, hash: "SHA-256"}, pw, {name: "AES-GCM", length: 256}, false, ["decrypt"]);
+  })();
+}
+async function cargarCuerpo(m){
+  if (!m.cuerpo || CUERPOS[m.id] || !D.sal_cuerpos) return;
+  CUERPOS[m.id] = "cargando";
+  try {
+    const r = await fetch(`https://raw.githubusercontent.com/${D._repo || REPO}/correo-adjuntos/adj/${m.cuerpo}.bin`);
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    const caja = new Uint8Array(await r.arrayBuffer());
+    const plano = await crypto.subtle.decrypt({name: "AES-GCM", iv: caja.slice(2, 14)}, await llaveCuerpos(), caja.slice(14));
+    const c = JSON.parse(await new Response(new Blob([plano]).stream().pipeThrough(new DecompressionStream("gzip"))).text());
+    CUERPOS[m.id] = c;
+    for (const x of MSGS.filter(y => y.id === m.id)) {
+      if (c.html) x.html = c.html;
+      if (c.texto) x.texto = c.texto;
+      (c.archivos || []).forEach((t, i) => { if (t && x.archivos[i]) x.archivos[i].texto = t; });
+      indexar(x);
+    }
+  } catch(e) { CUERPOS[m.id] = "error"; }
+  if (abierto === m.id) pintarCorreo();
+}
+
 function pintarCorreo(){
   const m = MSGS.find(x => x.id === abierto);
+  if (m && m.cuerpo && !CUERPOS[m.id]) cargarCuerpo(m);
+  const cargandoCuerpo = m && m.cuerpo && m.tiene_html && CUERPOS[m.id] === "cargando";
   if (!m && HISTORIAL.porId[abierto]) {
     const h = HISTORIAL.porId[abierto], pidiendo = pedidosTraer[h.id];
     $("#read").innerHTML = `<div class="readbar"><button class="back" data-back>← Volver a la lista</button></div>
@@ -645,6 +684,7 @@ function pintarCorreo(){
       ${(h.puntos_clave || []).length ? `<ul>${h.puntos_clave.map(x => `<li>${esc(x)}</li>`).join("")}</ul>` : ""}
       ${a.accion && !m.enviado ? `<p class="small">👉 ${esc(a.accion)}</p>` : ""}</details>` : ""}
     <div class="hoja">${conHtml ? `<iframe class="correo-html" title="Contenido del correo" sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox" srcdoc="${esc(BASE_HTML + m.html)}"></iframe>`
+        : cargandoCuerpo ? `<div class="cuerpo muted">Abriendo el correo…</div>`
         : `<div class="cuerpo">${resaltar(m.texto || m.vista_previa || "(sin contenido)", terms)}</div>`}</div>
     ${m.html ? `<button class="enlace small" data-vertexto>${verTexto ? "Ver con el formato original" : "Ver como texto simple" + (terms.length ? " (con lo buscado resaltado)" : "")}</button>` : ""}
     ${hilo.length > 1 ? `<h3>Conversación (${hilo.length} correos)</h3><div class="hilo">${[...hilo].reverse().map(x => fila(x)).join("")}</div>` : ""}`;
@@ -1646,7 +1686,7 @@ $("#campoBusca").addEventListener("change", ev => { campoBusca = ev.target.value
 /* ---------- correos nuevos: casi en tiempo real ---------- */
 // Un "vigilante" en GitHub revisa Zoho cada minuto y guarda los datos (cifrados) en la rama correo-datos.
 // La página la revisa cada 30 segundos y, si hay algo nuevo, lo descarga y lo muestra sin recargar.
-let versionActual = null, buscando = false;
+var versionActual = null; let buscando = false;
 const horaTxt = ms => new Date(ms || Date.now()).toLocaleTimeString("es-CL", {hour: "2-digit", minute: "2-digit"});
 function sinc(txt, gira){ $("#sincTxt").innerHTML = esc(txt); $("#buscarAhora").innerHTML = (gira ? '<span class="girando">🔄</span>' : "🔄") + '<span class="pc"> Buscar ahora</span>'; }
 
@@ -1693,10 +1733,10 @@ async function revisarZoho(manual){
       if (caja && caja.ct && caja.ct !== CAJA_ACTUAL.ct) {
         const antes = new Set(MSGS.map(m => m.id));
         const nuevoD = await abrirCaja(caja, CLAVE);
-        CAJA_ACTUAL = caja; leerBorrador(); D = nuevoD; construir(true); prepararAvisos(); guardarCajaLocal(caja);
+        CAJA_ACTUAL = caja; leerBorrador(); D = nuevoD; construir(true); prepararAvisos(); guardarCajaLocal(caja, v.v);
         n = MSGS.filter(m => !antes.has(m.id) && !m.local).length;
       }
-      versionActual = v.v;
+      versionActual = v.v; guardarCajaLocal(CAJA_ACTUAL, v.v);
     }
     const atraso = Date.now() - (v.ms || 0);
     sinc(n ? `${n} correo${n > 1 ? "s" : ""} nuevo${n > 1 ? "s" : ""} · ${horaTxt()}`
@@ -1753,8 +1793,11 @@ $("#formClave").addEventListener("submit", async ev => {
   try { await entrar($("#clave").value, $("#recordar").checked); } catch(e) { err.textContent = "Contraseña incorrecta."; }
 });
 (async () => {
-  if (!CAJA) { $("#errClave").textContent = "Aún no hay datos: espera la primera sincronización."; return; }
-  const g = ss.get("correo_clave"); if (g) { try { await entrar(g, false); } catch(e) {} }
+  const g = ss.get("correo_clave");
+  if (g) {            // contraseña recordada: en vez del formulario, "Abriendo…"
+    $("#formClave").hidden = true; $("#abriendo").hidden = false;
+    try { await entrar(g, false); } catch(e) { $("#formClave").hidden = false; $("#abriendo").hidden = true; $("#errClave").textContent = e.message && !/decrypt|operation/i.test(e.message) ? e.message : ""; }
+  }
 })();
 </script>
 </body>

@@ -2,6 +2,19 @@
 self.addEventListener("install", () => self.skipWaiting());
 self.addEventListener("activate", e => e.waitUntil(self.clients.claim()));
 
+// La app (página) queda guardada en el teléfono: abre al tiro con la copia guardada y se actualiza por detrás.
+self.addEventListener("fetch", e => {
+  const r = e.request;
+  if (r.method !== "GET" || r.mode !== "navigate") return;
+  e.respondWith((async () => {
+    const c = await caches.open("correo-app"), clave = new URL("./", self.registration.scope).href;
+    const guardada = await c.match(clave);
+    const red = fetch(r).then(res => { if (res.ok) c.put(clave, res.clone()); return res; }).catch(() => null);
+    if (guardada && !/[?&]v=/.test(r.url)) { e.waitUntil(red); return guardada; }   // ?v=… = versión nueva: desde internet
+    return (await red) || guardada || Response.error();
+  })());
+});
+
 self.addEventListener("push", e => {
   let d = {};
   try { d = e.data ? e.data.json() : {}; } catch (_) {}

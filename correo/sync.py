@@ -20,6 +20,7 @@ Variables de entorno:
   CORREO_URL           dirección de la página publicada. Ahí vive el estado (cifrado): cada corrida
                        la lee, agrega lo nuevo y la vuelve a publicar. Sin ella se usa correo/index.html.
 """
+import base64
 import hashlib
 import json
 import os
@@ -274,6 +275,7 @@ def traer_nuevos(estado, clave):
             print(f"::warning::Gmail: {str(e)[:300]}")
     if ADJ_DIR and Path(ADJ_DIR).is_dir():
         vigentes = {f.get("ref") for m in estado["mensajes"].values() for f in m.get("archivos", []) if f.get("ref")}
+        vigentes |= {m.get("cuerpo") for m in estado["mensajes"].values() if m.get("cuerpo")}
         for archivo in Path(ADJ_DIR).glob("*.bin"):
             if archivo.stem not in vigentes:
                 archivo.unlink()
@@ -974,6 +976,7 @@ def generar_html(estado, clave):
         datos["_envio"] = {"token": env("GH_TOKEN_ENVIO"), "repo": env("GITHUB_REPOSITORY") or "nicolasanavalon/sii-dte"}
     caja = cripto.cifrar(datos, clave)
     html = PLANTILLA.read_text(encoding="utf-8").replace("/*__DATOS__*/null", json.dumps(caja))
+    print(f"Datos para la página: {len(json.dumps(caja)) // 1024} KB cifrados.")
     SALIDA.parent.mkdir(parents=True, exist_ok=True)
     SALIDA.write_text(html, encoding="utf-8")
     # Archivo pequeño para que la página sepa si hay datos nuevos sin descargar todo (no contiene datos de correos).
@@ -1218,6 +1221,44 @@ def traer_pedidos(estado, ids):
     return hechos
 
 
+TEXTO_EN_DATOS, ADJ_EN_DATOS = 12000, 4000      # lo que queda en el paquete principal (el resto, en el cuerpo)
+_LLAVE_CUERPOS = {}
+
+
+def aligerar(estado, clave):
+    """Saca de los datos principales el HTML y los textos largos de cada correo y los guarda en un archivo cifrado
+    aparte (correo-adjuntos/adj/<cuerpo>.bin) que la página baja solo al abrir ese correo. Así la app abre rápido."""
+    import gzip
+    if not ADJ_DIR:
+        return 0
+    if not estado.get("sal_cuerpos"):
+        estado["sal_cuerpos"] = base64.b64encode(os.urandom(16)).decode()
+    k = estado["sal_cuerpos"]
+    llave = _LLAVE_CUERPOS.get(k) or _LLAVE_CUERPOS.setdefault(k, cripto.llave_sesion(clave, k))
+    n = 0
+    for m in estado["mensajes"].values():
+        largo = m.get("html") or len(m.get("texto") or "") > TEXTO_EN_DATOS or any(
+            len(str(a.get("texto") or "")) > ADJ_EN_DATOS for a in m.get("archivos", []))
+        if not largo:
+            continue
+        cuerpo = {"html": m.get("html"), "texto": m.get("texto") or "",
+                  "archivos": [str(a.get("texto") or "") for a in m.get("archivos", [])]}
+        ref = "c" + hashlib.sha1(("cuerpo:" + m["id"]).encode()).hexdigest()[:23]
+        Path(ADJ_DIR).mkdir(parents=True, exist_ok=True)
+        (Path(ADJ_DIR) / f"{ref}.bin").write_bytes(
+            cripto.cifrar_con_llave(gzip.compress(json.dumps(cuerpo, ensure_ascii=False).encode()), llave))
+        m["cuerpo"], m["tiene_html"] = ref, bool(m.get("html")) or m.get("tiene_html", False)
+        m["html"] = None
+        m["texto"] = (m.get("texto") or "")[:TEXTO_EN_DATOS]
+        for a in m.get("archivos", []):
+            if len(str(a.get("texto") or "")) > ADJ_EN_DATOS:
+                a["texto"] = str(a["texto"])[:ADJ_EN_DATOS]
+        n += 1
+    if n:
+        print(f"Datos aligerados: {n} correos con su contenido completo en archivo aparte.")
+    return n
+
+
 def una_vuelta(estado, clave, rapido):
     """Una revisión de Zoho. Devuelve True si cambió algo (y en ese caso deja los datos nuevos escritos)."""
     global RAPIDO, LIMITE_VUELTA
@@ -1241,7 +1282,8 @@ def una_vuelta(estado, clave, rapido):
     t2 = time.time()
     analizados = analizar_pendientes(estado)
     print(f"  tiempos: Zoho {t1 - t0:.0f} s · estilo {t2 - t1:.0f} s · resúmenes {time.time() - t2:.0f} s")
-    cambio = bool(nuevos or completados or analizados or estilo or estado.pop("_cambio_otro", False)
+    aligerados = aligerar(estado, clave)          # (siempre se ejecuta: no dentro del "or")
+    cambio = bool(nuevos or completados or analizados or estilo or aligerados or estado.pop("_cambio_otro", False)
                   or estado.pop("_hilos_actualizados", 0)
                   or estado.pop("_cambio_leidos", False)) or not estado["ultima_sync"]
     estado["ultima_sync"] = datetime.now(TZ).strftime("%Y-%m-%d %H:%M")
