@@ -246,6 +246,20 @@ details.resumen summary{cursor:pointer; list-style:none} details.resumen summary
 .compose .adjuntar label.btn{display:inline-flex; flex-direction:row; color:var(--ink); font-size:14px; cursor:pointer}
 .adj-chip{display:inline-flex; align-items:center; gap:6px; border:1px solid var(--line); border-radius:999px; padding:4px 6px 4px 11px; font-size:13px; max-width:100%; overflow-wrap:anywhere}
 .adj-chip button{border:0; background:var(--soft); border-radius:50%; width:22px; height:22px; cursor:pointer; color:var(--muted)}
+.compose-top{display:none}
+.seguir-escribiendo{position:sticky; bottom:12px; align-self:center; box-shadow:0 6px 18px rgba(20,26,40,.25)}
+/* Celular: al responder, el editor ocupa toda la pantalla y el mensaje usa todo el espacio libre. */
+@media (max-width:860px){
+  .compose{position:fixed; inset:0; z-index:45; border:0; border-radius:0; overflow-y:auto; -webkit-overflow-scrolling:touch;
+    padding:0 14px calc(env(safe-area-inset-bottom, 0px) + 16px); gap:8px}
+  .compose > h3{display:none}
+  .compose-top{display:flex; align-items:center; gap:8px; position:sticky; top:0; z-index:2; background:var(--panel);
+    margin:0 -14px; padding:calc(env(safe-area-inset-top, 0px) + 8px) 14px 8px; border-bottom:1px solid var(--line)}
+  .compose-top strong{flex:1; min-width:0; text-align:center; font-size:15px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+  .compose-top .btn{padding:8px 12px}
+  .compose textarea#rTexto{min-height:max(260px, calc(100dvh - 400px))}
+  body.escribiendo{overflow:hidden}
+}
 .compose textarea{min-height:190px; resize:vertical; line-height:1.5}
 .btn.sec{background:var(--soft); color:var(--ink); font-weight:500}
 .btn.peligro{background:var(--alta); color:#fff}
@@ -655,6 +669,7 @@ async function cargarCuerpo(m){
 }
 
 function pintarCorreo(){
+  requestAnimationFrame(() => document.body.classList.toggle("escribiendo", !!document.querySelector("#read .compose")));
   const m = MSGS.find(x => x.id === abierto);
   if (m && m.cuerpo && !CUERPOS[m.id]) cargarCuerpo(m);
   const cargandoCuerpo = m && m.cuerpo && m.tiene_html && CUERPOS[m.id] === "cargando";
@@ -688,7 +703,7 @@ function pintarCorreo(){
     </div>
     ${m.archivos.length ? `<div class="adjs">${m.archivos.map((f, i) => `<button class="adj" data-adj="${i}" aria-expanded="${adjAbierto === i}"><span class="ext">${esc(ext(f.nombre))}</span><span class="adj-n">${esc(f.nombre)}</span><span class="muted">${kb(f.tamano)}</span></button>`).join("")}</div>
       ${adjAbierto !== null && m.archivos[adjAbierto] ? panelAdjunto(m, adjAbierto, terms) : ""}` : ""}
-    ${borrador && borrador.id === m.id ? redactor() : ""}
+    ${borrador && borrador.id === m.id ? (borrador.oculto ? '<button class="btn seguir-escribiendo" data-r="seguir">✏️ Seguir escribiendo tu respuesta</button>' : redactor()) : ""}
     ${h.resumen || a.resumen ? `<details class="resumen"><summary><h3>✨ ${hilo.length > 1 ? "Resumen de la conversación" : "Resumen"}</h3></summary><p>${esc(h.resumen || a.resumen)}</p>
       ${(h.puntos_clave || []).length ? `<ul>${h.puntos_clave.map(x => `<li>${esc(x)}</li>`).join("")}</ul>` : ""}
       ${a.accion && !m.enviado ? `<p class="small">👉 ${esc(a.accion)}</p>` : ""}</details>` : ""}
@@ -1088,8 +1103,12 @@ function nuevoBorrador(m, modo){
 }
 function redactor(){
   const b = borrador, envio = D._envio && D._envio.token;
+  const titulo = {responder: "Tu respuesta", reenviar: "Reenviar", nuevo: "Correo nuevo"}[b.modo];
   return `<section class="compose" aria-label="Responder">
-    <h3>${{responder: "Tu respuesta", reenviar: "Reenviar", nuevo: "Correo nuevo"}[b.modo]}${b.ocupado ? " · " + esc(b.ocupado) : ""}</h3>
+    <div class="compose-top">${b.modo === "nuevo" ? '<button class="btn sec" data-r="cancelar">✕</button>' : '<button class="btn sec" data-r="minimizar">↓ Ver correo</button>'}
+      <strong>${titulo}${b.ocupado ? " · " + esc(b.ocupado) : ""}</strong>
+      <button class="btn" data-r="enviar" ${b.ocupado || !envio ? "disabled" : ""}>Enviar</button></div>
+    <h3>${titulo}${b.ocupado ? " · " + esc(b.ocupado) : ""}</h3>
     ${CUENTAS.length > 1 ? `<label>De <select id="rDe" ${b.modo === "nuevo" ? "" : "disabled"}>${CUENTAS.map(c => `<option value="${esc(c)}" ${c === b.cuenta ? "selected" : ""}>${esc(etiqueta(c))} — ${esc(c)}</option>`).join("")}</select></label>` : ""}
     <label>Para ${campoDest("rPara", b.para, "Escribe un nombre o correo…")}</label>
     <label>Cc ${campoDest("rCc", b.cc, "(opcional)")}</label>
@@ -1698,6 +1717,8 @@ document.addEventListener("click", ev => {
     setTimeout(() => { const e = modo === "reenviar" ? $("#rPara") : $("#rTexto"); if (e) { e.focus(); if (e.id === "rTexto") e.setSelectionRange(0, 0); } }, 0); return; }
   if (t.dataset.r && borrador && (m || borrador.modo === "nuevo")) {
     const a = t.dataset.r; leerBorrador();
+    if (a === "minimizar") { borrador.oculto = true; pintarCorreo(); return; }
+    if (a === "seguir") { borrador.oculto = false; pintarCorreo(); setTimeout(() => $("#rTexto") && $("#rTexto").focus(), 0); return; }
     if (a === "sugerir") sugerir(m);
     else if (a === "mejorar") mejorar(m);
     else if (a === "deshacer") { borrador.texto = borrador.anterior || borrador.texto; borrador.anterior = ""; borrador.obs = null; pintarCorreo(); }
