@@ -1076,9 +1076,9 @@ function redactor(){
     ${CUENTAS.length > 1 ? `<label>De <select id="rDe" ${b.modo === "nuevo" ? "" : "disabled"}>${CUENTAS.map(c => `<option value="${esc(c)}" ${c === b.cuenta ? "selected" : ""}>${esc(etiqueta(c))} — ${esc(c)}</option>`).join("")}</select></label>` : ""}
     <label>Para <span class="campo"><input id="rPara" value="${esc(b.para)}" autocomplete="off" inputmode="email" autocorrect="off" autocapitalize="off" spellcheck="false" placeholder="Escribe un nombre o correo…"></span></label>
     <label>Cc <span class="campo"><input id="rCc" value="${esc(b.cc)}" autocomplete="off" inputmode="email" autocorrect="off" autocapitalize="off" spellcheck="false" placeholder="(opcional)"></span></label>
-    <label>Asunto <input id="rAsunto" value="${esc(b.asunto)}" autocomplete="off" autocorrect="off" spellcheck="false"></label>
+    <label>Asunto <input id="rAsunto" value="${esc(b.asunto)}" autocomplete="off" autocorrect="on" autocapitalize="sentences" spellcheck="true"></label>
     ${b.modo === "reenviar" && (MSGS.find(x => x.id === b.id) || {archivos: []}).archivos.length ? `<label class="check"><input type="checkbox" id="rAdj" ${b.con_adjuntos ? "checked" : ""}> Incluir los adjuntos originales (${MSGS.find(x => x.id === b.id).archivos.length})</label>` : ""}
-    <label>Mensaje <textarea id="rTexto" autocorrect="off" spellcheck="false" placeholder="Escribe tu respuesta, o usa «Sugerir respuesta».">${esc(b.texto)}</textarea></label>
+    <label>Mensaje <textarea id="rTexto" autocorrect="on" autocapitalize="sentences" spellcheck="true" placeholder="Escribe tu respuesta, o usa «Sugerir respuesta».">${esc(b.texto)}</textarea></label>
     <div class="adjuntar">
       <label class="btn sec">📎 Adjuntar archivos<input type="file" id="rArchivos" multiple hidden></label>
       ${(b.nuevos || []).map((f, i) => `<span class="adj-chip">📄 ${esc(f.nombre)} <span class="muted">${tamTxt(f.datos.length)}</span><button type="button" data-quitaradj="${i}" aria-label="Quitar ${esc(f.nombre)}">✕</button></span>`).join("")}
@@ -1191,8 +1191,8 @@ function ejemplosEstilo(para, max = 3800){
   }
   return out;
 }
-function guiaEstilo(para){
-  const p = (D.estilo || {}).perfil, ej = ejemplosEstilo(para), L = x => Array.isArray(x) ? x.filter(Boolean).join(" · ") : (x || "");
+function guiaEstilo(para, maxEjemplos = 3800){
+  const p = (D.estilo || {}).perfil, ej = ejemplosEstilo(para, maxEjemplos), L = x => Array.isArray(x) ? x.filter(Boolean).join(" · ") : (x || "");
   let g = `\nESTILO: escribe EXACTAMENTE como escribe Nicolás. La meta es que el destinatario no note que no lo escribió él: mismas palabras, mismo largo, mismo tono, mismos saludos y despedidas, misma puntuación. Nada de frases de plantilla o de IA ("Espero que este correo te encuentre bien", "Quedo atento a cualquier consulta", "No dudes en contactarme") si él no las usa.`;
   if (p) g += `\nCÓMO ESCRIBE NICOLÁS (analizado de sus correos enviados):
 - En general: ${L(p.resumen)}
@@ -1235,12 +1235,12 @@ async function mejorar(m){
   leerBorrador(); const [nota, cola] = partes(borrador.texto); if (!nota.trim()) return;
   borrador.ocupado = "la IA está mejorando tu redacción…"; borrador.obs = null; pintarCorreo();
   try {
-    const t = await groq(REGLAS_BASE + guiaEstilo(borrador.para) + `
+    const t = await groq(REGLAS_BASE + guiaEstilo(borrador.para, 1400) + `
 Mejora el BORRADOR de Nicolás SIN cambiar su forma de escribir: corrige ortografía, tildes y puntuación, ordena lo que esté confuso y deja claro lo que pide o informa.
 Debe seguir sonando a él (su tono, sus palabras, sus expresiones, su largo): no lo vuelvas formal, rebuscado ni genérico, y no le agregues frases de cortesía que él no usa.
 Mantén EXACTAMENTE la intención y todos los datos (montos, fechas, números, nombres, compromisos): no agregues información nueva ni quites ninguna.
 Si falta saludo o despedida, agrégalos como los usa él. Devuelve SOLO el texto reescrito, sin comentarios.`,
-      (m ? `Contexto (correo de referencia, solo para entender):\n${textoHilo(HILOS[m.hilo].slice(-1), 4000)}\n\n` : "") + `BORRADOR DE NICOLÁS (asunto: ${borrador.asunto}):\n${nota}`);
+      (m ? `Contexto (correo de referencia, solo para entender):\n${textoHilo(HILOS[m.hilo].slice(-1), 1500)}\n\n` : "") + `BORRADOR DE NICOLÁS (asunto: ${borrador.asunto}):\n${nota}`, false, () => {}, true);
     borrador.anterior = borrador.texto; borrador.texto = t + cola;
     borrador.obs = '<span class="ok">✓ Texto mejorado.</span> <div class="actions"><button class="btn sec" data-r="deshacer">↶ Volver a mi versión</button></div>';
   } catch (e) { borrador.obs = `<p>${esc(e.message)}</p>`; }
@@ -1251,12 +1251,12 @@ async function revisar(m){
   leerBorrador(); const [nota, cola] = partes(borrador.texto); if (!nota.trim()) return;
   borrador.ocupado = "la IA está revisando…"; borrador.obs = null; pintarCorreo();
   try {
-    const t = await groq(REGLAS_BASE + guiaEstilo(borrador.para) + `
+    const t = await groq(REGLAS_BASE + guiaEstilo(borrador.para, 1400) + `
 Revisa el BORRADOR en dos aspectos (no critiques su estilo personal: solo lo que dificulte entenderlo o esté mal):
 1) CLARIDAD: que se entienda bien (redacción, ortografía, tono, ambigüedades).
 2) EXACTITUD: ${m ? "compara cada dato del borrador (montos, fechas, números de factura u orden, nombres, compromisos) con la conversación y sus adjuntos; señala lo que no coincida o no aparezca en ella." : "no hay conversación previa: señala solo datos incompletos o contradictorios dentro del mismo borrador."}
 Responde SOLO un objeto JSON: {"claridad": ["observación", ...], "exactitud": ["observación con el dato correcto y de dónde sale", ...], "version_corregida": "el borrador corregido completo, con la misma forma de escribir de Nicolás"}. Usa listas vacías si no hay nada que corregir.`,
-      `${contexto(m, 9000)}BORRADOR DE NICOLÁS (asunto: ${borrador.asunto}):\n${nota}`, true);
+      `${contexto(m, 9000)}BORRADOR DE NICOLÁS (asunto: ${borrador.asunto}):\n${nota}`, true, () => {}, true);
     const r = JSON.parse(t.slice(t.indexOf("{"), t.lastIndexOf("}") + 1));
     const cl = (r.claridad || []).filter(Boolean), ex = (r.exactitud || []).filter(Boolean);
     borrador.corregida = (r.version_corregida || "") ? r.version_corregida + cola : "";
@@ -1464,7 +1464,7 @@ const LENTOS = (() => { try { return JSON.parse(localStorage.getItem("correo_ia_
 const marcarLento = m => { LENTOS[m] = Date.now() + 30 * 60000; try { localStorage.setItem("correo_ia_lentos", JSON.stringify(LENTOS)); } catch(e) {} };
 const ESPERA_IA = 20000;    // máximo por modelo; si no responde, se pasa al siguiente
 
-async function groq(sistema, usuario, json = false, avance = () => {}){
+async function groq(sistema, usuario, json = false, avance = () => {}, rapido = false){
   const ia = D._ia;
   if (!ia || !(ia.clave || ia.clave_gemini)) throw new Error("La IA todavía no está activada (falta la clave gratuita de Gemini o de Groq).");
   const cuenta = (ia.modelos && ia.modelos.length ? ia.modelos : MODELOS_QA)
@@ -1473,6 +1473,8 @@ async function groq(sistema, usuario, json = false, avance = () => {}){
   const res = (ia.reservados || []).filter(m => cuenta.includes(m)), pro = m => /pro/.test(m) && m.startsWith("gemini");
   const orden = [ia.modelo, ...res.filter(m => !pro(m)), ...cuenta.filter(m => !pro(m) && !/lite/.test(m)), ...cuenta.filter(m => !pro(m)), ...cuenta]
     .filter((m, i, a) => m && a.indexOf(m) === i);
+  // Rápido (mejorar o revisar un borrador): primero Groq, que responde en 1-2 s; después Gemini.
+  if (rapido) orden.sort((a, b) => (a.startsWith("gemini") ? 1 : 0) - (b.startsWith("gemini") ? 1 : 0));
   const ahora = Date.now(), modelos = [...orden.filter(m => !(LENTOS[m] > ahora)), ...orden.filter(m => LENTOS[m] > ahora)];
   let error = "La IA no pudo responder.", limite = false;
   for (const modelo of modelos.slice(0, 6)) {
