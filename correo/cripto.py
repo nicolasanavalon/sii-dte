@@ -85,3 +85,18 @@ def cifrar_bytes(datos: bytes, clave: str) -> bytes:
 
 def descifrar_bytes(caja: bytes, clave: str) -> bytes:
     return AESGCM(_llave(clave, caja[:16])).decrypt(caja[16:28], caja[28:], None)
+
+
+# Cuerpos de correo (HTML y textos completos): una llave por sesión (sal fija guardada en los datos) para que la
+# página abra cada correo al tiro, sin volver a derivar la llave (PBKDF2) por cada archivo.
+def llave_sesion(clave: str, sal_b64: str) -> bytes:
+    return _llave(clave, base64.b64decode(sal_b64))
+
+
+def cifrar_con_llave(datos: bytes, llave: bytes) -> bytes:
+    iv = os.urandom(12)
+    return b"C1" + iv + AESGCM(llave).encrypt(iv, datos, None)
+
+
+def descifrar_con_llave(caja: bytes, llave: bytes) -> bytes:
+    return AESGCM(llave).decrypt(caja[2:14], caja[14:], None)

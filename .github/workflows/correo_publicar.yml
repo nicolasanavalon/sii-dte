@@ -49,8 +49,8 @@ jobs:
           import subprocess
           version = subprocess.run(["git", "log", "-1", "--format=%H", "--", "correo/plantilla.html"],
                                    capture_output=True, text=True).stdout.strip()
-          html = (open("correo/plantilla.html", encoding="utf-8").read().replace("/*__DATOS__*/null", caja)
-                  .replace('/*__VERSION__*/""', json.dumps(version)))
+          # La página ya NO lleva los correos dentro (pesaban mucho): los baja aparte, solo si hay algo nuevo.
+          html = open("correo/plantilla.html", encoding="utf-8").read().replace('/*__VERSION__*/""', json.dumps(version))
           open("public/correo/index.html", "w", encoding="utf-8").write(html)
           open("public/correo/pagina.json", "w").write(json.dumps({"v": version}))
           PY
