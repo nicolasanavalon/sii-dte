@@ -17,7 +17,7 @@ _ultimo_guardado = 0.0
 
 
 def _archivo():
-    d = (os.environ.get("CORREO_DATOS_DIR") or "").strip()
+    d = (os.environ.get("CORREO_ARCH_DIR") or os.environ.get("CORREO_DATOS_DIR") or "").strip()
     return Path(d) / "historial.json" if d else None
 
 

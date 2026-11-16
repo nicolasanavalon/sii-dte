@@ -1,0 +1,83 @@
+name: "Correo: archivo (historial completo)"
+
+# ARCHIVISTA: todo el día indexa, descarga y analiza con la IA gratuita el historial COMPLETO de las casillas
+# (desde el correo más antiguo), sin atrasar al vigilante. Guarda todo cifrado en la rama correo-archivo.
+# Queda encendido ~5 h 45 min y se relanza solo; el horario es solo un respaldo.
+on:
+  schedule:
+    - cron: "17,47 * * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+  actions: write
+
+concurrency:
+  group: correo-archivista
+  cancel-in-progress: false
+
+jobs:
+  archivar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 355
+    steps:
+      - uses: actions/checkout@v4
+
+      - run: echo "INICIO=$(date +%s)" >> "$GITHUB_ENV"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: correo/requirements.txt
+
+      - name: Instalar dependencias (y OCR para leer fotos y PDF escaneados)
+        run: |
+          sudo apt-get install -y -qq tesseract-ocr tesseract-ocr-spa >/dev/null
+          pip install -r correo/requirements.txt
+
+      - name: Traer datos (para leer) y archivo (cifrados)
+        env:
+          REPO_URL: https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git
+        run: |
+          git clone -q --depth 1 --branch correo-datos "$REPO_URL" "$RUNNER_TEMP/datos" || mkdir -p "$RUNNER_TEMP/datos"
+          if ! git clone -q --depth 1 --branch correo-archivo "$REPO_URL" "$RUNNER_TEMP/archivo"; then
+            mkdir -p "$RUNNER_TEMP/archivo" && git -C "$RUNNER_TEMP/archivo" init -q
+            cp "$RUNNER_TEMP/datos/historial.json" "$RUNNER_TEMP/datos/archivo.json" "$RUNNER_TEMP/archivo/" 2>/dev/null || true
+          fi
+          cat > "$RUNNER_TEMP/guardar.sh" <<'EOS'
+          cd "$RUNNER_TEMP/archivo" || exit 0
+          git checkout -q --orphan "n$(date +%s)" 2>/dev/null
+          git add -A . && git -c user.name=correo-bot -c user.email=41898282+github-actions[bot]@users.noreply.github.com \
+            commit -q -m "Correo: archivo cifrado" || exit 0
+          for i in 1 2 3; do git push -q -f "$REPO_URL" HEAD:correo-archivo && exit 0; sleep 5; done
+          EOS
+
+      - name: Indexar, descargar y analizar el historial
+        env:
+          REPO_URL: https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git
+          CORREO_GUARDAR: ${{ runner.temp }}/guardar.sh
+          CORREO_DATOS_DIR: ${{ runner.temp }}/datos
+          CORREO_ARCH_DIR: ${{ runner.temp }}/archivo
+          CORREO_SALIDA: ${{ runner.temp }}/index.html
+          CORREO_CLAVE: ${{ secrets.CORREO_CLAVE }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          ZOHO_CLIENT_ID: ${{ secrets.ZOHO_CLIENT_ID }}
+          ZOHO_CLIENT_SECRET: ${{ secrets.ZOHO_CLIENT_SECRET }}
+          ZOHO_REFRESH_TOKEN: ${{ secrets.ZOHO_REFRESH_TOKEN }}
+          ZOHO_TALLER_CLIENT_ID: ${{ secrets.ZOHO_TALLER_CLIENT_ID }}
+          ZOHO_TALLER_CLIENT_SECRET: ${{ secrets.ZOHO_TALLER_CLIENT_SECRET }}
+          ZOHO_DC: ${{ vars.ZOHO_DC }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GMAIL_CORREO: ${{ secrets.GMAIL_CORREO }}
+          GMAIL_CLAVE: ${{ secrets.GMAIL_CLAVE }}
+          GROQ_MODELO: ${{ vars.GROQ_MODELO }}
+          CORREO_URL: ${{ vars.CORREO_URL || format('https://{0}.github.io/{1}/correo/', github.repository_owner, github.event.repository.name) }}
+        run: python -u correo/sync.py --archivar 340
+
+      - name: Relanzar el archivista
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ $(( $(date +%s) - INICIO )) -gt 1800 ]; then gh workflow run correo_archivo.yml --ref main -R "$GITHUB_REPOSITORY"; fi
