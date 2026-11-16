@@ -62,7 +62,8 @@ jobs:
           if git clone -q --depth 1 --branch correo-archivo "$REPO_URL" "$RUNNER_TEMP/archivo"; then
             rm -f "$RUNNER_TEMP/datos/historial.json" "$RUNNER_TEMP/datos/archivo.json"   # copias antiguas
           else
-            mkdir -p "$RUNNER_TEMP/archivo"
+            mkdir -p "$RUNNER_TEMP/archivo" && git -C "$RUNNER_TEMP/archivo" init -q \
+              && git -C "$RUNNER_TEMP/archivo" remote add origin "$REPO_URL"    # se lee apenas el archivista la cree
           fi
           cat > "$RUNNER_TEMP/guardar.sh" <<'EOS'
           # $1 = 1 si cambiaron los datos; $2 = 1 si toca renovar la página publicada (cada hora, si hubo cambios)
