@@ -617,8 +617,8 @@ function pintarCorreo(){
       <div class="muted small">${h.enviado ? "Para: " + esc(h.para.join(", ")) : "De: " + esc(h.de_nombre || h.de) + " &lt;" + esc(h.de) + "&gt;"} · ${esc(fmtF(h.fecha))} · ${esc(etiqueta(h.cuenta))}${h.carpeta_nombre ? " · " + esc(h.carpeta_nombre) : ""}</div>
       <div class="hist-caja"><span class="muted small">📁 Correo antiguo del historial${h.analisis ? " · ✨ analizado por la IA" : ": aún no lo analiza la IA (avanza de a poco)"}.</span>
         ${h.vista_previa ? `<p style="margin:0">${esc(h.vista_previa)}</p>` : ""}
-        ${(HISTORIAL.hilos || {})[h.hilo_arch] ? `<div><strong class="small">Resumen de la conversación</strong><p style="margin:4px 0 0">${esc(HISTORIAL.hilos[h.hilo_arch].resumen)}</p>
-          ${(HISTORIAL.hilos[h.hilo_arch].puntos_clave || []).length ? `<ul style="margin:6px 0 0">${HISTORIAL.hilos[h.hilo_arch].puntos_clave.map(x => `<li>${esc(x)}</li>`).join("")}</ul>` : ""}</div>` : ""}
+        ${(HISTORIAL.hilos || {})[h.hilo_arch] ? `<details class="resumen"><summary><strong class="small">✨ Resumen de la conversación</strong></summary><p style="margin:4px 0 0">${esc(HISTORIAL.hilos[h.hilo_arch].resumen)}</p>
+          ${(HISTORIAL.hilos[h.hilo_arch].puntos_clave || []).length ? `<ul style="margin:6px 0 0">${HISTORIAL.hilos[h.hilo_arch].puntos_clave.map(x => `<li>${esc(x)}</li>`).join("")}</ul>` : ""}</details>` : ""}
         <div class="actions"><button class="btn" data-traer="${esc(h.id)}" ${pidiendo ? "disabled" : ""}>${pidiendo ? "Trayendo… (aprox. 1 minuto)" : "📥 Traer correo completo (texto y adjuntos)"}</button></div></div>`;
     return;
   }
@@ -641,7 +641,7 @@ function pintarCorreo(){
     ${m.archivos.length ? `<div class="adjs">${m.archivos.map((f, i) => `<button class="adj" data-adj="${i}" aria-expanded="${adjAbierto === i}"><span class="ext">${esc(ext(f.nombre))}</span><span class="adj-n">${esc(f.nombre)}</span><span class="muted">${kb(f.tamano)}</span></button>`).join("")}</div>
       ${adjAbierto !== null && m.archivos[adjAbierto] ? panelAdjunto(m, adjAbierto, terms) : ""}` : ""}
     ${borrador && borrador.id === m.id ? redactor() : ""}
-    ${h.resumen || a.resumen ? `<details class="resumen" ${hilo.length > 1 || a.accion ? "open" : ""}><summary><h3>✨ ${hilo.length > 1 ? "Resumen de la conversación" : "Resumen"}</h3></summary><p>${esc(h.resumen || a.resumen)}</p>
+    ${h.resumen || a.resumen ? `<details class="resumen"><summary><h3>✨ ${hilo.length > 1 ? "Resumen de la conversación" : "Resumen"}</h3></summary><p>${esc(h.resumen || a.resumen)}</p>
       ${(h.puntos_clave || []).length ? `<ul>${h.puntos_clave.map(x => `<li>${esc(x)}</li>`).join("")}</ul>` : ""}
       ${a.accion && !m.enviado ? `<p class="small">👉 ${esc(a.accion)}</p>` : ""}</details>` : ""}
     <div class="hoja">${conHtml ? `<iframe class="correo-html" title="Contenido del correo" sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox" srcdoc="${esc(BASE_HTML + m.html)}"></iframe>`
