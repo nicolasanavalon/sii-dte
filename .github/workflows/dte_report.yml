@@ -9,6 +9,10 @@ on:
         description: "Simular otro día AAAA-MM-DD (para probar; vacío = hoy)"
         type: string
         default: ""
+      backup:
+        description: "Corrida de respaldo: solo envía si el envío principal no salió"
+        type: boolean
+        default: false
   schedule:
     # UTC; cubre las 08:15 de Chile con y sin horario de verano. El script filtra por hora Chile.
     - cron: "15 11,12 * * *"
@@ -24,7 +28,7 @@ concurrency:
 jobs:
   report:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
 
@@ -39,4 +43,4 @@ jobs:
           BACKUP_LOOKBACK_MIN: "30"
           GITHUB_TOKEN: ${{ github.token }}
           FECHA: ${{ inputs.fecha }}
-        run: python report_dte.py ${{ github.event_name == 'schedule' && '--backup' || '' }} "--fecha=$FECHA"
+        run: python report_dte.py ${{ (github.event_name == 'schedule' || inputs.backup) && '--backup' || '' }} "--fecha=$FECHA"

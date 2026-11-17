@@ -50,15 +50,16 @@ def compare(actual, goal):
     return f"{money(actual)} · Meta: {money(goal)}  {pct(variation)} · {signed_money(actual - goal)}"
 
 
-def with_retries(fn, attempts=4):
-    for i in range(attempts):
+def with_retries(fn, waits=(15, 30, 60, 60, 90)):
+    """Reintenta ante caídas pasajeras (p. ej. Telegram respondiendo 502 por unos minutos)."""
+    for wait in (*waits, None):
         try:
             return fn()
         except Exception as exc:
-            if i == attempts - 1:
+            if wait is None:
                 raise
-            print(f"Falló ({exc}); reintentando…")
-            time.sleep(10 * (i + 1))
+            print(f"Falló ({exc}); reintentando en {wait} s…", flush=True)
+            time.sleep(wait)
 
 
 def fetch_json(path):
@@ -110,7 +111,7 @@ def send_telegram(body):
 
     def send(to):
         data = urllib.parse.urlencode({"chat_id": to, "text": body, "disable_web_page_preview": "true"}).encode()
-        with_retries(lambda: urllib.request.urlopen(f"https://api.telegram.org/bot{token}/sendMessage", data=data, timeout=60).read())
+        with_retries(lambda: urllib.request.urlopen(f"https://api.telegram.org/bot{token}/sendMessage", data=data, timeout=30).read())
         print("Telegram enviado")
 
     send(chat_id)

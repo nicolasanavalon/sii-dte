@@ -2,12 +2,17 @@ name: Reporte horario Pulso de venta
 
 # Disparo principal: cron-job.org llama a este workflow (workflow_dispatch) a las :03 y :33,
 # de 10:03 a 20:03 hora Chile, porque el cron propio de GitHub suele atrasarse o saltarse.
-# Respaldo: el cron de GitHub corre 10 minutos después y solo envía si el principal no salió.
+# Respaldo: un segundo cronjob de cron-job.org a las :13 y :43 (input backup=true) y el cron de
+# GitHub corren después y solo envían si el principal no salió bien.
 on:
   workflow_dispatch:
     inputs:
       force:
         description: "Enviar aunque esté fuera de horario (para probar)"
+        type: boolean
+        default: false
+      backup:
+        description: "Corrida de respaldo: solo envía si el envío principal no salió"
         type: boolean
         default: false
   schedule:
@@ -25,7 +30,7 @@ concurrency:
 jobs:
   report:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
 
@@ -36,7 +41,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           if [ "$(TZ=America/Santiago date +%H)" = "08" ] && [ "$(TZ=America/Santiago date +%M)" -lt 30 ]; then
-            gh workflow run dte_report.yml --ref main
+            gh workflow run dte_report.yml --ref main -f backup=${{ inputs.backup && 'true' || 'false' }}
           fi
 
       - uses: actions/setup-python@v5
@@ -52,5 +57,5 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
         run: >-
           python report_pulso.py
-          ${{ github.event_name == 'schedule' && '--backup' || '' }}
+          ${{ (github.event_name == 'schedule' || inputs.backup) && '--backup' || '' }}
           ${{ inputs.force && '--force' || '' }}
