@@ -58,19 +58,20 @@ def main():
                 try:
                     adjuntos = [z.subir_adjunto(acc_id, nombre, datos) for nombre, datos in propios]
                     original = ""
-                    if modo in ("responder", "reenviar") and p.get("message_id") and p.get("carpeta"):
+                    if modo == "reenviar" and p.get("message_id") and p.get("carpeta"):
                         try:            # el correo original COMPLETO (con su propia cadena) para citarlo debajo
                             original = z.contenido(acc_id, str(p["carpeta"]), str(p["message_id"]))
                         except Exception as e:
                             print(f"::warning::No pude leer el correo original para citarlo: {str(e)[:150]}")
-                    cuerpo, formato = con_historial(texto, modo, p, original)
                     if modo == "responder":
-                        z.responder(acc_id, str(p["message_id"]), principal, para, cc, asunto, cuerpo, adjuntos, formato)
+                        # Al responder, Zoho agrega SOLO el historial debajo ("---- On … wrote ----"): no se duplica.
+                        z.responder(acc_id, str(p["message_id"]), principal, para, cc, asunto, texto, adjuntos)
                     else:
                         if modo == "reenviar" and p.get("con_adjuntos") and p.get("message_id") and p.get("carpeta"):
                             for a in z.adjuntos(acc_id, str(p["carpeta"]), str(p["message_id"]))[:10]:
                                 datos = z.descargar_adjunto(acc_id, str(p["carpeta"]), str(p["message_id"]), a["attachmentId"])
                                 adjuntos.append(z.subir_adjunto(acc_id, str(a.get("attachmentName") or "archivo"), datos))
+                        cuerpo, formato = con_historial(texto, modo, p, original)
                         z.enviar_nuevo(acc_id, principal, para, cc, asunto, cuerpo, adjuntos, formato)
                 except ZohoError as e:
                     sys.exit(f"❌ {e}")
@@ -88,7 +89,7 @@ def _esc(t):
 
 def _sin_envoltura(h):
     """HTML del correo original listo para ir dentro de otro (sin <html>, <head> ni <body>)."""
-    h = re.sub(r"(?is)<head\b.*?</head>|<!doctype[^>]*>|</?(html|body)\b[^>]*>", "", h or "")
+    h = re.sub(r"(?is)<head\b.*?</head>|<style\b.*?</style>|<!doctype[^>]*>|</?(html|body)\b[^>]*>", "", h or "")
     return re.sub(r"(?is)<(script|iframe|object|embed)\b.*?</\1>", "", h)
 
 
@@ -125,11 +126,13 @@ def con_historial(texto, modo, p, original_html):
         cita = (f"<br><div style=\"{gris}\">El {_esc(o.get('fecha', ''))}, {_esc(quien)} escribió:</div>"
                 f"<blockquote style=\"margin:6px 0 0 4px;padding-left:10px;border-left:2px solid #c8c8c8\">{original}</blockquote>")
     else:
-        filas = [("De", quien), ("Fecha", o.get("fecha", "")), ("Asunto", o.get("asunto", "")), ("Para", ", ".join(o.get("para") or []))]
+        filas = [("De", quien), ("Para", ", ".join(o.get("para") or []))]
         if o.get("cc"):
             filas.append(("Cc", ", ".join(o["cc"])))
-        cita = (f"<br><div style=\"{gris}\">---------- Mensaje reenviado ----------<br>"
-                + "<br>".join(f"{k}: {_esc(v)}" for k, v in filas) + f"</div><br>{original}")
+        filas += [("Fecha", o.get("fecha", "")), ("Asunto", o.get("asunto", ""))]
+        cita = (f"<br><hr style=\"border:0;border-top:1px solid #c8c8c8;margin:14px 0\">"
+                f"<div style=\"font-family:Arial,Helvetica,sans-serif;font-size:13px\">"
+                + "<br>".join(f"<b>{k}:</b> {_esc(v)}" for k, v in filas) + f"</div><br>{original}")
     return mio + cita, "html"
 
 
