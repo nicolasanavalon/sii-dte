@@ -320,7 +320,8 @@ def construir_gmail(msg, acc, correo, carpeta, enviados_carpeta, gid, th, ms, es
     m = {"v": 2, "id": mid, "cuenta_id": acc, "cuenta": correo, "carpeta": carpeta, "thread_zoho": th,
          "hilo": clave_hilo(th, asunto, contacto), "fecha": t, "de": de[0][1], "de_nombre": de[0][0],
          "para": para, "cc": cc, "asunto": asunto, "vista_previa": re.sub(r"\s+", " ", texto)[:200].strip(),
-         "texto": texto[:MAX_TEXTO_GUARDADO], "html": limpiar_html(html) if html else None,
+         "texto": texto[:MAX_TEXTO_GUARDADO],
+         "html": incrustar_imagenes(limpiar_html(html), [x for x in G.imagenes_inline(msg) if len(x[3]) <= MAX_IMG_INLINE][:15]) if html else None,
          "adjuntos": bool(archivos), "archivos": archivos, "no_leido": mid in sin_leer, "enviado": bool(enviado),
          "contacto": contacto, "analisis": None, "en_db": False, "intentos_adj": 0, "intentos_archivo": 0,
          "message_id": str(msg["Message-ID"] or ""), "referencias": str(msg["References"] or "")[-1500:]}
@@ -394,6 +395,55 @@ def _traer_gmail(estado):
     return nuevos, 0
 
 
+IMG_CON_PROBLEMA = re.compile(r"""<img\b[^>]*\bsrc\s*=\s*["']?(cid:|[^"'\s>]*(ImageDisplay|zoho|/zm/|inline))""", re.I)
+MAX_IMG_INLINE = 3 * 1024 * 1024
+
+
+def incrustar_imagenes(html, imagenes):
+    """Reemplaza en el HTML las imágenes pegadas (cid: o enlaces privados de Zoho) por la imagen misma
+    (data:…), para que se vean en la app. imagenes = [(cid, nombre, tipo, bytes)]."""
+    if not html or not imagenes:
+        return html
+    import mimetypes
+    datos_url = []
+    for cid, nombre, tipo, datos in imagenes:
+        tipo = tipo if str(tipo or "").startswith("image/") else (mimetypes.guess_type(nombre or "")[0] or "image/png")
+        datos_url.append((cid or "", nombre or "", f"data:{tipo};base64,{base64.b64encode(datos).decode()}"))
+    usadas, pendientes = set(), []
+
+    def cambiar(mt):
+        src = mt.group(2)
+        crudo = urllib.parse.unquote(src)
+        for i, (cid, nombre, url) in enumerate(datos_url):
+            if (cid and (cid in crudo or crudo.lower() == "cid:" + cid.lower())) or (nombre and nombre in crudo):
+                usadas.add(i)
+                return mt.group(1) + url + mt.group(3)
+        if IMG_CON_PROBLEMA.search(mt.group(0) + ">"):
+            pendientes.append(mt.group(0))
+        return mt.group(0)
+    html = re.sub(r"""(<img\b[^>]*?\bsrc\s*=\s*["'])([^"']+)(["'])""", cambiar, html, flags=re.I)
+    libres = [d for i, d in enumerate(datos_url) if i not in usadas]
+    for etiqueta, (_, _, url) in zip(pendientes, libres):      # sin pista: en el orden en que aparecen
+        nueva = re.sub(r"""(\bsrc\s*=\s*["'])([^"']+)(["'])""", lambda m2: m2.group(1) + url + m2.group(3), etiqueta, count=1)
+        html = html.replace(etiqueta, nueva, 1)
+    return html
+
+
+def imagenes_zoho(z, account_id, fid, mid, html_crudo):
+    if not html_crudo or not IMG_CON_PROBLEMA.search(html_crudo):
+        return []
+    out = []
+    try:
+        for a in z.imagenes_inline(account_id, fid, mid)[:15]:
+            if int(float(a.get("attachmentSize") or 0)) > MAX_IMG_INLINE:
+                continue
+            datos = z.descargar_adjunto(account_id, fid, mid, a["attachmentId"])
+            out.append((str(a.get("cid") or ""), str(a.get("attachmentName") or ""), "", datos))
+    except Exception as e:
+        print(f"::warning::No pude bajar las imágenes de un correo: {str(e)[:150]}")
+    return out
+
+
 def construir_zoho(z, account_id, direccion, carpeta, enviados_carpeta, t, m, estado, boletin=False):
     """Trae el contenido y adjuntos de un correo de Zoho y lo guarda en el estado. Devuelve (correo, era_nuevo)."""
     from zoho import direcciones, html_a_texto, limpiar_html
@@ -403,6 +453,7 @@ def construir_zoho(z, account_id, direccion, carpeta, enviados_carpeta, t, m, es
     try:
         crudo = z.contenido(account_id, fid, mid)
         texto, html = html_a_texto(crudo), limpiar_html(crudo)
+        html = incrustar_imagenes(html, imagenes_zoho(z, account_id, fid, mid, crudo))
     except Exception as e:
         print(f"::warning::No pude leer el contenido del correo {mid}: {e}")
         texto, html = "", None
@@ -1259,6 +1310,49 @@ def aligerar(estado, clave):
     return n
 
 
+def arreglar_imagenes(estado, clave, hasta, maximo=10):
+    """Correos ya guardados con imágenes pegadas que no se veían: se bajan las imágenes y se arregla su cuerpo."""
+    import gzip
+    if not ADJ_DIR or not estado.get("sal_cuerpos"):
+        return 0
+    k = estado["sal_cuerpos"]
+    llave = _LLAVE_CUERPOS.get(k) or _LLAVE_CUERPOS.setdefault(k, cripto.llave_sesion(clave, k))
+    hechos = 0
+    for m in sorted(estado["mensajes"].values(), key=lambda m: -m["fecha"]):
+        if m.get("img_ok") or not m.get("cuerpo") or not m.get("tiene_html"):
+            continue
+        if time.time() > hasta or hechos >= maximo:
+            break
+        ruta = Path(ADJ_DIR) / f"{m['cuerpo']}.bin"
+        m["img_ok"] = True
+        try:
+            cuerpo = json.loads(gzip.decompress(cripto.descifrar_con_llave(ruta.read_bytes(), llave)))
+        except Exception:
+            continue
+        html = cuerpo.get("html") or ""
+        if not IMG_CON_PROBLEMA.search(html):
+            continue
+        try:
+            if str(m.get("cuenta_id", "")).startswith("gmail:") and _ZOHO.get("gmail"):
+                import gmail as G
+                imgs = [x for x in G.imagenes_inline(_ZOHO["gmail"].mensaje_por_id(m["id"][1:])) if len(x[3]) <= MAX_IMG_INLINE][:15]
+            elif m.get("cuenta_id") in CUENTAS_Z:
+                imgs = imagenes_zoho(CUENTAS_Z[m["cuenta_id"]][0], m["cuenta_id"], m["carpeta"], m["id"], html)
+            else:
+                continue
+        except Exception as e:
+            print(f"::warning::Imágenes de un correo guardado: {str(e)[:150]}")
+            continue
+        nuevo = incrustar_imagenes(html, imgs)
+        if nuevo != html:
+            cuerpo["html"] = nuevo
+            ruta.write_bytes(cripto.cifrar_con_llave(gzip.compress(json.dumps(cuerpo, ensure_ascii=False).encode()), llave))
+            hechos += 1
+    if hechos:
+        print(f"Imágenes arregladas en {hechos} correo(s) guardado(s).")
+    return hechos
+
+
 def una_vuelta(estado, clave, rapido):
     """Una revisión de Zoho. Devuelve True si cambió algo (y en ese caso deja los datos nuevos escritos)."""
     global RAPIDO, LIMITE_VUELTA
@@ -1283,6 +1377,10 @@ def una_vuelta(estado, clave, rapido):
     analizados = analizar_pendientes(estado)
     print(f"  tiempos: Zoho {t1 - t0:.0f} s · estilo {t2 - t1:.0f} s · resúmenes {time.time() - t2:.0f} s")
     aligerados = aligerar(estado, clave)          # (siempre se ejecuta: no dentro del "or")
+    try:
+        aligerados += arreglar_imagenes(estado, clave, hasta=max(time.time() + 3, LIMITE_VUELTA + 5))
+    except Exception as e:
+        print(f"::warning::Imágenes: {str(e)[:150]}")
     cambio = bool(nuevos or completados or analizados or estilo or aligerados or estado.pop("_cambio_otro", False)
                   or estado.pop("_hilos_actualizados", 0)
                   or estado.pop("_cambio_leidos", False)) or not estado["ultima_sync"]
