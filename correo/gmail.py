@@ -227,6 +227,19 @@ def partes(msg):
     return texto, html, adjuntos
 
 
+def imagenes_inline(msg):
+    """[(cid, nombre, tipo, bytes)] de las imágenes pegadas dentro del correo (Content-ID)."""
+    out = []
+    for p in msg.walk():
+        cid = str(p.get("Content-ID") or "").strip().strip("<>")
+        if cid and p.get_content_maintype() == "image":
+            try:
+                out.append((cid, _dec(p.get_filename()) or "", p.get_content_type(), p.get_payload(decode=True) or b""))
+            except Exception:
+                pass
+    return out
+
+
 def direcciones(valor):
     return [(_dec(n), a.strip()) for n, a in getaddresses([str(valor or "")]) if a and "@" in a]
 

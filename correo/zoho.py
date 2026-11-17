@@ -201,6 +201,12 @@ class Zoho:
         lista = data.get("attachments") if isinstance(data, dict) else data
         return [a for a in (lista or []) if isinstance(a, dict) and a.get("attachmentId")]
 
+    def imagenes_inline(self, account_id, folder_id, message_id):
+        """[{attachmentId, attachmentName, cid}] de las imágenes pegadas DENTRO del correo (no adjuntos aparte)."""
+        d = self.get(f"/accounts/{account_id}/folders/{folder_id}/messages/{message_id}/attachmentinfo", includeInline="true")
+        data = d.get("data") or {}
+        return [a for a in (data.get("inline") or []) if isinstance(a, dict) and a.get("attachmentId")] if isinstance(data, dict) else []
+
     def descargar_adjunto(self, account_id, folder_id, message_id, attachment_id):
         return self.get(f"/accounts/{account_id}/folders/{folder_id}/messages/{message_id}/attachments/{attachment_id}",
                         _crudo=True)
