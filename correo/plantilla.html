@@ -1093,10 +1093,8 @@ function nuevoBorrador(m, modo){
   const yo = PROPIOS(), base = { id: m ? m.id : "__nuevo__", modo, cuenta: m ? m.cuenta : (cuentaSel || CUENTAS[0] || ""),
     texto: "", obs: null, confirmar: false, estado: "", clase: "", ocupado: "", con_adjuntos: true };
   if (!m) return {...base, para: "", cc: "", asunto: ""};
-  if (modo === "reenviar") {
-    const cab = `\n\n---------- Mensaje reenviado ----------\nDe: ${m.de_nombre || ""} <${m.de}>\nFecha: ${fmtF(m.fecha)}\nAsunto: ${m.asunto}\nPara: ${m.para.join(", ")}${m.cc.length ? "\nCc: " + m.cc.join(", ") : ""}\n\n`;
-    return {...base, para: "", cc: "", asunto: /^\s*(rv|fw|fwd)\s*:/i.test(m.asunto) ? m.asunto : "RV: " + m.asunto, texto: cab + (m.texto || m.vista_previa || "")};
-  }
+  if (modo === "reenviar")      // el correo original (con su historial) se agrega debajo al enviar
+    return {...base, para: "", cc: "", asunto: /^\s*(rv|fw|fwd)\s*:/i.test(m.asunto) ? m.asunto : "RV: " + m.asunto, texto: ""};
   const para = m.enviado ? [...m.para] : [m.de];
   const cc = modo === "todos" ? [...m.para, ...m.cc].filter(x => !yo.has(x.toLowerCase()) && !para.includes(x)) : [];
   return {...base, modo: "responder", para: para.join(", "), cc: cc.join(", "), asunto: /^\s*(re|rv)\s*:/i.test(m.asunto) ? m.asunto : "RE: " + m.asunto};
@@ -1114,6 +1112,7 @@ function redactor(){
     <label>Cc ${campoDest("rCc", b.cc, "(opcional)")}</label>
     <label>Asunto <input id="rAsunto" value="${esc(b.asunto)}" autocomplete="off" autocorrect="on" autocapitalize="sentences" spellcheck="true"></label>
     ${b.modo === "reenviar" && (MSGS.find(x => x.id === b.id) || {archivos: []}).archivos.length ? `<label class="check"><input type="checkbox" id="rAdj" ${b.con_adjuntos ? "checked" : ""}> Incluir los adjuntos originales (${MSGS.find(x => x.id === b.id).archivos.length})</label>` : ""}
+    ${b.modo !== "nuevo" ? `<p class="small muted" style="margin:0">${b.modo === "reenviar" ? "↪ Debajo de tu nota va el correo original completo, con su historial." : "↩ Debajo de tu respuesta va el historial de la conversación, como en Outlook."}</p>` : ""}
     <label>Mensaje <textarea id="rTexto" autocorrect="on" autocapitalize="sentences" spellcheck="true" placeholder="Escribe tu respuesta, o usa «Sugerir respuesta».">${esc(b.texto)}</textarea></label>
     <div class="adjuntar">
       <label class="btn sec">📎 Adjuntar archivos<input type="file" id="rArchivos" multiple hidden></label>
@@ -1386,6 +1385,8 @@ async function enviar(m){
     const paquete = await cifrar({ modo: b.modo, cuenta, cuenta_id: ((D.cuentas_ids || {})[cuenta]) || (m && m.cuenta_id) || "",
                                    message_id: m ? m.id : "", carpeta: m ? (m.carpeta || "") : "", con_adjuntos: !!b.con_adjuntos,
                                    mid_cabecera: m ? (m.message_id || "") : "", referencias: m ? (m.referencias || "") : "",
+                                   orig: m ? { fecha: fmtF(m.fecha), de: m.de, de_nombre: m.de_nombre || "", para: m.para, cc: m.cc, asunto: m.asunto,
+                                               texto: String(m.texto || m.vista_previa || "").slice(0, 12000) } : null,
                                    para: listaCorreos(b.para), cc: listaCorreos(b.cc), asunto: b.asunto, texto: b.texto, ts: Date.now(),
                                    adj_nuevos: partes ? { id, n: partes } : null });
     const api = `https://api.github.com/repos/${gh.repo}/actions/workflows/correo_enviar.yml`;
@@ -1724,7 +1725,7 @@ document.addEventListener("click", ev => {
     else if (a === "deshacer") { borrador.texto = borrador.anterior || borrador.texto; borrador.anterior = ""; borrador.obs = null; pintarCorreo(); }
     else if (a === "revisar") revisar(m);
     else if (a === "usar") { borrador.texto = borrador.corregida || borrador.texto; borrador.obs = null; pintarCorreo(); }
-    else if (a === "enviar") { if (!listaCorreos(borrador.para).length || !borrador.texto.trim()) { borrador.estado = "Falta el destinatario o el mensaje."; borrador.clase = "mal"; } else { borrador.confirmar = true; borrador.estado = ""; } pintarCorreo(); }
+    else if (a === "enviar") { if (!listaCorreos(borrador.para).length || (!borrador.texto.trim() && borrador.modo !== "reenviar")) { borrador.estado = "Falta el destinatario o el mensaje."; borrador.clase = "mal"; } else { borrador.confirmar = true; borrador.estado = ""; } pintarCorreo(); }
     else if (a === "noenviar") { borrador.confirmar = false; pintarCorreo(); }
     else if (a === "confirmar") enviar(m);
     else if (a === "cancelar") { if (borrador.modo === "nuevo") { abierto = null; pintarLista(); } borrador = null; pintarCorreo(); }

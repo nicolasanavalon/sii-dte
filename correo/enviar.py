@@ -38,10 +38,9 @@ def main():
     para = [x.strip() for x in p.get("para", []) if CORREO.match(x.strip())]
     cc = [x.strip() for x in p.get("cc", []) if CORREO.match(x.strip())]
     texto, asunto = str(p.get("texto", "")).strip(), str(p.get("asunto", "")).strip()[:300]
-    if not para or not texto:
-        sys.exit("❌ Falta el destinatario o el texto.")
-
     modo = p.get("modo") or "responder"            # responder | nuevo | reenviar
+    if not para or (not texto and modo != "reenviar"):
+        sys.exit("❌ Falta el destinatario o el texto.")
     try:
         propios = archivos_adjuntados(p.get("adj_nuevos"), clave)   # archivos que adjuntaste en la página
     except Exception as e:
@@ -58,14 +57,21 @@ def main():
             if acc_id == str(p.get("cuenta_id")) or (not p.get("cuenta_id") and principal == p.get("cuenta")):
                 try:
                     adjuntos = [z.subir_adjunto(acc_id, nombre, datos) for nombre, datos in propios]
+                    original = ""
+                    if modo in ("responder", "reenviar") and p.get("message_id") and p.get("carpeta"):
+                        try:            # el correo original COMPLETO (con su propia cadena) para citarlo debajo
+                            original = z.contenido(acc_id, str(p["carpeta"]), str(p["message_id"]))
+                        except Exception as e:
+                            print(f"::warning::No pude leer el correo original para citarlo: {str(e)[:150]}")
+                    cuerpo, formato = con_historial(texto, modo, p, original)
                     if modo == "responder":
-                        z.responder(acc_id, str(p["message_id"]), principal, para, cc, asunto, texto, adjuntos)
+                        z.responder(acc_id, str(p["message_id"]), principal, para, cc, asunto, cuerpo, adjuntos, formato)
                     else:
                         if modo == "reenviar" and p.get("con_adjuntos") and p.get("message_id") and p.get("carpeta"):
                             for a in z.adjuntos(acc_id, str(p["carpeta"]), str(p["message_id"]))[:10]:
                                 datos = z.descargar_adjunto(acc_id, str(p["carpeta"]), str(p["message_id"]), a["attachmentId"])
                                 adjuntos.append(z.subir_adjunto(acc_id, str(a.get("attachmentName") or "archivo"), datos))
-                        z.enviar_nuevo(acc_id, principal, para, cc, asunto, texto, adjuntos)
+                        z.enviar_nuevo(acc_id, principal, para, cc, asunto, cuerpo, adjuntos, formato)
                 except ZohoError as e:
                     sys.exit(f"❌ {e}")
                 que = {"responder": "Respuesta enviada", "nuevo": "Correo enviado", "reenviar": "Correo reenviado"}[modo]
@@ -73,6 +79,58 @@ def main():
                       + (f" y {len(cc)} en copia" if cc else "") + (f", con {len(adjuntos)} adjunto(s)." if adjuntos else "."))
                 return
     sys.exit("❌ No encontré la casilla de Zoho de ese correo.")
+
+
+def _esc(t):
+    import html
+    return html.escape(str(t or ""))
+
+
+def _sin_envoltura(h):
+    """HTML del correo original listo para ir dentro de otro (sin <html>, <head> ni <body>)."""
+    h = re.sub(r"(?is)<head\b.*?</head>|<!doctype[^>]*>|</?(html|body)\b[^>]*>", "", h or "")
+    return re.sub(r"(?is)<(script|iframe|object|embed)\b.*?</\1>", "", h)
+
+
+def _cabecera_original(p):
+    o = p.get("orig") or {}
+    quien = (f"{o.get('de_nombre')} <{o.get('de')}>" if o.get("de_nombre") else o.get("de", "")).strip()
+    return o, quien
+
+
+def _texto_historial(modo, p):
+    """Versión en texto simple del historial (para los programas que no muestran HTML)."""
+    if modo not in ("responder", "reenviar") or not (p.get("orig") or {}).get("texto"):
+        return ""
+    o, quien = _cabecera_original(p)
+    if modo == "responder":
+        return f"\n\nEl {o.get('fecha', '')}, {quien} escribió:\n" + "\n".join("> " + l for l in str(o["texto"]).splitlines())
+    return (f"\n\n---------- Mensaje reenviado ----------\nDe: {quien}\nFecha: {o.get('fecha', '')}\nAsunto: {o.get('asunto', '')}\n"
+            f"Para: {', '.join(o.get('para') or [])}\n" + (f"Cc: {', '.join(o.get('cc') or [])}\n" if o.get("cc") else "") + "\n" + str(o["texto"]))
+
+
+def con_historial(texto, modo, p, original_html):
+    """Arma el correo como Outlook/Zoho: tu mensaje arriba y, debajo, el correo anterior con TODA su cadena
+    (al responder: "El …, X escribió:" citado; al reenviar: el bloque "Mensaje reenviado"). Devuelve (cuerpo, formato)."""
+    if modo not in ("responder", "reenviar"):
+        return texto, "plaintext"
+    o, quien = _cabecera_original(p)
+    original = _sin_envoltura(original_html) or (
+        "<div style=\"white-space:pre-wrap\">" + _esc(o.get("texto", "")) + "</div>" if o.get("texto") else "")
+    if not original:
+        return texto + _texto_historial(modo, p), "plaintext"
+    mio = f"<div style=\"font-family:Arial,Helvetica,sans-serif;font-size:14px;white-space:pre-wrap\">{_esc(texto)}</div>"
+    gris = "font-family:Arial,Helvetica,sans-serif;font-size:13px;color:#555"
+    if modo == "responder":
+        cita = (f"<br><div style=\"{gris}\">El {_esc(o.get('fecha', ''))}, {_esc(quien)} escribió:</div>"
+                f"<blockquote style=\"margin:6px 0 0 4px;padding-left:10px;border-left:2px solid #c8c8c8\">{original}</blockquote>")
+    else:
+        filas = [("De", quien), ("Fecha", o.get("fecha", "")), ("Asunto", o.get("asunto", "")), ("Para", ", ".join(o.get("para") or []))]
+        if o.get("cc"):
+            filas.append(("Cc", ", ".join(o["cc"])))
+        cita = (f"<br><div style=\"{gris}\">---------- Mensaje reenviado ----------<br>"
+                + "<br>".join(f"{k}: {_esc(v)}" for k, v in filas) + f"</div><br>{original}")
+    return mio + cita, "html"
 
 
 def _gmail():
@@ -86,10 +144,17 @@ def enviar_gmail(p, modo, para, cc, asunto, texto, adjuntos):
     G, g = _gmail()
     adjuntos = list(adjuntos)
     try:
-        if modo == "reenviar" and p.get("con_adjuntos") and str(p.get("message_id", "")).startswith("g"):
-            adjuntos += G.partes(g.mensaje_por_id(str(p["message_id"])[1:]))[2][:10]
+        original_html = ""
+        if modo in ("responder", "reenviar") and str(p.get("message_id", "")).startswith("g"):
+            orig = g.mensaje_por_id(str(p["message_id"])[1:])
+            t, h, adj = G.partes(orig)
+            original_html = h or ("<div style=\"white-space:pre-wrap\">" + _esc(t) + "</div>" if t else "")
+            if modo == "reenviar" and p.get("con_adjuntos"):
+                adjuntos += adj[:10]
+        cuerpo, formato = con_historial(texto, modo, p, original_html)
         responde = p.get("mid_cabecera") if modo == "responder" else None
-        g.enviar(para, cc, asunto, texto, adjuntos, responde_a=responde, referencias=p.get("referencias") or None)
+        g.enviar(para, cc, asunto, texto + _texto_historial(modo, p), adjuntos, responde_a=responde,
+                 referencias=p.get("referencias") or None, html=cuerpo if formato == "html" else None)
     except G.GmailError as e:
         sys.exit(f"❌ {e}")
     que = {"responder": "Respuesta enviada", "nuevo": "Correo enviado", "reenviar": "Correo reenviado"}[modo]
