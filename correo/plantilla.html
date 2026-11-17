@@ -1765,8 +1765,11 @@ async function deDatos(archivo, rama = "correo-datos"){
   const url = `https://api.github.com/repos/${repo}/contents/${archivo}?ref=${rama}`;
   const h = { "Accept": "application/vnd.github.raw" };
   if (gh.token) h.Authorization = "Bearer " + gh.token;
-  let r = await fetch(url, { headers: h, cache: "no-store" });
-  if ((r.status === 401 || r.status === 403) && h.Authorization) { delete h.Authorization; r = await fetch(url, { headers: h, cache: "no-store" }); }
+  // Tope de tiempo: si la red o el navegador dejan la descarga pegada, se corta y se reintenta en la próxima revisión.
+  const pedir = () => { const ctl = new AbortController(), t = setTimeout(() => ctl.abort(), archivo === "version.json" ? 20000 : 90000);
+    return fetch(url, { headers: h, cache: "no-store", signal: ctl.signal }).finally(() => clearTimeout(t)); };
+  let r = await pedir();
+  if ((r.status === 401 || r.status === 403) && h.Authorization) { delete h.Authorization; r = await pedir(); }
   if (!r.ok) throw new Error("HTTP " + r.status);
   return r.json();
 }
@@ -1792,7 +1795,9 @@ $("#verAvance").addEventListener("click", () => { const p = $("#panelAvance"); p
   if (!p.hidden) { pintarAvance(); deDatos("arch_version.json", "correo-archivo").then(leerAvance).catch(() => {}); } });
 
 async function revisarZoho(manual){
-  if (buscando || !D) return; buscando = true;
+  if (!D) return;
+  if (buscando && Date.now() - buscando < 120000) return;       // si una revisión quedó pegada, a los 2 min se ignora
+  buscando = Date.now();
   if (manual) sinc("Revisando…", true);
   try {
     const v = await deDatos("version.json");
@@ -1832,8 +1837,20 @@ async function revisarVersionPagina(){
     } else location.replace(location.pathname + "?v=" + sha.slice(0, 10));
   } catch(e) {}
 }
-setInterval(() => { if (D && document.visibilityState === "visible") { revisarZoho(false); revisarVersionPagina(); } }, 30000);
-document.addEventListener("visibilitychange", () => { if (D && document.visibilityState === "visible") { revisarZoho(false); revisarVersionPagina(); } });
+// Revisa cada 30 s con la página a la vista y cada minuto si está de fondo (otra pestaña o ventana), así al
+// volver ya está al día. Además revisa al tiro al volver a la pestaña, a la ventana o a la app.
+let ultimaRevision = 0;
+setInterval(() => {
+  if (!D) return;
+  const visible = document.visibilityState === "visible";
+  if (visible || Date.now() - ultimaRevision > 55000) { ultimaRevision = Date.now(); revisarZoho(false); }
+  if (visible) revisarVersionPagina();
+}, 30000);
+const alVolver = () => { if (D && document.visibilityState === "visible" && Date.now() - ultimaRevision > 5000) { ultimaRevision = Date.now(); buscando = false; revisarZoho(false); revisarVersionPagina(); } };
+document.addEventListener("visibilitychange", alVolver);
+window.addEventListener("focus", alVolver);
+window.addEventListener("pageshow", alVolver);
+window.addEventListener("online", alVolver);
 
 /* ---------- entrar ---------- */
 // Al tocar un aviso del iPhone se abre ese correo (si aún no llega a la app, apenas llegue).
