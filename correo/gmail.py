@@ -177,7 +177,7 @@ class Gmail:
         return hechos
 
     # ------------------------------------------------------------- envío
-    def enviar(self, para, cc, asunto, texto, adjuntos=(), responde_a=None, referencias=None):
+    def enviar(self, para, cc, asunto, texto, adjuntos=(), responde_a=None, referencias=None, html=None):
         """adjuntos: [(nombre, bytes)]. responde_a: Message-ID del correo que se responde (queda en el mismo hilo)."""
         m = EmailMessage()
         m["From"], m["To"], m["Subject"] = self.correo, ", ".join(para), asunto
@@ -188,6 +188,8 @@ class Gmail:
             m["In-Reply-To"] = responde_a
             m["References"] = (referencias + " " if referencias else "") + responde_a
         m.set_content(texto)
+        if html:
+            m.add_alternative(html, subtype="html")   # con el historial citado, como en Outlook o Gmail
         for nombre, datos in adjuntos:
             m.add_attachment(datos, maintype="application", subtype="octet-stream", filename=nombre)
         try:

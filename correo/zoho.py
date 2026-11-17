@@ -88,10 +88,10 @@ class Zoho:
                                 f"con el permiso {permiso}. Detalle: {cuerpo_err}") from None
             raise ZohoError(f"Error {e.code} al enviar: {cuerpo_err}") from None
 
-    def enviar_nuevo(self, account_id, desde, para, cc, asunto, texto, adjuntos=()):
+    def enviar_nuevo(self, account_id, desde, para, cc, asunto, texto, adjuntos=(), formato="plaintext"):
         """Correo nuevo (o reenvío). `adjuntos`: lista de lo que devuelve subir_adjunto()."""
         cuerpo = {"fromAddress": desde, "toAddress": ",".join(para), "subject": asunto,
-                  "content": texto, "mailFormat": "plaintext"}
+                  "content": texto, "mailFormat": formato}
         if cc:
             cuerpo["ccAddress"] = ",".join(cc)
         if adjuntos:
@@ -112,10 +112,10 @@ class Zoho:
         d = d[0] if isinstance(d, list) else d
         return {k: d.get(k) for k in ("storeName", "attachmentPath", "attachmentName")}
 
-    def responder(self, account_id, message_id, desde, para, cc, asunto, texto, adjuntos=()):
+    def responder(self, account_id, message_id, desde, para, cc, asunto, texto, adjuntos=(), formato="plaintext"):
         """Responde un correo (queda en la conversación y en Enviados de Zoho)."""
         cuerpo = {"fromAddress": desde, "toAddress": ",".join(para), "subject": asunto,
-                  "content": texto, "action": "reply", "mailFormat": "plaintext"}
+                  "content": texto, "action": "reply", "mailFormat": formato}
         if cc:
             cuerpo["ccAddress"] = ",".join(cc)
         if adjuntos:
