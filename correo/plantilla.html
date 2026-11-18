@@ -130,8 +130,8 @@ header{display:flex; flex-wrap:wrap; align-items:center; justify-content:space-b
 .row .avatar.mini, .row .clip{display:none}
 /* App en la pantalla de inicio del iPhone: el iPhone difumina la franja de arriba; el contenido parte más abajo. */
 @media (display-mode: standalone) and (max-width:860px){ .app{padding-top:calc(env(safe-area-inset-top, 0px) + 34px)} }
-/* Celular: lista compacta como la app de Zoho (avatar, de quién, hora y asunto). */
-@media (max-width:860px){
+/* Lista compacta como la app de Zoho (avatar, de quién, hora y asunto), en el computador y en el celular. */
+@media all{
   .row{display:grid; grid-template-columns:40px minmax(0,1fr); column-gap:12px; padding:11px 14px; align-items:center}
   .row .avatar.mini{display:grid; width:40px; height:40px; font-size:14px; grid-row:1 / span 2}
   .row .r1, .row .subj{grid-column:2}
