@@ -1720,8 +1720,9 @@ document.addEventListener("click", ev => {
   if (t.dataset.carpeta) { carpeta = t.dataset.carpeta; limite = 150; abierto = null; pintarFiltros(); pintarLista(); pintarCorreo(); if (innerWidth <= 860) scrollTo(0, 0); return; }
   if ("cerraravance" in t.dataset) { $("#panelAvance").hidden = true; return; }
   if ("od" in t.dataset) { accionOD(t.dataset.od, t); return; }
-  if ("subirod" in t.dataset && m) { pedidoOD({ modo: "onedrive_subir", id: m.id }).then(() => { odEsperando[m.id] = Date.now(); pintarCorreo();
-    aviso("☁️ Pedido enviado: en 1 o 2 minutos las facturas quedan en OneDrive (si un proveedor es nuevo, te pregunto la carpeta en ☁️ OneDrive).", "bien", 8000); }).catch(e => aviso(esc(e.message), "mal", 8000)); return; }
+  if ("subirod" in t.dataset) { const mo = MSGS.find(x => x.id === abierto); if (!mo) return; t.disabled = true;
+    pedidoOD({ modo: "onedrive_subir", id: mo.id }).then(() => { odEsperando[mo.id] = Date.now(); pintarCorreo();
+    aviso("☁️ Pedido enviado: en 1 o 2 minutos las facturas quedan en OneDrive (si un proveedor es nuevo, te pregunto la carpeta en ☁️ OneDrive).", "bien", 8000); }).catch(e => { t.disabled = false; aviso(esc(e.message), "mal", 8000); }); return; }
   if (t.dataset.traer) { const h = HISTORIAL.porId[t.dataset.traer]; if (h) traerCompleto(h); return; }
   if (t.dataset.zoomxls) { visor.zoom = Math.min(2, Math.max(0.4, Math.round(((visor.zoom || 1) + 0.2 * +t.dataset.zoomxls) * 10) / 10)); pintarCorreo(); return; }
   if (t.dataset.hoja !== undefined) { visor.hoja = +t.dataset.hoja; pintarCorreo(); return; }
