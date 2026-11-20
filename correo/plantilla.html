@@ -127,6 +127,14 @@ header{display:flex; flex-wrap:wrap; align-items:center; justify-content:space-b
 .avance .barra2{height:8px; border-radius:99px; background:var(--soft); overflow:hidden}
 .avance .barra2 i{display:block; height:100%; background:var(--accent)}
 .avance .barra2.idx i{background:#9db0e8}
+.avance.od{max-height:calc(100vh - 110px); overflow:auto}
+.od pre{background:var(--soft); border-radius:8px; padding:8px 10px; font-size:12px; white-space:pre-wrap; word-break:break-all; margin:0; user-select:all}
+.od textarea{width:100%; min-height:90px; font-size:16px; border:1px solid var(--line); border-radius:8px; padding:8px; box-sizing:border-box}
+.od select{width:100%; font-size:15px; padding:6px; border-radius:8px; border:1px solid var(--line); background:var(--panel); color:inherit}
+.od ol{margin:0; padding-left:20px; display:flex; flex-direction:column; gap:6px; font-size:14px}
+.od .prov{display:flex; flex-direction:column; gap:6px; padding:10px; border:1px solid var(--line); border-radius:10px}
+.od-num{background:var(--alta); color:#fff; border-radius:99px; padding:0 6px; font-size:11px; margin-left:4px}
+.od-ok{font-size:13px; color:var(--muted); margin:6px 0 0}
 .row .avatar.mini, .row .clip{display:none}
 /* App en la pantalla de inicio del iPhone: el iPhone difumina la franja de arriba; el contenido parte más abajo. */
 @media (display-mode: standalone) and (max-width:860px){ .app{padding-top:calc(env(safe-area-inset-top, 0px) + 34px)} }
@@ -323,6 +331,7 @@ textarea{font:inherit}
 </div>
 
 <div class="avance" id="panelAvance" hidden></div>
+<div class="avance od" id="panelOD" hidden></div>
 <div class="pantalla" id="pantalla" hidden role="dialog" aria-modal="true" aria-label="Vista del archivo">
   <div class="pbar"><button class="pbtn" data-cerrarvisor aria-label="Cerrar">✕</button><strong class="pnombre" id="pNombre"></strong>
     <div class="pzoom"><button class="pbtn" data-zoomv="-1" aria-label="Alejar">−</button><span id="pZoom">100%</span><button class="pbtn" data-zoomv="1" aria-label="Acercar">+</button></div>
@@ -342,6 +351,7 @@ textarea{font:inherit}
       <div class="sinc"><button class="chip" id="buscarAhora" title="Buscar correos nuevos en Zoho">🔄<span class="pc"> Buscar ahora</span></button><span class="small muted" id="sincTxt"></span></div>
       <button class="btn" id="nuevo" data-nuevo>✉️<span class="pc"> Nuevo correo</span><span class="movil"> Nuevo</span></button>
       <button class="chip" id="avisos" hidden title="Activar burbuja y avisos">🔔<span class="pc"> Activar burbuja y avisos</span></button>
+      <button class="chip" id="verOD" title="Facturas de la valija a OneDrive">☁️<span class="pc"> OneDrive</span><span id="odNum"></span></button>
       <button class="chip" id="verAvance" title="Avance: correos indexados y analizados por la IA">📊<span class="pc"> Avance</span></button>
       <button class="chip" id="salir" title="Olvidar la contraseña en este dispositivo"><span class="pc">Cerrar sesión</span><span class="movil">Salir</span></button>
     </div>
@@ -477,6 +487,7 @@ function construir(refresco = false){
   HILOS = {};
   for (const m of MSGS) (HILOS[m.hilo] ||= []).push(m);
   for (const k in HILOS) HILOS[k].sort((a, b) => a.fecha - b.fecha);
+  try { pintarBotonOD(); } catch(e) {}
   agregarLocales();
   CUENTAS = [...new Set(MSGS.map(m => m.cuenta).filter(Boolean))];
   armarAgenda();
@@ -693,7 +704,7 @@ function pintarCorreo(){
   const nombre = m.de_nombre || m.de, conHtml = !!m.html && !verTexto;
   $("#read").innerHTML = `<div class="readbar"><button class="back" data-back>← Volver a la lista</button>
       <div class="actions"><button class="btn" data-responder="uno">↩ Responder</button>${(m.cc.length || m.para.length > 1) ? '<button class="btn sec" data-responder="todos">↩ Responder a todos</button>' : ""}<button class="btn sec" data-responder="reenviar">↪ Reenviar</button>${!m.enviado && !m.local ? '<button class="btn sec" data-noleido>✉️ Marcar como no leído</button>' : ""}
-      <button class="btn sec" data-askthread="${esc(m.hilo)}">💬 Preguntar</button></div></div>
+      <button class="btn sec" data-askthread="${esc(m.hilo)}">💬 Preguntar</button>${odConectado() && m.archivos.length && !m.local ? '<button class="btn sec" data-subirod>☁️ Subir a OneDrive</button>' : ""}</div></div>
     <h2 class="asunto">${resaltar(m.asunto, terms)}</h2>
     <div class="remite">
       <span class="avatar" style="--h:${tono(m.de)}">${esc(iniciales(nombre))}</span>
@@ -702,7 +713,7 @@ function pintarCorreo(){
       <div class="muted small fecha-msg">${fmtF(m.fecha)}</div>
     </div>
     ${m.archivos.length ? `<div class="adjs">${m.archivos.map((f, i) => `<button class="adj" data-adj="${i}" aria-expanded="${adjAbierto === i}"><span class="ext">${esc(ext(f.nombre))}</span><span class="adj-n">${esc(f.nombre)}</span><span class="muted">${kb(f.tamano)}</span></button>`).join("")}</div>
-      ${adjAbierto !== null && m.archivos[adjAbierto] ? panelAdjunto(m, adjAbierto, terms) : ""}` : ""}
+      ${adjAbierto !== null && m.archivos[adjAbierto] ? panelAdjunto(m, adjAbierto, terms) : ""}${estadoOD(m)}` : ""}
     ${borrador && borrador.id === m.id ? (borrador.oculto ? '<button class="btn seguir-escribiendo" data-r="seguir">✏️ Seguir escribiendo tu respuesta</button>' : redactor()) : ""}
     ${h.resumen || a.resumen ? `<details class="resumen"><summary><h3>✨ ${hilo.length > 1 ? "Resumen de la conversación" : "Resumen"}</h3></summary><p>${esc(h.resumen || a.resumen)}</p>
       ${(h.puntos_clave || []).length ? `<ul>${h.puntos_clave.map(x => `<li>${esc(x)}</li>`).join("")}</ul>` : ""}
@@ -1701,13 +1712,16 @@ function irA(v){
   if (v === "preguntar") { pintarCtx(); $("#qAsk").focus(); }
 }
 document.addEventListener("click", ev => {
-  const t = ev.target.closest("[data-v],[data-m],[data-f],[data-cu],[data-back],[data-more],[data-askthread],[data-noctx],[data-sug],[data-responder],[data-r],[data-adj],[data-vertexto],[data-ver],[data-bajar],[data-nuevo],[data-recuperar],[data-noleido],[data-hoja],[data-quitaradj],[data-carpeta],[data-zoomxls],[data-traer],[data-cerraravance]");
+  const t = ev.target.closest("[data-v],[data-m],[data-f],[data-cu],[data-back],[data-more],[data-askthread],[data-noctx],[data-sug],[data-responder],[data-r],[data-adj],[data-vertexto],[data-ver],[data-bajar],[data-nuevo],[data-recuperar],[data-noleido],[data-hoja],[data-quitaradj],[data-carpeta],[data-zoomxls],[data-traer],[data-cerraravance],[data-subirod],[data-od]");
   if (!t) return;
   if (t.dataset.adj !== undefined) { const i = +t.dataset.adj; leerBorrador(); adjAbierto = adjAbierto === i ? null : i; pintarCorreo(); return; }
   if (t.dataset.ver !== undefined || t.dataset.bajar !== undefined) { const mm = MSGS.find(x => x.id === abierto); if (mm) abrirAdjunto(mm, +(t.dataset.ver ?? t.dataset.bajar), t.dataset.ver !== undefined); return; }
   if (t.dataset.quitaradj !== undefined && borrador) { leerBorrador(); borrador.nuevos.splice(+t.dataset.quitaradj, 1); borrador.estado = ""; pintarCorreo(); return; }
   if (t.dataset.carpeta) { carpeta = t.dataset.carpeta; limite = 150; abierto = null; pintarFiltros(); pintarLista(); pintarCorreo(); if (innerWidth <= 860) scrollTo(0, 0); return; }
   if ("cerraravance" in t.dataset) { $("#panelAvance").hidden = true; return; }
+  if ("od" in t.dataset) { accionOD(t.dataset.od, t); return; }
+  if ("subirod" in t.dataset && m) { pedidoOD({ modo: "onedrive_subir", id: m.id }).then(() => { odEsperando[m.id] = Date.now(); pintarCorreo();
+    aviso("☁️ Pedido enviado: en 1 o 2 minutos las facturas quedan en OneDrive (si un proveedor es nuevo, te pregunto la carpeta en ☁️ OneDrive).", "bien", 8000); }).catch(e => aviso(esc(e.message), "mal", 8000)); return; }
   if (t.dataset.traer) { const h = HISTORIAL.porId[t.dataset.traer]; if (h) traerCompleto(h); return; }
   if (t.dataset.zoomxls) { visor.zoom = Math.min(2, Math.max(0.4, Math.round(((visor.zoom || 1) + 0.2 * +t.dataset.zoomxls) * 10) / 10)); pintarCorreo(); return; }
   if (t.dataset.hoja !== undefined) { visor.hoja = +t.dataset.hoja; pintarCorreo(); return; }
@@ -1778,6 +1792,102 @@ async function deDatos(archivo, rama = "correo-datos"){
   if (!r.ok) throw new Error("HTTP " + r.status);
   return r.json();
 }
+/* ---------- Facturas a OneDrive (las sube el vigilante con rclone; ver onedrive.py) ---------- */
+const OD = () => D.onedrive || {};
+const odConectado = () => !!OD().drive_id;
+const normOD = t => String(t || "").normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+let odEsperando = {}, odEnviado = {}, odConectando = 0;
+async function pedidoOD(obj){
+  const gh = D._envio; if (!gh || !gh.token) throw new Error("Falta el permiso para enviar pedidos.");
+  const paquete = await cifrar({ ...obj, ts: Date.now() });
+  const r = await fetch(`https://api.github.com/repos/${gh.repo}/actions/workflows/correo_trozo.yml/dispatches`, { method: "POST",
+    headers: { "Authorization": "Bearer " + gh.token, "Accept": "application/vnd.github+json" },
+    body: JSON.stringify({ ref: "main", inputs: { id: "trozo-ped" + Math.random().toString(36).slice(2, 10) + "-0", datos: JSON.stringify(paquete) } }) });
+  if (!r.ok) throw new Error("GitHub no aceptó el pedido (" + r.status + ")");
+}
+// Proveedores que esperan que digas su carpeta: {clave: {prov, archivos[]}}
+function pendientesOD(){
+  const o = OD(), mapa = o.mapa || {}, carp = new Set((o.carpetas || []).map(normOD)), out = {};
+  for (const x of o.cola || []) {
+    if (x.clave in mapa || carp.has(x.clave) || odEnviado[x.clave]) continue;
+    (out[x.clave] ||= { prov: x.prov, archivos: [] }).archivos.push(x.nombre);
+  }
+  return out;
+}
+function estadoOD(m){
+  const h = (OD().hechos || {})[m.id] || [], cola = (OD().cola || []).filter(x => x.id === m.id);
+  if (h.length) return `<p class="od-ok">☁️ En OneDrive: ${h.map(x => `${esc(x[0])} → <b>${esc(x[1])}</b>`).join(" · ")}${cola.length ? ` · faltan ${cola.length} (ver ☁️ OneDrive)` : ""}</p>`;
+  if (cola.length) return `<p class="od-ok">☁️ ${cola.length} archivo(s) por subir a OneDrive${Object.keys(pendientesOD()).length ? " · dime la carpeta en ☁️ OneDrive" : "…"}</p>`;
+  if (odEsperando[m.id] && Date.now() - odEsperando[m.id] < 5 * 60000) return '<p class="od-ok">☁️ Subiendo a OneDrive…</p>';
+  return "";
+}
+function pintarBotonOD(){
+  const n = Object.keys(pendientesOD()).length;
+  $("#odNum").innerHTML = n ? `<span class="od-num">${n}</span>` : "";
+  if (!$("#panelOD").hidden) pintarOD();
+}
+const COMANDO_OD = `cd /tmp && curl -fsSL -o rclone.zip "https://downloads.rclone.org/rclone-current-osx-$( [ "$(uname -m)" = arm64 ] && echo arm64 || echo amd64 ).zip" && unzip -o -q -j rclone.zip '*/rclone' -d rclone-bin && ./rclone-bin/rclone authorize "onedrive"`;
+function pintarOD(){
+  const o = OD(), p = $("#panelOD");
+  let h = `<h3>☁️ Facturas a OneDrive <button class="chip" data-od="cerrar" aria-label="Cerrar">✕</button></h3>`;
+  if (o.error) h += `<p class="small" style="color:var(--alta);margin:0">${esc(o.error)}</p>`;
+  if (!odConectado()) {
+    h += `<p class="small" style="margin:0">Conecta tu OneDrive una sola vez (en el Mac):</p>
+      <ol><li>Abre la app <b>Terminal</b> (⌘ + espacio, escribe "Terminal" y Enter).</li>
+      <li>Copia este comando, pégalo en Terminal y aprieta Enter:<pre>${esc(COMANDO_OD)}</pre><button class="chip" data-od="copiar">📋 Copiar comando</button></li>
+      <li>Se abre el navegador: entra con tu cuenta de Microsoft y acepta (aparece el nombre <b>rclone</b>, el programa que sube los archivos).</li>
+      <li>Vuelve a Terminal: copia todo el texto que aparece entre <b>---&gt;</b> y <b>&lt;---End paste</b> (empieza con <code>{"access_token"</code>) y pégalo aquí:</li></ol>
+      <textarea id="odToken" placeholder='{"access_token":"…","token_type":"Bearer",…}'></textarea>
+      <button class="btn" data-od="conectar" ${odConectando && Date.now() - odConectando < 4 * 60000 ? "disabled" : ""}>${odConectando && Date.now() - odConectando < 4 * 60000 ? "Conectando… (1 a 2 minutos)" : "Conectar OneDrive"}</button>
+      <p class="muted small" style="margin:0">Se guarda cifrado con tu contraseña. Puedes cerrar Terminal después.</p>`;
+    p.innerHTML = h; return;
+  }
+  const pend = pendientesOD(), carpetas = o.carpetas || [];
+  h += `<p class="small" style="margin:0">✓ Conectado. Las facturas de la <b>valija</b> se suben solas a <b>${esc(o.base || "Anasep 2/Facturas")}</b>/<i>proveedor</i>.</p>`;
+  const claves = Object.keys(pend);
+  if (claves.length) {
+    h += `<p class="small" style="margin:0"><b>¿En qué carpeta va cada proveedor?</b> Te pregunto solo la primera vez.</p>`;
+    for (const k of claves) {
+      const x = pend[k], sug = carpetas.filter(c => { const n = normOD(c); return n.length >= 3 && (k.startsWith(n) || n.startsWith(k) || k.includes(n)); });
+      h += `<div class="prov"><strong>${esc(x.prov)}</strong><span class="muted small">${x.archivos.map(esc).join(" · ")}</span>
+        <select data-clave="${esc(k)}">${sug.map(c => `<option value="c:${esc(c)}">${esc(c)} (sugerida)</option>`).join("")}
+          <option value="n:${esc(x.prov.toUpperCase())}">➕ Crear carpeta nueva: ${esc(x.prov.toUpperCase())}</option>
+          <optgroup label="Todas las carpetas">${carpetas.map(c => `<option value="c:${esc(c)}">${esc(c)}</option>`).join("")}</optgroup>
+          <option value="x:">🚫 No subir nunca este proveedor</option></select>
+        <button class="btn" data-od="guardar" data-k="${esc(k)}">Guardar</button></div>`;
+    }
+  } else h += `<p class="muted small" style="margin:0">No hay facturas esperando carpeta.${(o.cola || []).length ? ` Subiendo ${(o.cola || []).length}…` : ""}</p>`;
+  const ultimas = Object.values(o.hechos || {}).flat().sort((a, b) => b[2] - a[2]).slice(0, 12);
+  if (ultimas.length) h += `<div class="small"><b>Últimas subidas</b><br>${ultimas.map(x => `${esc(x[0])} → <b>${esc(x[1])}</b> <span class="muted">${fmtF(x[2])}</span>`).join("<br>")}</div>`;
+  const mapa = Object.entries(o.mapa || {});
+  if (mapa.length) h += `<details class="small"><summary>Proveedores ya ubicados (${mapa.length})</summary>${mapa.map(([k, c]) => `${esc(k)} → ${c ? esc(c) : "🚫 no se sube"} <button class="chip" data-od="olvidar" data-k="${esc(k)}">cambiar</button>`).join("<br>")}</details>`;
+  h += `<button class="chip" data-od="desconectar" style="align-self:flex-start">Desconectar OneDrive</button>`;
+  p.innerHTML = h;
+}
+async function accionOD(a, t){
+  try {
+    if (a === "cerrar") { $("#panelOD").hidden = true; return; }
+    if (a === "copiar") { await navigator.clipboard.writeText(COMANDO_OD); aviso("📋 Comando copiado. Pégalo en Terminal.", "bien", 4000); return; }
+    if (a === "conectar") {
+      const texto = $("#odToken").value.trim();
+      if (!/access_token/.test(texto)) { aviso("Pega el texto completo que empieza con {\"access_token\"…", "mal", 6000); return; }
+      await pedidoOD({ modo: "onedrive_conectar", texto }); odConectando = Date.now(); pintarOD();
+      aviso("☁️ Conectando OneDrive: en 1 o 2 minutos queda listo.", "bien", 6000); return;
+    }
+    if (a === "guardar") {
+      const k = t.dataset.k, v = $(`#panelOD select[data-clave="${k}"]`).value, carpeta = v.slice(2);
+      await pedidoOD({ modo: "onedrive_carpeta", clave: k, carpeta: v[0] === "x" ? "" : carpeta });
+      odEnviado[k] = carpeta || "🚫"; pintarBotonOD();
+      aviso(v[0] === "x" ? "Listo: ese proveedor no se sube." : `☁️ Listo: se sube a "${esc(carpeta)}" y la próxima vez va sola.`, "bien", 5000); return;
+    }
+    if (a === "olvidar") { if (!confirm("¿Volver a preguntar la carpeta de este proveedor la próxima vez?")) return;
+      await pedidoOD({ modo: "onedrive_carpeta", clave: t.dataset.k, carpeta: null, olvidar: true }); aviso("Listo: te preguntaré de nuevo.", "bien", 4000); return; }
+    if (a === "desconectar") { if (!confirm("¿Desconectar OneDrive? Las facturas dejarán de subirse.")) return;
+      await pedidoOD({ modo: "onedrive_desconectar" }); aviso("OneDrive se desconecta en 1 o 2 minutos.", "bien", 5000); }
+  } catch (e) { aviso(esc(e.message), "mal", 8000); }
+}
+$("#verOD").addEventListener("click", () => { const p = $("#panelOD"); p.hidden = !p.hidden; $("#panelAvance").hidden = true; if (!p.hidden) pintarOD(); });
+
 let AVANCE = null, avanceCaja = "", avanceRevisado = 0;
 async function leerAvance(v){
   if (!v || !v.a || JSON.stringify(v.a) === avanceCaja) return;

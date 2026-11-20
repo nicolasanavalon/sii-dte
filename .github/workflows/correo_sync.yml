@@ -48,6 +48,10 @@ jobs:
         run: |
           sudo apt-get install -y -qq tesseract-ocr tesseract-ocr-spa >/dev/null
           pip install -r correo/requirements.txt
+          # rclone: sube las facturas de la valija a OneDrive (si falla, el correo sigue funcionando igual)
+          curl -fsSL --retry 3 https://downloads.rclone.org/rclone-current-linux-amd64.zip -o /tmp/rclone.zip \
+            && unzip -q -j /tmp/rclone.zip '*/rclone' -d /tmp/rclone && sudo install /tmp/rclone/rclone /usr/local/bin/rclone \
+            || echo "::warning::No pude instalar rclone (OneDrive)."
 
       - name: Traer datos y adjuntos guardados (cifrados)
         env:
