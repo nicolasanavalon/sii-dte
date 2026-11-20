@@ -1179,6 +1179,9 @@ def recoger_suscripciones(estado, clave):
             p = cripto.descifrar(json.loads(z.read("trozo.txt").decode()), clave)
             if p.get("modo") == "traer":
                 cambio = bool(traer_pedidos(estado, [str(x) for x in p.get("ids", [])])) or cambio
+            if str(p.get("modo", "")).startswith("onedrive_"):
+                pedido_onedrive(estado, p)
+                cambio = True
             sub = p.get("sub") or {}
             if p.get("modo") == "suscribir" and str(sub.get("endpoint", "")).startswith("https://") and sub.get("keys"):
                 subs = [x for x in estado.setdefault("push", {}).setdefault("subs", []) if x.get("endpoint") != sub["endpoint"]]
@@ -1191,6 +1194,139 @@ def recoger_suscripciones(estado, clave):
             _gh_api(f"{api}/{art['id']}", metodo="DELETE")
         except Exception:
             pass
+    return cambio
+
+
+# ---------------------------------------------------------------- Facturas a OneDrive (ver onedrive.py)
+
+_OD = {}
+
+
+def _od_cliente(od):
+    import onedrive
+    import shutil
+    if not shutil.which(onedrive.RCLONE):
+        return None
+    if _OD.get("drive") != od.get("drive_id"):
+        _OD.clear()
+        _OD.update({"drive": od.get("drive_id"), "c": onedrive.OneDrive(od)})
+    return _OD["c"]
+
+
+def _od_encolar(od, m, solo_facturas=True):
+    import onedrive
+    hechos = {x[0] for x in od.setdefault("hechos", {}).get(m["id"], [])}
+    en_cola = {(x["id"], x["i"]) for x in od.setdefault("cola", [])}
+    n = 0
+    for i, f in enumerate(m.get("archivos", [])):
+        if (solo_facturas and not onedrive.es_factura(f["nombre"])) or f["nombre"] in hechos or (m["id"], i) in en_cola:
+            continue
+        prov = onedrive.proveedor(f["nombre"])
+        od["cola"].append({"id": m["id"], "i": i, "nombre": f["nombre"], "prov": prov, "clave": onedrive.norm(prov),
+                           "t": m["fecha"], "intentos": 0})
+        n += 1
+    return n
+
+
+def pedido_onedrive(estado, p):
+    """Pedidos de la página: conectar OneDrive, decir la carpeta de un proveedor o subir un correo."""
+    import onedrive
+    modo = p.get("modo")
+    if modo == "onedrive_conectar":
+        try:
+            nuevo = onedrive.conectar(str(p.get("texto") or ""))
+            previo = estado.get("onedrive") or {}
+            estado["onedrive"] = {**previo, **nuevo, "error": ""}
+            _OD.clear()
+            print("OneDrive: conectado.")
+        except Exception as e:
+            estado.setdefault("onedrive", {})["error"] = f"No pude conectar OneDrive: {str(e)[:200]}"
+            print("::warning::OneDrive: no se pudo conectar.")
+        return
+    od = estado.setdefault("onedrive", {})
+    if modo == "onedrive_desconectar":
+        for k in ("token", "drive_id", "drive_type"):
+            od.pop(k, None)
+        _OD.clear()
+    elif modo == "onedrive_carpeta":
+        clave = onedrive.norm(p.get("clave"))
+        if clave and p.get("olvidar"):
+            od.setdefault("mapa", {}).pop(clave, None)
+        elif clave:
+            carpeta = re.sub(r"[\\/:*?\"<>|]", "-", str(p.get("carpeta") or "")).strip(" .")[:120]
+            od.setdefault("mapa", {})[clave] = carpeta
+    elif modo == "onedrive_subir":
+        m = estado["mensajes"].get(str(p.get("id")))
+        if m:
+            import onedrive
+            _od_encolar(od, m, solo_facturas=any(onedrive.es_factura(f["nombre"]) for f in m.get("archivos", [])))
+            od.setdefault("manual", []).append(m["id"])
+
+
+def facturas_onedrive(estado, clave, hasta):
+    """Sube a OneDrive las facturas de la valija (y de los correos pedidos), cada una a la carpeta de su proveedor."""
+    import onedrive
+    od = estado.get("onedrive") or {}
+    if not od.get("token"):
+        return False
+    cambio = False
+    for m in estado["mensajes"].values():          # valijas nuevas (desde que conectaste OneDrive)
+        if (m["fecha"] >= od.get("conectado_ms", 0) and m["id"] not in od.setdefault("vistos", [])
+                and onedrive.es_valija(m) and m.get("archivos")):
+            if all(f.get("ref") for f in m["archivos"] if onedrive.es_factura(f["nombre"])):
+                _od_encolar(od, m)
+                od["vistos"] = (od["vistos"] + [m["id"]])[-500:]
+                cambio = True
+    if not od.get("cola"):
+        return cambio
+    cli = _od_cliente(od)
+    if cli is None:
+        print("::warning::OneDrive: falta el programa rclone en el vigilante.")
+        return cambio
+    try:
+        if time.time() - od.get("carpetas_ms", 0) / 1000 > 1800:
+            od["carpetas"], od["carpetas_ms"] = cli.carpetas(), int(time.time() * 1000)
+            cambio = True
+    except Exception as e:
+        od["error"] = f"No pude leer las carpetas de OneDrive: {str(e)[:200]}"
+        print(f"::warning::OneDrive: {str(e)[:200]}")
+        return True
+    por_norm = {onedrive.norm(c): c for c in od.get("carpetas", [])}
+    mapa, quedan = od.setdefault("mapa", {}), []
+    for x in od["cola"]:
+        carpeta = mapa.get(x["clave"])
+        if carpeta is None and x["clave"] in por_norm:       # misma carpeta, mismo nombre: se usa sola
+            carpeta = mapa[x["clave"]] = por_norm[x["clave"]]
+        if carpeta is None or time.time() > hasta:
+            quedan.append(x)                                  # la página pregunta en qué carpeta va
+            continue
+        if carpeta == "":                                     # "no subir este proveedor"
+            cambio = True
+            continue
+        m = estado["mensajes"].get(x["id"])
+        f = (m.get("archivos") or [])[x["i"]] if m and x["i"] < len(m.get("archivos") or []) else None
+        if not f or not f.get("ref") or not ADJ_DIR or not (Path(ADJ_DIR) / f"{f['ref']}.bin").exists():
+            x["intentos"] += 1
+            if x["intentos"] < 30:
+                quedan.append(x)
+            continue
+        try:
+            datos = cripto.descifrar_bytes((Path(ADJ_DIR) / f"{f['ref']}.bin").read_bytes(), clave)
+            cli.subir(datos, f"{od.get('base') or onedrive.BASE}/{carpeta}/{x['nombre']}")
+            od.setdefault("hechos", {}).setdefault(x["id"], []).append([x["nombre"], carpeta, int(time.time() * 1000)])
+            print("OneDrive: factura subida.")
+        except Exception as e:
+            x["intentos"] += 1
+            od["error"] = f"No pude subir {x['nombre']}: {str(e)[:200]}"
+            print(f"::warning::OneDrive: no pude subir una factura: {str(e)[:200]}")
+            if x["intentos"] < 30:
+                quedan.append(x)
+        cambio = True
+    od["cola"] = quedan
+    if len(od.get("hechos", {})) > 400:
+        od["hechos"] = dict(sorted(od["hechos"].items(), key=lambda kv: kv[1][-1][2])[-300:])
+    if cli._token_al_dia() or cambio:
+        cambio = True
     return cambio
 
 
@@ -1406,6 +1542,11 @@ def una_vuelta(estado, clave, rapido):
     t2 = time.time()
     analizados = analizar_pendientes(estado)
     print(f"  tiempos: Zoho {t1 - t0:.0f} s · estilo {t2 - t1:.0f} s · resúmenes {time.time() - t2:.0f} s")
+    try:
+        if facturas_onedrive(estado, clave, hasta=time.time() + 60):
+            estado["_cambio_otro"] = True
+    except Exception as e:
+        print(f"::warning::OneDrive: {str(e)[:200]}")
     aligerados = aligerar(estado, clave)          # (siempre se ejecuta: no dentro del "or")
     try:
         aligerados += arreglar_imagenes(estado, clave, hasta=max(time.time() + 3, LIMITE_VUELTA + 5))
