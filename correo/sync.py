@@ -793,38 +793,68 @@ Responde SOLO un objeto JSON:
  "evitar": ["cosas que él NO hace y una IA tendería a hacer"]}"""
 
 
+SISTEMA_ESTILO_SUMAR = SISTEMA_ESTILO + """
+IMPORTANTE: ya tienes un PERFIL aprendido de sus correos anteriores. Te paso correos NUEVOS que escribió después.
+Actualiza el perfil integrando lo nuevo: confirma o corrige rasgos, agrega saludos, despedidas y expresiones nuevas,
+y conserva todo lo del perfil anterior que siga siendo cierto (no lo borres por no verlo en estos correos).
+Devuelve el perfil COMPLETO actualizado con las mismas claves."""
+
+LOTE_ESTILO = 11000      # caracteres de correos por cada vez que la IA aprende
+
+
 def actualizar_estilo(estado):
-    """Aprende cómo escribe Nicolás a partir de sus correos enviados (se renueva cada semana o cada 15 enviados nuevos)."""
+    """Aprende cómo escribe Nicolás de TODOS sus correos enviados, de forma continua.
+
+    Cada correo enviado queda guardado para siempre en estado["estilo"]["corpus"] (aunque salga de la bandeja).
+    La IA va leyendo los que aún no aprendió, por tandas, y refina el perfil sin olvidar lo anterior."""
     import ia
+    est = estado.setdefault("estilo", {})
+    corpus = est.setdefault("corpus", {})
+    for m in estado["mensajes"].values():
+        if m.get("enviado") and not m.get("boletin") and not m.get("local") and m["id"] not in corpus:
+            t = texto_propio(m)
+            if len(t) >= 25:
+                corpus[m["id"]] = {"t": m["fecha"], "pa": (m.get("para") or [])[:3], "s": (m.get("asunto") or "")[:150],
+                                   "x": t[:1500], "a": 0}
     if not ia.disponible():
         return False
-    enviados = sorted((m for m in estado["mensajes"].values() if m.get("enviado") and not m.get("boletin")),
-                      key=lambda m: m["fecha"], reverse=True)
-    est = estado.get("estilo") or {}
-    if len(enviados) < 3 or (est.get("n_enviados", 0) + 15 > len(enviados)
-                             and time.time() - est.get("ms", 0) / 1000 < 7 * 86400):
+    pend = sorted((i for i, c in corpus.items() if not c.get("a")), key=lambda i: corpus[i]["t"])
+    # Aprende apenas hay algo nuevo, pero como mucho cada 10 minutos (para no gastar el límite de la IA gratuita).
+    if not pend or time.time() - est.get("ms", 0) / 1000 < 600:
         return False
-    muestra, total = [], 0
-    for m in enviados:
-        t = texto_propio(m)
-        if len(t) < 25:
-            continue
-        bloque = f"--- Para: {', '.join(m.get('para', [])[:3])} | Asunto: {m.get('asunto', '')}\n{t[:1500]}"
-        if total + len(bloque) > 11000:
+    if not est.get("perfil") and len(corpus) < 3:
+        return False
+    muestra, ids, total = [], [], 0
+    for i in pend:
+        c = corpus[i]
+        bloque = f"--- Para: {', '.join(c['pa'])} | Asunto: {c['s']}\n{c['x']}"
+        if muestra and total + len(bloque) > LOTE_ESTILO:
             break
-        muestra.append(bloque)
+        muestra.append(bloque), ids.append(i)
         total += len(bloque)
-    if len(muestra) < 3:
-        return False
+    perfil = est.get("perfil")
     try:
-        texto, modelo = ia.chat(SISTEMA_ESTILO, "CORREOS ESCRITOS POR NICOLÁS:\n\n" + "\n\n".join(muestra), max_tokens=2000, reservado=True)
-        perfil = ia.json_de(texto)
+        if perfil:
+            texto, modelo = ia.chat(SISTEMA_ESTILO_SUMAR, "PERFIL ACTUAL (aprendido de "
+                                    f"{est.get('n_aprendidos', 0)} correos):\n{json.dumps(perfil, ensure_ascii=False)}\n\n"
+                                    "CORREOS NUEVOS ESCRITOS POR NICOLÁS:\n\n" + "\n\n".join(muestra),
+                                    max_tokens=2500, reservado=True)
+        else:
+            texto, modelo = ia.chat(SISTEMA_ESTILO, "CORREOS ESCRITOS POR NICOLÁS:\n\n" + "\n\n".join(muestra),
+                                    max_tokens=2500, reservado=True)
+        nuevo = ia.json_de(texto)
+        if not isinstance(nuevo, dict) or not nuevo:
+            raise ValueError("respuesta sin perfil")
     except Exception as e:
+        est["ms"] = int(time.time() * 1000)      # reintenta en 10 minutos
         print(f"::warning::No pude actualizar el estilo de escritura: {str(e)[:200]}")
         return False
-    estado["estilo"] = {"perfil": perfil, "ms": int(time.time() * 1000), "n_enviados": len(enviados),
-                        "n_ejemplos": len(muestra), "modelo": modelo}
-    print(f"Estilo de escritura actualizado con {len(muestra)} correos enviados.")
+    for i in ids:
+        corpus[i]["a"] = 1
+    est.update({"perfil": nuevo, "ms": int(time.time() * 1000), "modelo": modelo,
+                "n_aprendidos": sum(1 for c in corpus.values() if c.get("a")), "n_enviados": len(corpus)})
+    print(f"Estilo de escritura: aprendió de {len(ids)} correos enviados más "
+          f"({est['n_aprendidos']} de {len(corpus)} en total).")
     return True
 
 

@@ -1245,7 +1245,11 @@ function textoPropio(m){
 // Ejemplos reales: primero los que le escribió a esta misma persona, después los más recientes.
 function ejemplosEstilo(para, max = 3800){
   const dest = new Set(listaCorreos(para || "").map(x => x.toLowerCase()));
-  const enviados = MSGS.filter(m => m.enviado && !m.local && !m.boletin).map(m => ({m, t: textoPropio(m)})).filter(x => x.t.length >= 25);
+  // Todos sus correos enviados (guardados para siempre en D.estilo.corpus) + los de la bandeja, del más nuevo al más antiguo.
+  const vistos = new Set(), enviados = [];
+  for (const m of MSGS.filter(m => m.enviado && !m.local && !m.boletin)) { const t = textoPropio(m); if (t.length >= 25) { vistos.add(m.id); enviados.push({m, t}); } }
+  for (const [id, c] of Object.entries((D.estilo || {}).corpus || {})) if (!vistos.has(id)) enviados.push({m: {para: c.pa || [], cc: [], asunto: c.s || "", fecha: c.t}, t: c.x || ""});
+  enviados.sort((a, b) => (b.m.fecha || 0) - (a.m.fecha || 0));
   const mismo = enviados.filter(x => [...x.m.para, ...x.m.cc].some(a => dest.has(String(a).toLowerCase())));
   const elegidos = [...mismo.slice(0, 3), ...enviados.filter(x => !mismo.slice(0, 3).includes(x))];
   const out = []; let total = 0;
@@ -1725,7 +1729,7 @@ document.addEventListener("click", ev => {
     else if (a === "deshacer") { borrador.texto = borrador.anterior || borrador.texto; borrador.anterior = ""; borrador.obs = null; pintarCorreo(); }
     else if (a === "revisar") revisar(m);
     else if (a === "usar") { borrador.texto = borrador.corregida || borrador.texto; borrador.obs = null; pintarCorreo(); }
-    else if (a === "enviar") { if (!listaCorreos(borrador.para).length || (!borrador.texto.trim() && borrador.modo !== "reenviar")) { borrador.estado = "Falta el destinatario o el mensaje."; borrador.clase = "mal"; } else { borrador.confirmar = true; borrador.estado = ""; } pintarCorreo(); }
+    else if (a === "enviar") { if (!listaCorreos(borrador.para).length || (!borrador.texto.trim() && borrador.modo !== "reenviar")) { borrador.estado = "Falta el destinatario o el mensaje."; borrador.clase = "mal"; } else { borrador.estado = ""; enviar(m); return; } pintarCorreo(); }
     else if (a === "noenviar") { borrador.confirmar = false; pintarCorreo(); }
     else if (a === "confirmar") enviar(m);
     else if (a === "cancelar") { if (borrador.modo === "nuevo") { abierto = null; pintarLista(); } borrador = null; pintarCorreo(); }
