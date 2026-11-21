@@ -1338,6 +1338,67 @@ def facturas_onedrive(estado, clave, hasta):
     return cambio
 
 
+# ---------------------------------------------------------------- Stock diario a la app de compras (webhook)
+
+def _es_stock(m):
+    import onedrive
+    return (not m.get("enviado") and "platon.cl" in (m.get("de") or "").lower()
+            and "STOCKDIARIO" in onedrive.norm(m.get("asunto")))
+
+
+def _post_archivo(url, token, nombre, datos):
+    import uuid
+    limite = "----correo" + uuid.uuid4().hex
+    nombre_ok = nombre.replace('"', "").replace("\r", "").replace("\n", "")
+    cuerpo = (f"--{limite}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"{nombre_ok}\"\r\n"
+              "Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet\r\n\r\n").encode() \
+        + datos + f"\r\n--{limite}--\r\n".encode()
+    req = urllib.request.Request(url, data=cuerpo, method="POST", headers={
+        "Authorization": "Bearer " + token, "Content-Type": f"multipart/form-data; boundary={limite}"})
+    try:
+        with urllib.request.urlopen(req, timeout=90) as r:
+            return r.status
+    except urllib.error.HTTPError as e:
+        return e.code
+    except Exception:
+        return 0
+
+
+def stock_a_webhook(estado, clave):
+    """El Excel del correo "Stock diario productos críticos" se manda solo a la app de compras (POST con la clave)."""
+    url, token = env("STOCK_WEBHOOK_URL"), env("STOCK_WEBHOOK_TOKEN")
+    if not (url.startswith("https://") and token and ADJ_DIR):
+        return False
+    st = estado.setdefault("stock", {})
+    st.setdefault("desde_ms", int((time.time() - 86400) * 1000))     # al activarlo: también el de las últimas 24 h
+    hechos, intentos, cambio = st.setdefault("hechos", {}), st.setdefault("intentos", {}), False
+    for m in sorted(estado["mensajes"].values(), key=lambda m: m["fecha"]):
+        if m["fecha"] < st["desde_ms"] or m["id"] in hechos or not _es_stock(m):
+            continue
+        it = intentos.get(m["id"]) or {"n": 0, "t": 0}
+        if it["n"] >= 300 or time.time() - it["t"] < (60 if it["n"] < 3 else 600):
+            continue
+        for f in m.get("archivos", []):
+            if not f["nombre"].lower().endswith((".xlsx", ".xls")):
+                continue
+            if not f.get("ref") or not (Path(ADJ_DIR) / f"{f['ref']}.bin").exists():
+                break                                            # el adjunto aún no se baja: próxima vuelta
+            datos = cripto.descifrar_bytes((Path(ADJ_DIR) / f"{f['ref']}.bin").read_bytes(), clave)
+            codigo = _post_archivo(url, token, f["nombre"], datos)
+            if codigo in (200, 201, 202):
+                hechos[m["id"]] = [codigo, int(time.time() * 1000)]
+                intentos.pop(m["id"], None)
+                print(f"Stock: Excel enviado a la app de compras (HTTP {codigo}).")
+            else:
+                intentos[m["id"]] = {"n": it["n"] + 1, "t": time.time(), "c": codigo}
+                print(f"::warning::Stock: la app de compras respondió HTTP {codigo}; se reintenta.")
+            cambio = True
+            break
+    if len(hechos) > 200:
+        st["hechos"] = dict(sorted(hechos.items(), key=lambda kv: kv[1][1])[-150:])
+    return cambio
+
+
 def avisar_celular(estado, nuevos):
     """Aviso al celular por cada correo nuevo recibido, con la cantidad de no leídos para la burbuja."""
     import push
@@ -1550,6 +1611,11 @@ def una_vuelta(estado, clave, rapido):
     t2 = time.time()
     analizados = analizar_pendientes(estado)
     print(f"  tiempos: Zoho {t1 - t0:.0f} s · estilo {t2 - t1:.0f} s · resúmenes {time.time() - t2:.0f} s")
+    try:
+        if stock_a_webhook(estado, clave):
+            estado["_cambio_otro"] = True
+    except Exception as e:
+        print(f"::warning::Stock: {str(e)[:200]}")
     try:
         if facturas_onedrive(estado, clave, hasta=time.time() + 60):
             estado["_cambio_otro"] = True

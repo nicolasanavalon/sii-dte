@@ -109,6 +109,8 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           CORREO_TELEGRAM: "0"   # avisos de correo nuevo: solo en el iPhone (app), no por Telegram
           GH_TOKEN_ENVIO: ${{ secrets.GH_TOKEN_ENVIO }}
+          STOCK_WEBHOOK_URL: ${{ secrets.STOCK_WEBHOOK_URL }}       # app de compras: recibe el Excel del stock diario
+          STOCK_WEBHOOK_TOKEN: ${{ secrets.STOCK_WEBHOOK_TOKEN }}
           GROQ_MODELO: ${{ vars.GROQ_MODELO }}
           CORREO_DIAS_INICIALES: ${{ vars.CORREO_DIAS_INICIALES }}
           CORREO_MAX_POR_CORRIDA: ${{ vars.CORREO_MAX_POR_CORRIDA }}

@@ -755,7 +755,7 @@ function pintarCorreo(){
       <div class="muted small fecha-msg">${fmtF(m.fecha)}</div>
     </div>
     ${m.archivos.length ? `<div class="adjs">${m.archivos.map((f, i) => `<button class="adj" data-adj="${i}" aria-expanded="${adjAbierto === i}"><span class="ext">${esc(ext(f.nombre))}</span><span class="adj-n">${esc(f.nombre)}</span><span class="muted">${kb(f.tamano)}</span></button>`).join("")}</div>
-      ${adjAbierto !== null && m.archivos[adjAbierto] ? panelAdjunto(m, adjAbierto, terms) : ""}${estadoOD(m)}` : ""}
+      ${adjAbierto !== null && m.archivos[adjAbierto] ? panelAdjunto(m, adjAbierto, terms) : ""}${estadoOD(m)}${estadoStock(m)}` : ""}
     ${borrador && borrador.id === m.id ? (borrador.oculto ? '<button class="btn seguir-escribiendo" data-r="seguir">✏️ Seguir escribiendo tu respuesta</button>' : redactor()) : ""}
     ${h.resumen || a.resumen ? `<details class="resumen"><summary><h3>✨ ${hilo.length > 1 ? "Resumen de la conversación" : "Resumen"}</h3></summary><p>${esc(h.resumen || a.resumen)}</p>
       ${(h.puntos_clave || []).length ? `<ul>${h.puntos_clave.map(x => `<li>${esc(x)}</li>`).join("")}</ul>` : ""}
@@ -1857,6 +1857,12 @@ function pendientesOD(){
     (out[x.clave] ||= { prov: x.prov, archivos: [] }).archivos.push(x.nombre);
   }
   return out;
+}
+function estadoStock(m){
+  const st = D.stock || {}, h = (st.hechos || {})[m.id], i = (st.intentos || {})[m.id];
+  if (h) return `<p class="od-ok">📤 Excel enviado a la app de compras${h[0] === 200 ? " (ya lo tenía)" : ""}.</p>`;
+  if (i) return `<p class="od-ok">📤 Enviando el Excel a la app de compras… (respondió ${i.c || "sin conexión"}; se reintenta solo)</p>`;
+  return "";
 }
 function estadoOD(m){
   const h = (OD().hechos || {})[m.id] || [], cola = (OD().cola || []).filter(x => x.id === m.id);
