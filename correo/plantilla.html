@@ -135,6 +135,10 @@ header{display:flex; flex-wrap:wrap; align-items:center; justify-content:space-b
 .od .prov{display:flex; flex-direction:column; gap:6px; padding:10px; border:1px solid var(--line); border-radius:10px}
 .od-num{background:var(--alta); color:#fff; border-radius:99px; padding:0 6px; font-size:11px; margin-left:4px}
 .od-ok{font-size:13px; color:var(--muted); margin:6px 0 0}
+.estrella{cursor:pointer; color:#b9bfcc; font-size:17px; line-height:1; padding:0 2px 0 6px; user-select:none}
+.estrella.on{color:#f2b01e}
+.row .r1{display:flex; align-items:baseline}
+.row .r1 .when{margin-left:auto}
 .row .avatar.mini, .row .clip{display:none}
 /* App en la pantalla de inicio del iPhone: el iPhone difumina la franja de arriba; el contenido parte más abajo. */
 @media (display-mode: standalone) and (max-width:860px){ .app{padding-top:calc(env(safe-area-inset-top, 0px) + 34px)} }
@@ -424,6 +428,36 @@ function marcarNoLeido(id){
 const PEND = (() => { try { const p = JSON.parse(localStorage.getItem("correo_pend_leidos") || "null"); if (p) return p; } catch(e) {}
   const p = {}; for (const id of LEIDOS) p[id] = [Date.now(), 0]; return p; })();
 function guardarPend(){ try { localStorage.setItem("correo_pend_leidos", JSON.stringify(PEND)); localStorage.setItem("correo_pend_noleidos", JSON.stringify(NL)); } catch(e) {} }
+/* ---------- Estrellas (seguimiento): se guardan en los datos, así se ven igual en el celular y en el computador ---------- */
+const ESTR = (() => { try { return JSON.parse(localStorage.getItem("correo_estrellas_pend") || "{}") || {}; } catch(e) { return {}; } })();
+function esEstrella(id){
+  const l = ESTR[id], srv = !!((D && D.estrellas) || {})[id];
+  if (l && (l[0] === srv || Date.now() - l[1] > 15 * 60000)) { delete ESTR[id]; try { localStorage.setItem("correo_estrellas_pend", JSON.stringify(ESTR)); } catch(e) {} return srv; }
+  return l ? l[0] : srv;
+}
+function estrellados(){ const ids = new Set(Object.keys((D && D.estrellas) || {})); for (const [id, [on]] of Object.entries(ESTR)) on ? ids.add(id) : ids.delete(id); return [...ids].filter(esEstrella); }
+async function alternarEstrella(id){
+  const on = !esEstrella(id), m = MSGS.find(x => x.id === id) || HISTORIAL.porId[id];
+  ESTR[id] = [on, Date.now()]; try { localStorage.setItem("correo_estrellas_pend", JSON.stringify(ESTR)); } catch(e) {}
+  if (m) ESTR_SNAP[id] = m;
+  pintarFiltros(); pintarLista(); pintarCorreo();
+  const snap = m ? { s: m.asunto, de: m.de, dn: m.de_nombre || "", f: m.fecha, c: m.cuenta || "", ci: m.cuenta_id || "", e: !!m.enviado,
+    pa: (m.para || []).slice(0, 3), cf: m.carpeta_nombre || "" } : {};
+  try { await pedidoOD({ modo: "estrella", id, on, snap }); }
+  catch(e) { delete ESTR[id]; try { localStorage.setItem("correo_estrellas_pend", JSON.stringify(ESTR)); } catch(_) {} aviso("No se pudo guardar la estrella: " + esc(e.message), "mal", 6000); pintarFiltros(); pintarLista(); pintarCorreo(); }
+}
+const ESTR_SNAP = {};
+// Destacados que ya no están en la bandeja (antiguos): se muestran con los datos guardados junto a la estrella.
+function destacadoAntiguo(id){
+  if (HISTORIAL.porId[id]) return HISTORIAL.porId[id];
+  if (ESTR_SNAP[id]) return ESTR_SNAP[id];
+  const x = ((D && D.estrellas) || {})[id]; if (!x) return null;
+  const h = { id, hist: true, asunto: x.s || "(sin asunto)", de: x.de || "", de_nombre: x.dn || "", fecha: x.f || 0, cuenta: x.c || "", cuenta_id: x.ci || "",
+    enviado: !!x.e, para: x.pa || [], cc: [], archivos: [], vista_previa: "", carpeta_nombre: x.cf || "", hilo: "hist-" + id, analisis: null };
+  indexar(h); HISTORIAL.porId[id] = h; return h;
+}
+const estrellaBtn = id => `<span class="estrella${esEstrella(id) ? " on" : ""}" role="button" tabindex="0" data-estrella="${esc(id)}" aria-label="${esEstrella(id) ? "Quitar estrella" : "Destacar con estrella"}" title="${esEstrella(id) ? "Quitar estrella" : "Destacar (seguimiento)"}">${esEstrella(id) ? "★" : "☆"}</span>`;
+
 let tLeidos = null;
 function programarLeidos(ms){ clearTimeout(tLeidos); tLeidos = setTimeout(sincLeidos, ms); }
 async function sincLeidos(){
@@ -507,8 +541,9 @@ function pintarFiltros(){
   const nEnv = MSGS.filter(m => (!cuentaSel || m.cuenta === cuentaSel) && m.enviado).length;
   $("#carpetas").innerHTML = [["entrada", "📥", "Bandeja de entrada", nNoLeidos ? ` <b class="nl-n">(${nNoLeidos})</b>` : ""], ["enviados", "📤", "Enviados", ` <span class="muted pc">${nEnv}</span>`]]
     .map(([k, ic, t, n]) => `<button role="tab" data-carpeta="${k}" aria-pressed="${carpeta === k}" aria-selected="${carpeta === k}" title="${t}">${ic}<span class="pc"> ${t}</span>${n}</button>`).join("");
-  const fs = carpeta === "enviados" ? [["todos","Todos"],["adjuntos","Con adjuntos"]]
-    : [["todos","Todos"],["noleidos",`No leídos${nNoLeidos ? " (" + nNoLeidos + ")" : ""}`],["adjuntos","Con adjuntos"]];
+  const nEst = estrellados().filter(id => { const m = MSGS.find(x => x.id === id) || destacadoAntiguo(id); return m && (!cuentaSel || m.cuenta === cuentaSel); }).length;
+  const fs = carpeta === "enviados" ? [["todos","Todos"],["estrella",`⭐<span class="pc"> Destacados</span>${nEst ? " (" + nEst + ")" : ""}`],["adjuntos","Con adjuntos"]]
+    : [["todos","Todos"],["noleidos",`No leídos${nNoLeidos ? " (" + nNoLeidos + ")" : ""}`],["estrella",`⭐<span class="pc"> Destacados</span>${nEst ? " (" + nEst + ")" : ""}`],["adjuntos","Con adjuntos"]];
   if (!fs.some(([k]) => k === filtro)) filtro = "todos";
   let h = fs.map(([k,t]) => `<button class="chip" data-f="${k}" aria-pressed="${filtro === k}">${t}</button>`).join("");
   $("#filtros").innerHTML = h;
@@ -540,6 +575,11 @@ function indexar(m){
 const campoDe = m => ({asunto: m._as, de: m._de, para: m._pa, texto: m._tx}[campoBusca] ?? m._idx);
 function visibles(){
   const terms = terminos();
+  if (filtro === "estrella") {     // destacados: de todas las carpetas, también los antiguos
+    return estrellados().map(id => MSGS.find(x => x.id === id) || destacadoAntiguo(id))
+      .filter(m => m && (!cuentaSel || m.cuenta === cuentaSel) && terms.every(t => campoDe(m).includes(t)))
+      .sort((a, b) => b.fecha - a.fecha);
+  }
   const propios = MSGS.filter(m => (!cuentaSel || m.cuenta === cuentaSel) &&
     (terms.length || (carpeta === "enviados" ? m.enviado : !m.enviado)) &&     // al buscar: en todas las carpetas
     (filtro === "todos" || (filtro === "noleidos" && noLeido(m)) || (filtro === "adjuntos" && m.archivos.length)) &&
@@ -628,7 +668,7 @@ function fila(m, terms = []){
   const dir = m.enviado ? (m.para[0] || "") : m.de;
   return `<button class="row${noLeido(m) ? " nl" : ""}${terms.length ? " con-busqueda" : ""}${m.hist ? " hist" : ""}" data-m="${esc(m.id)}" aria-current="${abierto === m.id}">
     <span class="avatar mini" style="--h:${tono(dir)}" aria-hidden="true">${esc(iniciales(m.enviado ? dir : (m.de_nombre || m.de)))}</span>
-    <div class="r1"><span class="who">${resaltar(quien, terms)}</span><span class="when">${fmtL(m.fecha)}</span></div>
+    <div class="r1"><span class="who">${resaltar(quien, terms)}</span><span class="when">${fmtL(m.fecha)}</span>${m.local ? "" : estrellaBtn(m.id)}</div>
     <div class="subj"><span class="subj-t">${resaltar(m.asunto, terms)}</span>${m.archivos.length ? '<span class="clip" aria-label="con adjuntos">📎</span>' : ""}</div>
     <div class="snip">${fragmento(m, terms)}</div>
     <div class="tags">${m.hist ? `<span class="tag hist">📁 historial${m.carpeta_nombre ? " · " + esc(m.carpeta_nombre) : ""}</span>` : ""}${m.local ? (m.estadoLocal === "enviando" ? '<span class="tag acc">enviando…</span>' : '<span class="tag ok">✓ enviado</span>') : m.enviado ? '<span class="tag ok">enviado</span>' : ""}${m.boletin ? `<span class="tag">${esc(m.carpeta_nombre || "Newsletter")}</span>` : ""}${m.archivos.length ? `<span class="tag acc">📎 ${m.archivos.length}</span>` : ""}${n > 1 ? `<span class="tag">${n} en la conversación</span>` : ""}${CUENTAS.length > 1 ? `<span class="tag">${esc(etiqueta(m.cuenta))}</span>` : ""}${(m.analisis || {}).importancia === "alta" && !m.enviado ? '<span class="tag alta">importante</span>' : ""}</div>
@@ -638,7 +678,7 @@ function fila(m, terms = []){
 function pintarLista(){
   const terms = terminos(), ms = visibles();
   const nh = ms.filter(m => m.hist).length;
-  $("#count").textContent = busca ? `${ms.length - nh} correo${ms.length - nh === 1 ? "" : "s"} con "${busca}"` + (nh ? ` · ${nh} más en el historial` : HISTORIAL.cargando ? " · buscando en el historial…" : HISTORIAL.error ? " · " + HISTORIAL.error : "") : `${carpeta === "enviados" ? "Enviados" : "Bandeja de entrada"} · ${ms.length} correo${ms.length === 1 ? "" : "s"}`;
+  $("#count").textContent = busca ? `${ms.length - nh} correo${ms.length - nh === 1 ? "" : "s"} con "${busca}"` + (nh ? ` · ${nh} más en el historial` : HISTORIAL.cargando ? " · buscando en el historial…" : HISTORIAL.error ? " · " + HISTORIAL.error : "") : `${filtro === "estrella" ? "⭐ Destacados (seguimiento)" : carpeta === "enviados" ? "Enviados" : "Bandeja de entrada"} · ${ms.length} correo${ms.length === 1 ? "" : "s"}`;
   $("#rows").innerHTML = ms.slice(0, limite).map(m => fila(m, terms)).join("") +
     (ms.length > limite ? `<button class="more" data-more>Mostrar más (${ms.length - limite} restantes)</button>` : "") +
     (ms.length ? "" : `<p class="vacio">No hay correos que coincidan.</p>`);
@@ -688,7 +728,7 @@ function pintarCorreo(){
   const cargandoCuerpo = m && m.cuerpo && m.tiene_html && CUERPOS[m.id] === "cargando";
   if (!m && HISTORIAL.porId[abierto]) {
     const h = HISTORIAL.porId[abierto], pidiendo = pedidosTraer[h.id];
-    $("#read").innerHTML = `<div class="readbar"><button class="back" data-back>← Volver a la lista</button></div>
+    $("#read").innerHTML = `<div class="readbar"><button class="back" data-back>← Volver a la lista</button><div class="actions"><button class="btn sec" data-estrella="${esc(h.id)}">${esEstrella(h.id) ? "★ Destacado" : "☆ Destacar"}</button></div></div>
       <h2 class="asunto">${esc(h.asunto)}</h2>
       <div class="muted small">${h.enviado ? "Para: " + esc(h.para.join(", ")) : "De: " + esc(h.de_nombre || h.de) + " &lt;" + esc(h.de) + "&gt;"} · ${esc(fmtF(h.fecha))} · ${esc(etiqueta(h.cuenta))}${h.carpeta_nombre ? " · " + esc(h.carpeta_nombre) : ""}</div>
       <div class="hist-caja"><span class="muted small">📁 Correo antiguo del historial${h.analisis ? " · ✨ analizado por la IA" : ": aún no lo analiza la IA (avanza de a poco)"}.</span>
@@ -706,7 +746,7 @@ function pintarCorreo(){
   const nombre = m.de_nombre || m.de, conHtml = !!m.html && !verTexto;
   $("#read").innerHTML = `<div class="readbar"><button class="back" data-back>← Volver a la lista</button>
       <div class="actions"><button class="btn" data-responder="uno">↩ Responder</button>${(m.cc.length || m.para.length > 1) ? '<button class="btn sec" data-responder="todos">↩ Responder a todos</button>' : ""}<button class="btn sec" data-responder="reenviar">↪ Reenviar</button>${!m.enviado && !m.local ? '<button class="btn sec" data-noleido>✉️ Marcar como no leído</button>' : ""}
-      <button class="btn sec" data-askthread="${esc(m.hilo)}">💬 Preguntar</button>${odConectado() && m.archivos.length && !m.local ? '<button class="btn sec" data-subirod>☁️ Subir a OneDrive</button>' : ""}</div></div>
+      <button class="btn sec" data-askthread="${esc(m.hilo)}">💬 Preguntar</button>${m.local ? "" : `<button class="btn sec" data-estrella="${esc(m.id)}">${esEstrella(m.id) ? "★ Destacado" : "☆ Destacar"}</button>`}${odConectado() && m.archivos.length && !m.local ? '<button class="btn sec" data-subirod>☁️ Subir a OneDrive</button>' : ""}</div></div>
     <h2 class="asunto">${resaltar(m.asunto, terms)}</h2>
     <div class="remite">
       <span class="avatar" style="--h:${tono(m.de)}">${esc(iniciales(nombre))}</span>
@@ -1714,7 +1754,7 @@ function irA(v){
   if (v === "preguntar") { pintarCtx(); $("#qAsk").focus(); }
 }
 document.addEventListener("click", ev => {
-  const t = ev.target.closest("[data-v],[data-m],[data-f],[data-cu],[data-back],[data-more],[data-askthread],[data-noctx],[data-sug],[data-responder],[data-r],[data-adj],[data-vertexto],[data-ver],[data-bajar],[data-nuevo],[data-recuperar],[data-noleido],[data-hoja],[data-quitaradj],[data-carpeta],[data-zoomxls],[data-traer],[data-cerraravance],[data-subirod],[data-od]");
+  const t = ev.target.closest("[data-v],[data-m],[data-f],[data-cu],[data-back],[data-more],[data-askthread],[data-noctx],[data-sug],[data-responder],[data-r],[data-adj],[data-vertexto],[data-ver],[data-bajar],[data-nuevo],[data-recuperar],[data-noleido],[data-hoja],[data-quitaradj],[data-carpeta],[data-zoomxls],[data-traer],[data-cerraravance],[data-subirod],[data-od],[data-estrella]");
   if (!t) return;
   if (t.dataset.adj !== undefined) { const i = +t.dataset.adj; leerBorrador(); adjAbierto = adjAbierto === i ? null : i; pintarCorreo(); return; }
   if (t.dataset.ver !== undefined || t.dataset.bajar !== undefined) { const mm = MSGS.find(x => x.id === abierto); if (mm) abrirAdjunto(mm, +(t.dataset.ver ?? t.dataset.bajar), t.dataset.ver !== undefined); return; }
@@ -1722,6 +1762,7 @@ document.addEventListener("click", ev => {
   if (t.dataset.carpeta) { carpeta = t.dataset.carpeta; limite = 150; abierto = null; pintarFiltros(); pintarLista(); pintarCorreo(); if (innerWidth <= 860) scrollTo(0, 0); return; }
   if ("cerraravance" in t.dataset) { $("#panelAvance").hidden = true; return; }
   if ("od" in t.dataset) { accionOD(t.dataset.od, t); return; }
+  if (t.dataset.estrella) { ev.preventDefault(); ev.stopPropagation(); alternarEstrella(t.dataset.estrella); return; }
   if ("subirod" in t.dataset) { const mo = MSGS.find(x => x.id === abierto); if (!mo) return; t.disabled = true;
     pedidoOD({ modo: "onedrive_subir", id: mo.id }).then(() => { odEsperando[mo.id] = Date.now(); pintarCorreo();
     aviso("☁️ Pedido enviado: en 1 o 2 minutos las facturas quedan en OneDrive (si un proveedor es nuevo, te pregunto la carpeta en ☁️ OneDrive).", "bien", 8000); }).catch(e => { t.disabled = false; aviso(esc(e.message), "mal", 8000); }); return; }
