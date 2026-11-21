@@ -1370,7 +1370,7 @@ def stock_a_webhook(estado, clave):
     if not (url.startswith("https://") and token and ADJ_DIR):
         return False
     st = estado.setdefault("stock", {})
-    st.setdefault("desde_ms", int((time.time() - 86400) * 1000))     # al activarlo: también el de las últimas 24 h
+    st.setdefault("desde_ms", int(time.time() * 1000))     # desde que se activa (los anteriores ya se cargaron a mano)
     hechos, intentos, cambio = st.setdefault("hechos", {}), st.setdefault("intentos", {}), False
     for m in sorted(estado["mensajes"].values(), key=lambda m: m["fecha"]):
         if m["fecha"] < st["desde_ms"] or m["id"] in hechos or not _es_stock(m):
