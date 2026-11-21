@@ -1179,6 +1179,14 @@ def recoger_suscripciones(estado, clave):
             p = cripto.descifrar(json.loads(z.read("trozo.txt").decode()), clave)
             if p.get("modo") == "traer":
                 cambio = bool(traer_pedidos(estado, [str(x) for x in p.get("ids", [])])) or cambio
+            if p.get("modo") == "estrella" and p.get("id"):
+                est = estado.setdefault("estrellas", {})
+                if p.get("on"):
+                    snap = {k: v for k, v in (p.get("snap") or {}).items() if k in ("s", "de", "dn", "f", "c", "ci", "e", "pa", "cf")}
+                    est[str(p["id"])] = {**snap, "t": int(time.time() * 1000)}
+                else:
+                    est.pop(str(p["id"]), None)
+                cambio = True
             if str(p.get("modo", "")).startswith("onedrive_"):
                 pedido_onedrive(estado, p)
                 cambio = True
