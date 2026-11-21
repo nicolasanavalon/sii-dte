@@ -1687,7 +1687,7 @@ def archivar(clave, minutos):
             (arch_dir / "progreso.json").write_text(json.dumps(cripto.cifrar(prog, clave)), encoding="utf-8")
             sha = lambda f: hashlib.sha1((arch_dir / f).read_bytes()).hexdigest()[:16] if (arch_dir / f).exists() else ""
             (arch_dir / "arch_version.json").write_text(json.dumps({
-                "h": sha("historial.json"), "ar": sha("archivo.json"), "ms": int(time.time() * 1000),
+                "h": sha("historial.json"), "ar": sha("busqueda.json") or sha("archivo.json"), "ms": int(time.time() * 1000),
                 "a": cripto.cifrar({"cuentas": av, "t": int(time.time() * 1000)}, clave)}))
             if env("CORREO_GUARDAR"):
                 subprocess.run(["bash", env("CORREO_GUARDAR")], check=False)

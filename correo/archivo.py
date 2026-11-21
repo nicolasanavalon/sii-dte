@@ -17,6 +17,7 @@ import cripto
 ARCH = {"c": {}, "h": {}}     # c: id -> {r, i, tx, h, t}; h: hilo -> {resumen, puntos_clave}
 _cambio = False
 _ultimo_guardado = 0.0
+TX_BUSQUEDA = 300             # caracteres de texto por correo en la versión liviana para buscar (busqueda.json)
 TX = 700                      # caracteres de texto que se guardan por correo (para buscar y preguntar)
 
 SISTEMA = """Eres el asistente de correo de Nicolás (Anasep Restaurant / restaurante Platón; también trabaja con Gary
@@ -46,9 +47,18 @@ def cargar(clave):
 def guardar(clave, cada=300):
     global _cambio, _ultimo_guardado
     a = _archivo()
-    if not (a and _cambio) or time.time() - _ultimo_guardado < cada:
+    if not a or time.time() - _ultimo_guardado < cada:
+        return False
+    liviano = a.with_name("busqueda.json")
+    if not (_cambio or not liviano.exists()):
         return False
     a.write_text(json.dumps(cripto.cifrar(ARCH, clave)), encoding="utf-8")
+    # Versión LIVIANA para buscar desde la página (el archivo completo pesa demasiado para el celular):
+    # por correo [resumen, inicio del texto, conversación]; por conversación [resumen, puntos clave].
+    liviano.write_text(json.dumps(cripto.cifrar({
+        "c": {i: [c.get("r") or "", (c.get("tx") or "")[:TX_BUSQUEDA], c.get("h") or ""] for i, c in ARCH["c"].items()},
+        "h": {h: [str(x.get("resumen") or "")[:700], [str(p)[:200] for p in (x.get("puntos_clave") or [])[:6]]]
+              for h, x in ARCH["h"].items()}}, clave)), encoding="utf-8")
     _cambio, _ultimo_guardado = False, time.time()
     return True
 

@@ -562,15 +562,17 @@ async function cargarHistorial(){
   HISTORIAL.cargando = true; pintarLista();
   try {
     const crudo = await abrirCaja(await deDatos("historial.json", "correo-archivo"), CLAVE);
+    // Versión liviana del archivo analizado (el archivo completo es demasiado grande y cerraba la página en el celular).
     let arch = {c: {}, h: {}};
-    try { arch = await abrirCaja(await deDatos("archivo.json", "correo-archivo"), CLAVE); } catch(e) {}
-    HISTORIAL.hilos = arch.h || {};
+    try { arch = await abrirCaja(await deDatos("busqueda.json", "correo-archivo"), CLAVE); } catch(e) {}
+    HISTORIAL.hilos = {};
+    for (const [k, x] of Object.entries(arch.h || {})) HISTORIAL.hilos[k] = {resumen: x[0], puntos_clave: x[1] || []};
     HISTORIAL.lista = crudo.map(e => { const de = correosDe(e.de)[0] || e.de, h = {
       id: e.i, hist: true, cuenta_id: e.a, cuenta: e.c, carpeta: e.f, carpeta_nombre: e.fn, enviado: !!e.e, fecha: e.t,
       de, de_nombre: e.dn || String(e.de || "").replace(/<[^>]*>/g, "").replace(/"/g, "").trim(), para: correosDe(e.pa), cc: correosDe(e.cc),
       asunto: e.s || "(sin asunto)", vista_previa: e.r || "", archivos: [], adj: !!e.j, hilo: "hist-" + e.i, analisis: null };
       const a = (arch.c || {})[e.i];
-      if (a) { h.texto = a.tx || ""; h.hilo_arch = a.h; if (a.r) { h.analisis = {resumen: a.r, importancia: a.i}; h.vista_previa = a.r; } }
+      if (a) { h.texto = a[1] || ""; h.hilo_arch = a[2]; if (a[0]) { h.analisis = {resumen: a[0]}; h.vista_previa = a[0]; } }
       indexar(h); return h; }).sort((a, b) => b.fecha - a.fecha);
     HISTORIAL.porId = Object.fromEntries(HISTORIAL.lista.map(h => [h.id, h]));
     HISTORIAL.version = v ? v.h : ""; HISTORIAL.varchivo = v ? v.ar : "";
