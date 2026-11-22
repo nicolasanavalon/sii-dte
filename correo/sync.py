@@ -1354,13 +1354,18 @@ def _post_archivo(url, token, nombre, datos):
               "Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet\r\n\r\n").encode() \
         + datos + f"\r\n--{limite}--\r\n".encode()
     req = urllib.request.Request(url, data=cuerpo, method="POST", headers={
-        "Authorization": "Bearer " + token, "Content-Type": f"multipart/form-data; boundary={limite}"})
+        "Authorization": "Bearer " + token, "Content-Type": f"multipart/form-data; boundary={limite}",
+        # Cloudflare (delante de la app) bloquea la firma por defecto de Python ("Python-urllib": error 1010).
+        "User-Agent": "BandejaZoho-vigilante/1.0", "Accept": "application/json"})
     try:
         with urllib.request.urlopen(req, timeout=90) as r:
             return r.status
     except urllib.error.HTTPError as e:
+        cuerpo = e.read()[:200].decode("utf-8", "replace").replace("\n", " ")
+        print(f"::warning::Stock: respuesta {e.code} · server={e.headers.get('Server')} · cf-ray={e.headers.get('CF-Ray')} · {cuerpo}")
         return e.code
-    except Exception:
+    except Exception as e:
+        print(f"::warning::Stock: sin conexión con la app de compras ({type(e).__name__}).")
         return 0
 
 
