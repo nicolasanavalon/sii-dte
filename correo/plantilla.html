@@ -1313,13 +1313,13 @@ function ejemplosEstilo(para, max = 3800){
   }
   return out;
 }
-function guiaEstilo(para, maxEjemplos = 3800){
+function guiaEstilo(para, maxEjemplos = 3800, mejorando = false){
   const p = (D.estilo || {}).perfil, ej = ejemplosEstilo(para, maxEjemplos), L = x => Array.isArray(x) ? x.filter(Boolean).join(" · ") : (x || "");
-  let g = `\nESTILO: escribe EXACTAMENTE como escribe Nicolás. La meta es que el destinatario no note que no lo escribió él: mismas palabras, mismo largo, mismo tono, mismos saludos y despedidas, misma puntuación. Nada de frases de plantilla o de IA ("Espero que este correo te encuentre bien", "Quedo atento a cualquier consulta", "No dudes en contactarme") si él no las usa.`;
+  // Al mejorar un borrador suyo, el estilo solo sirve para el tono: el CONTENIDO y el LARGO son los de su borrador.
+  let g = mejorando ? `\nESTILO (solo como referencia de tono, saludos y puntuación; el contenido y el largo los manda SU borrador): que siga sonando a Nicolás.` : `\nESTILO: escribe EXACTAMENTE como escribe Nicolás. La meta es que el destinatario no note que no lo escribió él: mismas palabras, mismo largo, mismo tono, mismos saludos y despedidas, misma puntuación. Nada de frases de plantilla o de IA ("Espero que este correo te encuentre bien", "Quedo atento a cualquier consulta", "No dudes en contactarme") si él no las usa.`;
   if (p) g += `\nCÓMO ESCRIBE NICOLÁS (analizado de sus correos enviados):
 - En general: ${L(p.resumen)}
-- Largo: ${L(p.largo)}
-- Saludos que usa: ${L(p.saludos)}
+${mejorando ? "" : `- Largo: ${L(p.largo)}\n`}- Saludos que usa: ${L(p.saludos)}
 - Despedidas que usa: ${L(p.despedidas)}
 - Firma: ${L(p.firma) || "(la de sus ejemplos)"}
 - Trato: ${L(p.trato)}
@@ -1328,8 +1328,8 @@ function guiaEstilo(para, maxEjemplos = 3800){
 - Puntuación y forma: ${L(p.puntuacion)}
 - Expresiones suyas: ${L(p.expresiones)}
 - Según a quién escribe: ${L(p.segun_destinatario)}
-- NUNCA hace: ${L(p.evitar)}`;
-  if (ej.length) g += `\nCORREOS REALES ESCRITOS POR NICOLÁS (imita su forma de escribir; NO copies su contenido ni sus datos):\n${ej.join("\n\n")}`;
+${mejorando ? "" : `- NUNCA hace: ${L(p.evitar)}`}`;
+  if (ej.length && !mejorando) g += `\nCORREOS REALES ESCRITOS POR NICOLÁS (imita su forma de escribir; NO copies su contenido ni sus datos):\n${ej.join("\n\n")}`;
   return g;
 }
 
@@ -1356,15 +1356,30 @@ async function sugerir(m){
 async function mejorar(m){
   leerBorrador(); const [nota, cola] = partes(borrador.texto); if (!nota.trim()) return;
   borrador.ocupado = "la IA está mejorando tu redacción…"; borrador.obs = null; pintarCorreo();
+  const palabras = t => (String(t).match(/[\p{L}\p{N}$]+/gu) || []).length;
+  // Datos (números, montos) del borrador: tienen que seguir estando todos.
+  const numeros = t => (String(t).match(/\d[\d.,]*/g) || []).map(x => x.replace(/[.,]+$/, ""));
+  const faltan = t => { const r = numeros(t); return numeros(nota).filter(x => !r.includes(x)); };
+  const sistema = REGLAS_BASE + guiaEstilo(borrador.para, 0, true) + `
+TAREA: CORREGIR el BORRADOR de Nicolás. NO es un resumen. PROHIBIDO acortar, resumir, condensar o eliminar.
+- Conserva TODAS sus frases, ideas, argumentos, reclamos, explicaciones, matices y su intensidad (si está molesto o es enfático, se mantiene).
+- Conserva todos los datos: montos, fechas, números, nombres, compromisos y pedidos.
+- Solo: corrige ortografía, tildes, puntuación y concordancia; separa en párrafos si ayuda; arregla frases enredadas para que se entiendan, cambiando lo mínimo.
+- El resultado debe tener prácticamente el MISMO LARGO que el borrador (nunca más corto).
+- No agregues información ni frases de cortesía nuevas; si falta saludo o despedida, agrégalos como los usa él.
+Devuelve SOLO el texto corregido, sin comentarios.`;
+  const usuario = (m ? `Contexto (correo de referencia, solo para entender; NO lo resumas ni lo copies):\n${textoHilo(HILOS[m.hilo].slice(-1), 1200)}\n\n` : "") + `BORRADOR DE NICOLÁS (asunto: ${borrador.asunto}), ${palabras(nota)} palabras:\n${nota}`;
   try {
-    const t = await groq(REGLAS_BASE + guiaEstilo(borrador.para, 1400) + `
-Mejora el BORRADOR de Nicolás SIN cambiar su forma de escribir: corrige ortografía, tildes y puntuación, ordena lo que esté confuso y deja claro lo que pide o informa.
-Debe seguir sonando a él (su tono, sus palabras, sus expresiones, su largo): no lo vuelvas formal, rebuscado ni genérico, y no le agregues frases de cortesía que él no usa.
-Mantén EXACTAMENTE la intención y todos los datos (montos, fechas, números, nombres, compromisos): no agregues información nueva ni quites ninguna.
-Si falta saludo o despedida, agrégalos como los usa él. Devuelve SOLO el texto reescrito, sin comentarios.`,
-      (m ? `Contexto (correo de referencia, solo para entender):\n${textoHilo(HILOS[m.hilo].slice(-1), 1500)}\n\n` : "") + `BORRADOR DE NICOLÁS (asunto: ${borrador.asunto}):\n${nota}`, false, () => {}, true);
-    borrador.anterior = borrador.texto; borrador.texto = t + cola;
-    borrador.obs = '<span class="ok">✓ Texto mejorado.</span> <div class="actions"><button class="btn sec" data-r="deshacer">↶ Volver a mi versión</button></div>';
+    let t = await groq(sistema, usuario, false, () => {}, true), ok = palabras(t) >= 0.85 * palabras(nota) && !faltan(t).length;
+    if (!ok) {     // la IA acortó o se comió datos: otra vez, con el modelo más cuidadoso y avisándole qué hizo mal
+      borrador.ocupado = "revisando que no se pierda nada de lo que escribiste…"; pintarCorreo();
+      t = await groq(sistema, usuario + `\n\nATENCIÓN: un intento anterior acortó el texto${faltan(t).length ? " y perdió estos datos: " + faltan(t).join(", ") : ""}. Debe quedar con unas ${palabras(nota)} palabras y con TODO el contenido.`);
+      ok = palabras(t) >= 0.85 * palabras(nota) && !faltan(t).length;
+    }
+    if (ok) {
+      borrador.anterior = borrador.texto; borrador.texto = t + cola;
+      borrador.obs = '<span class="ok">✓ Texto corregido (sin quitar nada).</span> <div class="actions"><button class="btn sec" data-r="deshacer">↶ Volver a mi versión</button></div>';
+    } else borrador.obs = '<p>La IA intentó acortar tu texto, así que lo dejé tal como lo escribiste. Prueba de nuevo o envíalo así.</p>';
   } catch (e) { borrador.obs = `<p>${esc(e.message)}</p>`; }
   borrador.ocupado = ""; pintarCorreo();
 }
