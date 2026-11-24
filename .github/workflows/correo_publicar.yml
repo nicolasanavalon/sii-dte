@@ -41,6 +41,7 @@ jobs:
         run: |
           mkdir -p public/correo
           cp index.html public/index.html
+          cp app/manifest-dte.json app/icono-dte-*.png public/   # la página DTE como app (pantalla de inicio)
           if git clone -q --depth 1 --branch correo-datos "$REPO_URL" "$RUNNER_TEMP/datos"; then
             python3 - "$RUNNER_TEMP/datos/caja.json" <<'PY'
           import json, sys
