@@ -2033,6 +2033,43 @@ async function revisarZoho(manual){
   } catch(e) { sinc(`⚠️ Sin conexión (${e.message}); reintento en 30 s`); }
   buscando = false;
 }
+// Gesto "volver" del celular: deslizar el dedo desde el borde izquierdo hacia la derecha vuelve a la vista anterior
+// (cierra la vista del archivo, o vuelve del correo a la lista, o de Preguntar a Correos), como en las apps del iPhone.
+(() => {
+  let x0 = 0, y0 = 0, activo = false, el = null;
+  const destino = () => {
+    if (!$("#pantalla").hidden) return $("#pantalla");
+    if (document.body.classList.contains("escribiendo")) return null;          // escribiendo un correo: no
+    if (!$("#vPreguntar").hidden) return $("#vPreguntar");
+    if (abierto && innerWidth <= 860) return $("#read");
+    return null;
+  };
+  addEventListener("touchstart", ev => {
+    const t = ev.touches[0]; activo = false;
+    if (ev.touches.length !== 1 || t.clientX > 28) return;
+    el = destino(); if (!el) return;
+    x0 = t.clientX; y0 = t.clientY; activo = true;
+  }, {passive: true});
+  addEventListener("touchmove", ev => {
+    if (!activo) return;
+    const t = ev.touches[0], dx = t.clientX - x0, dy = t.clientY - y0;
+    if (Math.abs(dy) > 40 && Math.abs(dy) > dx) { activo = false; el.style.transform = ""; return; }   // era scroll
+    if (dx > 0) { el.style.transition = "none"; el.style.transform = `translateX(${dx}px)`; }
+  }, {passive: true});
+  addEventListener("touchend", ev => {
+    if (!activo) return; activo = false;
+    const dx = ev.changedTouches[0].clientX - x0;
+    el.style.transition = "transform .18s ease-out";
+    if (dx < 80) { el.style.transform = ""; return; }
+    el.style.transform = "translateX(100%)";
+    setTimeout(() => {
+      el.style.transition = ""; el.style.transform = "";
+      if (!$("#pantalla").hidden) { const b = document.querySelector("[data-cerrarvisor]"); if (b) b.click(); }
+      else if (!$("#vPreguntar").hidden) irA("correos");
+      else { const b = document.querySelector("#read [data-back]"); if (b) b.click(); }
+    }, 170);
+  }, {passive: true});
+})();
 $("#buscarAhora").addEventListener("click", () => { buscando = false; revisarZoho(true); });
 
 // Página nueva publicada (cambios de diseño o funciones): se recarga sola, sin esperar que el celular olvide la antigua.
