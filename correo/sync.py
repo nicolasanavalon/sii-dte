@@ -1410,6 +1410,8 @@ def avisar_celular(estado, nuevos):
     p = estado.get("push") or {}
     lista = [m for m in nuevos if not m.get("enviado") and not m.get("boletin")
              and m["fecha"] >= (time.time() - 6 * 3600) * 1000]
+    if lista and not p.get("subs"):
+        print(f"::warning::Avisos: {len(lista)} correo(s) nuevo(s) pero NINGÚN celular suscrito (hay que apretar 🔔 en la app).")
     if not p.get("subs") or not p.get("llaves") or not lista:
         return
     n = sum(1 for m in estado["mensajes"].values() if not m.get("enviado") and m.get("no_leido"))
@@ -1419,13 +1421,18 @@ def avisar_celular(estado, nuevos):
     else:
         mensajes = [{"titulo": f"{len(lista)} correos nuevos", "n": n, "tag": "varios",
                      "cuerpo": " · ".join((m.get("de_nombre") or m["de"]) for m in lista[:6])}]
-    vigentes = []
+    vigentes, codigos = [], []
     for sub in p["subs"]:
         codigo = 0
         for msg in mensajes:
-            codigo = push.enviar(sub, msg, p["llaves"])
+            try:
+                codigo = push.enviar(sub, msg, p["llaves"])
+            except Exception as e:
+                codigo = 0
+                print(f"::warning::Aviso al celular: error {type(e).__name__}: {str(e)[:120]}")
             if codigo in (404, 410):
                 break
+        codigos.append(codigo)
         if codigo in (404, 410):
             print("Avisos: un celular ya no está suscrito; se quita.")
         else:
@@ -1433,6 +1440,7 @@ def avisar_celular(estado, nuevos):
             if codigo >= 400:
                 print(f"::warning::Aviso al celular no entregado (HTTP {codigo}).")
     p["subs"] = vigentes
+    print(f"Avisos: {len(mensajes)} aviso(s) a {len(codigos)} celular(es) → respuestas {codigos}.")
 
 
 def avanzar_historial(estado, hasta, max_paginas=8):

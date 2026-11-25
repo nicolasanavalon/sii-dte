@@ -594,6 +594,7 @@ function visibles(){
 
 /* ---------- historial completo (correos antiguos): se descarga solo al buscar ---------- */
 const HISTORIAL = { lista: null, cargando: false, version: "", porId: {} };
+const ES_CELULAR = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent) || (navigator.maxTouchPoints > 1 && /Macintosh/.test(navigator.userAgent));
 const correosDe = t => (String(t || "").match(/[^\s<>,;"']+@[^\s<>,;"']+/g) || []).map(x => x.toLowerCase());
 async function cargarHistorial(){
   if (HISTORIAL.cargando) return;
@@ -601,10 +602,12 @@ async function cargarHistorial(){
   if (HISTORIAL.lista && (!v || (v.h === HISTORIAL.version && v.ar === HISTORIAL.varchivo))) return;
   HISTORIAL.cargando = true; pintarLista();
   try {
-    const crudo = await abrirCaja(await deDatos("historial.json", "correo-archivo"), CLAVE);
-    // Versión liviana del archivo analizado (el archivo completo es demasiado grande y cerraba la página en el celular).
-    let arch = {c: {}, h: {}};
-    try { arch = await abrirCaja(await deDatos("busqueda.json", "correo-archivo"), CLAVE); } catch(e) {}
+    // En el celular el índice completo (cientos de miles de correos) no cabe en la memoria y Safari cerraba la página:
+    // ahí se usa el índice liviano (los correos más recientes, sin el texto analizado).
+    let crudo = null, arch = {c: {}, h: {}};
+    if (ES_CELULAR) { try { crudo = await abrirCaja(await deDatos("historial_movil.json", "correo-archivo"), CLAVE); } catch(e) {} }
+    if (!crudo) crudo = await abrirCaja(await deDatos("historial.json", "correo-archivo"), CLAVE);
+    if (!ES_CELULAR) { try { arch = await abrirCaja(await deDatos("busqueda.json", "correo-archivo"), CLAVE); } catch(e) {} }
     HISTORIAL.hilos = {};
     for (const [k, x] of Object.entries(arch.h || {})) HISTORIAL.hilos[k] = {resumen: x[0], puntos_clave: x[1] || []};
     HISTORIAL.lista = crudo.map(e => { const de = correosDe(e.de)[0] || e.de, h = {
@@ -618,6 +621,7 @@ async function cargarHistorial(){
     HISTORIAL.version = v ? v.h : ""; HISTORIAL.varchivo = v ? v.ar : "";
   } catch(e) { HISTORIAL.error = "El historial aún se está armando (el vigilante lo completa de a poco)."; }
   HISTORIAL.cargando = false; pintarLista();
+  if (abierto && !MSGS.some(m => m.id === abierto) && HISTORIAL.porId[abierto]) pintarCorreo();   // correo antiguo que tenías abierto
 }
 let pedidosTraer = {};
 async function traerCompleto(h){
@@ -675,7 +679,24 @@ function fila(m, terms = []){
   </button>`;
 }
 
+// Lo que estabas viendo (búsqueda, filtro, correo abierto) se recuerda: si el teléfono recarga la página
+// (por memoria, al volver a la app o por una versión nueva) vuelves al mismo lugar y no a "todos los correos".
+let vistaLista = false;    // hasta restaurar la vista guardada no se sobrescribe
+function guardarVista(){
+  if (!vistaLista) return;
+  try { localStorage.setItem("correo_vista", JSON.stringify({busca, campoBusca, filtro, carpeta, cuentaSel, abierto, t: Date.now()})); } catch(e) {}
+}
+function restaurarVista(){
+  vistaLista = true;
+  let v = null; try { v = JSON.parse(localStorage.getItem("correo_vista") || "null"); } catch(e) {}
+  if (!v || Date.now() - (v.t || 0) > 30 * 60000) return;
+  busca = v.busca || ""; campoBusca = v.campoBusca || "todo"; filtro = v.filtro || "todos"; carpeta = v.carpeta || "entrada";
+  cuentaSel = v.cuentaSel || ""; abierto = v.abierto || null;
+  $("#busca").value = busca; $("#limpiarBusca").hidden = !busca; try { $("#campoBusca").value = campoBusca; } catch(e) {}
+  if (busca) cargarHistorial();
+}
 function pintarLista(){
+  guardarVista();
   const terms = terminos(), ms = visibles();
   const nh = ms.filter(m => m.hist).length;
   $("#count").textContent = busca ? `${ms.length - nh} correo${ms.length - nh === 1 ? "" : "s"} con "${busca}"` + (nh ? ` · ${nh} más en el historial` : HISTORIAL.cargando ? " · buscando en el historial…" : HISTORIAL.error ? " · " + HISTORIAL.error : "") : `${filtro === "estrella" ? "⭐ Destacados (seguimiento)" : carpeta === "enviados" ? "Enviados" : "Bandeja de entrada"} · ${ms.length} correo${ms.length === 1 ? "" : "s"}`;
@@ -1658,7 +1679,24 @@ async function prepararAvisos(){
   if (!("serviceWorker" in navigator)) return;
   try { registroSW = registroSW || await navigator.serviceWorker.register("sw.js"); } catch(e) { return; }
   const sub = registroSW.pushManager ? await registroSW.pushManager.getSubscription().catch(() => null) : null;
-  if (sub && "Notification" in window && Notification.permission === "granted") b.hidden = true;
+  if (!(sub && "Notification" in window && Notification.permission === "granted")) return;
+  const enServidor = ((D.push || {}).subs || []).some(x => x.endpoint === sub.endpoint);
+  b.hidden = true;
+  // El celular tiene los avisos activos pero el vigilante no tiene su suscripción (se perdió o venció):
+  // se le vuelve a entregar sola, sin que tengas que apretar la campana.
+  if (!enServidor && D._envio && D._envio.token) {
+    let ya = 0; try { ya = +(localStorage.getItem("correo_resub") || 0); } catch(e) {}
+    if (Date.now() - ya < 15 * 60000) return;
+    try { localStorage.setItem("correo_resub", String(Date.now())); } catch(e) {}
+    try { await enviarSuscripcion(sub); } catch(e) {}
+  }
+}
+async function enviarSuscripcion(sub){
+  const gh = D._envio, paquete = await cifrar({ modo: "suscribir", sub: sub.toJSON(), ts: Date.now() });
+  const r = await fetch(`https://api.github.com/repos/${gh.repo}/actions/workflows/correo_trozo.yml/dispatches`, { method: "POST",
+    headers: { "Authorization": "Bearer " + gh.token, "Accept": "application/vnd.github+json" },
+    body: JSON.stringify({ ref: "main", inputs: { id: "trozo-sub" + Math.random().toString(36).slice(2, 10) + "-0", datos: JSON.stringify(paquete) } }) });
+  if (!r.ok) throw new Error("GitHub no aceptó el pedido (" + r.status + ").");
 }
 const b64aBytes = s => { s = s.replace(/-/g, "+").replace(/_/g, "/"); const t = atob(s + "=".repeat((4 - s.length % 4) % 4)); return Uint8Array.from(t, c => c.charCodeAt(0)); };
 $("#avisos").addEventListener("click", async () => {
@@ -1676,11 +1714,7 @@ $("#avisos").addEventListener("click", async () => {
     await navigator.serviceWorker.ready;
     const sub = await registroSW.pushManager.getSubscription() || await registroSW.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64aBytes(D.push.llaves.publica) });
     // Se le entrega la suscripción (cifrada con tu contraseña) al vigilante, que manda los avisos.
-    const gh = D._envio, paquete = await cifrar({ modo: "suscribir", sub: sub.toJSON(), ts: Date.now() });
-    const r = await fetch(`https://api.github.com/repos/${gh.repo}/actions/workflows/correo_trozo.yml/dispatches`, { method: "POST",
-      headers: { "Authorization": "Bearer " + gh.token, "Accept": "application/vnd.github+json" },
-      body: JSON.stringify({ ref: "main", inputs: { id: "trozo-sub" + Math.random().toString(36).slice(2, 10) + "-0", datos: JSON.stringify(paquete) } }) });
-    if (!r.ok) throw new Error("GitHub no aceptó el pedido (" + r.status + ").");
+    await enviarSuscripcion(sub);
     b.hidden = true; ponerBurbuja();
     aviso("✓ Listo: desde el próximo correo te llega el aviso y la burbuja muestra los no leídos.", "bien", 8000);
   } catch(e) { aviso("No se pudieron activar los avisos: " + esc(e.message), "mal", 10000); }
@@ -2012,7 +2046,8 @@ async function revisarVersionPagina(){
     if (!sha || sha === VERSION_PAGINA) return;
     try { if (sessionStorage.getItem("correo_recarga") === sha) return; sessionStorage.setItem("correo_recarga", sha); } catch(e) {}   // una sola vez por versión
     leerBorrador();
-    if (borrador || (document.activeElement && /INPUT|TEXTAREA/.test(document.activeElement.tagName))) {
+    // Si estás buscando, leyendo o escribiendo, no se recarga sola: se ofrece el botón.
+    if (borrador || busca || abierto || (document.activeElement && /INPUT|TEXTAREA/.test(document.activeElement.tagName))) {
       aviso(`Hay una versión nueva de la página. <button class="btn sec" onclick="location.replace(location.pathname + '?v=${sha.slice(0, 10)}')">Actualizar</button>`, "", 0);
     } else location.replace(location.pathname + "?v=" + sha.slice(0, 10));
   } catch(e) {}
@@ -2050,7 +2085,7 @@ async function entrar(clave, recordar){
   D = await abrir(clave); CLAVE = clave;
   if (recordar) ss.set("correo_clave", clave);
   $("#bloqueo").hidden = true; $("#appwrap").hidden = false;
-  construir(); irA("correos"); abrirPendiente();
+  construir(); restaurarVista(); irA("correos"); pintarFiltros(); pintarLista(); pintarCorreo(); abrirPendiente();
   revisarZoho(false);
   prepararAvisos();
 }
