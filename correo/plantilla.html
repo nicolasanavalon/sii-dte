@@ -259,6 +259,11 @@ details.resumen summary{cursor:pointer; list-style:none} details.resumen summary
 .adj-chip{display:inline-flex; align-items:center; gap:6px; border:1px solid var(--line); border-radius:999px; padding:4px 6px 4px 11px; font-size:13px; max-width:100%; overflow-wrap:anywhere}
 .adj-chip button{border:0; background:var(--soft); border-radius:50%; width:22px; height:22px; cursor:pointer; color:var(--muted)}
 .adj-chip button.adj-ver{width:auto; height:auto; border-radius:6px; background:none; color:var(--ink); min-width:0; max-width:320px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+.dictado-estado{margin:0; font-size:14px; color:var(--muted)}
+.dictado-estado.grabando{color:var(--alta); font-weight:600}
+.btn.mic-r.grabando{background:var(--alta); color:#fff}
+.compose-top .mic-r{display:none}
+@media (max-width:860px){ .compose-top .mic-r{display:inline-block} }
 .cc-link{align-self:flex-start; border:0; background:none; color:var(--accent); font:inherit; font-size:13.5px; cursor:pointer; padding:0}
 .compose-top{display:none}
 .seguir-escribiendo{position:sticky; bottom:12px; align-self:center; box-shadow:0 6px 18px rgba(20,26,40,.25)}
@@ -1208,6 +1213,7 @@ function redactor(){
   return `<section class="compose" aria-label="Responder">
     <div class="compose-top">${b.modo === "nuevo" ? '<button class="btn sec" data-r="cancelar">✕</button>' : '<button class="btn sec" data-r="minimizar">↓ Ver correo</button>'}
       <strong>${titulo}${b.ocupado ? " · " + esc(b.ocupado) : ""}</strong>
+      <button class="btn sec mic-r${DICTADO.grabando ? " grabando" : ""}" data-r="dictar" aria-label="Dictar">${DICTADO.grabando ? "⏹" : "🎤"}</button>
       <button class="btn" data-r="enviar" ${b.ocupado || !envio ? "disabled" : ""}>Enviar</button></div>
     <h3>${titulo}${b.ocupado ? " · " + esc(b.ocupado) : ""}</h3>
     ${CUENTAS.length > 1 ? `<label>De <select id="rDe" ${b.modo === "nuevo" ? "" : "disabled"}>${CUENTAS.map(c => `<option value="${esc(c)}" ${c === b.cuenta ? "selected" : ""}>${esc(etiqueta(c))} — ${esc(c)}</option>`).join("")}</select></label>` : ""}
@@ -1221,7 +1227,9 @@ function redactor(){
       <label class="btn sec">📎 Adjuntar archivos<input type="file" id="rArchivos" multiple hidden></label>
       ${(b.nuevos || []).map((f, i) => `<span class="adj-chip"><button type="button" class="adj-ver" data-veradj="${i}" title="Ver ${esc(f.nombre)}">${esImagen(f.nombre) ? `<img class="adj-mini" src="${urlNuevo(f)}" alt="">` : "📄"} ${esc(f.nombre)}</button> <span class="muted">${tamTxt(f.datos.length)}</span><button type="button" data-quitaradj="${i}" aria-label="Quitar ${esc(f.nombre)}">✕</button></span>`).join("")}
     </div>
+    ${DICTADO.estado ? `<p class="dictado-estado ${DICTADO.grabando ? "grabando" : ""}">${esc(DICTADO.estado)}</p>` : ""}
     <div class="actions">
+      <button class="btn sec mic-r${DICTADO.grabando ? " grabando" : ""}" data-r="dictar" ${b.ocupado && !DICTADO.grabando ? "disabled" : ""}>${DICTADO.grabando ? "⏹ Terminar de dictar" : "🎤 Dictar"}</button>
       <button class="btn sec" data-r="sugerir" ${b.ocupado ? "disabled" : ""}>${b.modo === "nuevo" ? "✨ Escribir con IA" : "✨ Sugerir respuesta"}</button>
       <button class="btn sec" data-r="mejorar" ${b.ocupado || !b.texto.trim() ? "disabled" : ""}>✍️ Mejorar redacción</button>
       <button class="btn sec" data-r="revisar" ${b.ocupado || !b.texto.trim() ? "disabled" : ""}>🔍 Revisar datos</button>
@@ -1774,6 +1782,70 @@ $("#avisos").addEventListener("click", async () => {
   } catch(e) { aviso("No se pudieron activar los avisos: " + esc(e.message), "mal", 10000); }
 });
 
+/* ---------- dictar el CORREO: hablas lo que quieres decir, se transcribe y se deja escrito y corregido ---------- */
+const DICTADO = { grabando: false, estado: "" };
+let grabCorreo = null;
+function pintarDictado(estado){ DICTADO.estado = estado || ""; leerBorrador(); pintarCorreo(); }
+async function dictarCorreo(){
+  if (grabCorreo && grabCorreo.state === "recording") { grabCorreo.stop(); return; }
+  if (!navigator.mediaDevices || !window.MediaRecorder) { pintarDictado("Este navegador no permite grabar voz. Usa el micrófono del teclado."); return; }
+  let flujo;
+  try { flujo = await navigator.mediaDevices.getUserMedia({ audio: true }); }
+  catch(e) { pintarDictado("Sin permiso para el micrófono. Actívalo en la configuración del navegador para esta página."); return; }
+  const trozos = [], tipo = ["audio/webm;codecs=opus", "audio/mp4", "audio/webm"].find(t => MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(t));
+  grabCorreo = new MediaRecorder(flujo, tipo ? { mimeType: tipo } : undefined);
+  grabCorreo.ondataavailable = e => { if (e.data && e.data.size) trozos.push(e.data); };
+  let reloj = null;
+  grabCorreo.onstop = async () => {
+    clearInterval(reloj); flujo.getTracks().forEach(t => t.stop()); DICTADO.grabando = false;
+    const blob = new Blob(trozos, { type: grabCorreo.mimeType || tipo || "audio/webm" });
+    if (blob.size < 1500) { pintarDictado("No se escuchó nada. Aprieta 🎤 y habla un poco más."); return; }
+    pintarDictado("Transcribiendo lo que dijiste…");
+    let crudo = "";
+    try { crudo = await transcribir(blob, "Correo dictado por Nicolás (Anasep, restaurante Platón, Banderas Gary): proveedores, facturas, cotizaciones, banderas, pagos, montos en pesos chilenos."); }
+    catch(e) { pintarDictado(e.message); return; }
+    if (!crudo) { pintarDictado("No se entendió; intenta de nuevo."); return; }
+    await pulirDictado(crudo);
+  };
+  grabCorreo.start(); DICTADO.grabando = true;
+  const ini = Date.now(), tope = 5 * 60;
+  const tic = () => { const s = Math.floor((Date.now() - ini) / 1000);
+    if (s >= tope) { grabCorreo.stop(); return; }
+    pintarDictado(`🔴 Escuchando… di lo que quieres escribir y aprieta ⏹ al terminar (${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")})`); };
+  tic(); reloj = setInterval(tic, 1000);
+}
+// El dictado se convierte en el texto del correo: sin muletillas ni repeticiones, corregido y con la forma de la guía,
+// pero con TODO lo que dijiste (no se resume). Si la IA se come algo, queda la transcripción tal cual.
+async function pulirDictado(crudo){
+  leerBorrador(); if (!borrador) return;
+  const m = MSGS.find(x => x.id === borrador.id);
+  const [nota, cola] = partes(borrador.texto), previo = nota.trim();
+  borrador.ocupado = "la IA está escribiendo lo que dictaste…"; pintarDictado("");
+  const numeros = t => (String(t).match(/\d[\d.,]*/g) || []).map(x => x.replace(/[.,]+$/, ""));
+  const palabras = t => (String(t).match(/[\p{L}\p{N}$]+/gu) || []).length;
+  let texto = crudo, aviso_ = "";
+  try {
+    const t = await groq(REGLAS_BASE + guiaEstilo(borrador.para, 0, true) + `
+TAREA: Nicolás DICTÓ por voz lo que quiere escribir en este correo. Conviértelo en el texto del correo, como lo indica la guía en "Del dictado al correo":
+- Quita muletillas y repeticiones del habla ("digamos", "o sea", "cachai", "ya", "a ver", frases que empezó de nuevo) y corrige ortografía, tildes y puntuación.
+- Ordénalo en párrafos cortos. Si no saludó o no se despidió, agrega el saludo y la despedida como indica la guía${previo ? " (OJO: ya hay texto escrito antes; lo dictado va A CONTINUACIÓN, así que NO repitas el saludo)" : ""}.
+- NO resumas ni recortes: conserva TODAS sus ideas, datos (montos, fechas, números, nombres), dudas, pedidos y su tono.
+- No agregues información que no dijo. Si dicta instrucciones como "ponle que…" o "dile que…", escribe eso dirigido al destinatario.
+Devuelve SOLO el texto del correo, sin comentarios.`,
+      (m ? `Contexto (correo que responde, solo para entender):\n${textoHilo(HILOS[m.hilo].slice(-1), 1200)}\n\n` : "") +
+      (previo ? `TEXTO YA ESCRITO (no lo cambies):\n${previo}\n\n` : "") + `DICTADO DE NICOLÁS (transcripción de voz):\n${crudo}`);
+    const faltan = numeros(crudo).filter(x => !numeros(t).includes(x));
+    if (t && palabras(t) >= 0.55 * palabras(crudo) && !faltan.length) texto = t;
+    else aviso_ = "La IA dejó afuera parte de lo que dijiste, así que te dejé la transcripción tal cual para que la revises.";
+  } catch(e) { aviso_ = "No se pudo corregir ahora (" + e.message + "); te dejé la transcripción tal cual."; }
+  borrador.anterior = borrador.texto;
+  borrador.texto = (previo ? previo + "\n\n" : "") + texto.trim() + cola;
+  borrador.ocupado = "";
+  borrador.obs = aviso_ ? `<p>${esc(aviso_)}</p><div class="actions"><button class="btn sec" data-r="deshacer">↶ Deshacer</button></div>`
+    : '<span class="ok">✓ Dictado escrito y corregido.</span> <div class="actions"><button class="btn sec" data-r="deshacer">↶ Deshacer</button><button class="btn sec" data-r="dictar">🎤 Seguir dictando</button></div>';
+  DICTADO.estado = ""; pintarCorreo();
+}
+
 /* ---------- dictar la pregunta: se graba la voz y la transcribe Whisper (gratis, de Groq) ---------- */
 let grabadora = null, trozosVoz = [], relojMic = null;
 function estadoMic(txt, grabando){
@@ -1781,7 +1853,7 @@ function estadoMic(txt, grabando){
   b.setAttribute("aria-label", grabando ? "Detener y transcribir" : "Dictar la pregunta");
   $("#micTxt").hidden = !txt; $("#micTxt").textContent = txt || "";
 }
-async function transcribir(blob){
+async function transcribir(blob, pista = "Pregunta sobre correos de Anasep, Platón y Gary: facturas, pagos, montos, proveedores."){
   const ia = D._ia || {};
   if (!ia.clave) throw new Error("Para dictar falta la clave gratuita de Groq.");
   const ext = /mp4|m4a|aac/.test(blob.type) ? "m4a" : /ogg/.test(blob.type) ? "ogg" : "webm";
@@ -1789,7 +1861,7 @@ async function transcribir(blob){
   for (const modelo of ["whisper-large-v3-turbo", "whisper-large-v3"]) {
     const f = new FormData();
     f.append("file", blob, "pregunta." + ext); f.append("model", modelo); f.append("language", "es");
-    f.append("prompt", "Pregunta sobre correos de Anasep, Platón y Gary: facturas, pagos, montos, proveedores.");
+    f.append("prompt", pista);
     const r = await fetch("https://api.groq.com/openai/v1/audio/transcriptions", { method: "POST",
       headers: { "Authorization": "Bearer " + ia.clave }, body: f }).catch(() => null);
     if (r && r.ok) return ((await r.json()).text || "").trim();
@@ -1884,6 +1956,7 @@ document.addEventListener("click", ev => {
     setTimeout(() => { const e = modo === "reenviar" ? $("#rPara") : $("#rTexto"); if (e) { e.focus(); if (e.id === "rTexto") e.setSelectionRange(0, 0); } }, 0); return; }
   if (t.dataset.r && borrador && (m || borrador.modo === "nuevo")) {
     const a = t.dataset.r; leerBorrador();
+    if (a === "dictar") { dictarCorreo(); return; }
     if (a === "vercc") { borrador.verCc = true; pintarCorreo(); setTimeout(() => $("#rCc") && $("#rCc").focus(), 0); return; }
     if (a === "minimizar") { borrador.oculto = true; pintarCorreo(); return; }
     if (a === "seguir") { borrador.oculto = false; pintarCorreo(); setTimeout(() => $("#rTexto") && $("#rTexto").focus(), 0); return; }
