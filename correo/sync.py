@@ -1620,7 +1620,7 @@ def una_vuelta(estado, clave, rapido):
     avisar(estado, [], nuevos)                       # aviso inmediato, sin esperar el resumen de la IA
     _POR_AVISAR.extend(nuevos)       # se avisa al celular después de guardar los datos (ver vigilar)
     t1 = time.time()
-    estilo = not rapido and actualizar_estilo(estado)
+    estilo = False      # el estilo ya no se aprende de los enviados: se usa la guía de Nicolás (correo/guia_estilo.txt)
     t2 = time.time()
     analizados = analizar_pendientes(estado)
     print(f"  tiempos: Zoho {t1 - t0:.0f} s · estilo {t2 - t1:.0f} s · resúmenes {time.time() - t2:.0f} s")
