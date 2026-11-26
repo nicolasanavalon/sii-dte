@@ -1266,6 +1266,28 @@ document.addEventListener("change", async ev => {
   borrador.estado = total > MAX_ADJ ? `Los adjuntos suman ${tamTxt(total)}; el máximo es 5 MB. Quita alguno.` : ""; borrador.clase = total > MAX_ADJ ? "mal" : "";
   pintarCorreo();
 });
+// Pegar (Ctrl/Cmd + V) una foto o un archivo mientras escribes: queda como ADJUNTO del correo.
+// (Copiada desde una página, un pantallazo o desde el Finder/Explorador.)
+document.addEventListener("paste", async ev => {
+  if (!borrador || !ev.target.closest || !ev.target.closest(".compose")) return;
+  const dt = ev.clipboardData; if (!dt) return;
+  const archivos = [...dt.files].filter(f => f.size > 0);
+  if (!archivos.length) return;
+  const texto = dt.getData("text/plain") || "";
+  if (!texto || (texto.length < 300 && !texto.includes("\n"))) ev.preventDefault();   // solo la imagen (o el nombre del archivo)
+  leerBorrador(); const lista = borrador.nuevos ||= [];
+  const hora = new Date().toTimeString().slice(0, 8).replace(/:/g, "");
+  for (const [i, f] of archivos.entries()) {
+    const base = f.name && f.name !== "image.png" ? f.name : `imagen-pegada-${hora}${archivos.length > 1 ? "-" + (i + 1) : ""}.${(f.type.split("/")[1] || "png").replace("jpeg", "jpg")}`;
+    const g = new File([f], base, {type: f.type});
+    const chica = /^image\//.test(f.type) ? await achicarFoto(g) : null;
+    lista.push(chica || {nombre: base, datos: new Uint8Array(await f.arrayBuffer())});
+  }
+  const total = lista.reduce((t, f) => t + f.datos.length, 0);
+  borrador.estado = total > MAX_ADJ ? `Los adjuntos suman ${tamTxt(total)}; el máximo es 5 MB. Quita alguno.` : ""; borrador.clase = total > MAX_ADJ ? "mal" : "";
+  pintarCorreo();
+  aviso(`📎 ${archivos.length > 1 ? archivos.length + " archivos pegados" : "Imagen pegada"} como adjunto.`, "bien", 3500);
+});
 // Junta los archivos en un solo paquete binario: [largo cabecera][cabecera JSON][archivo1][archivo2]…, cifrado.
 async function paqueteArchivos(lista){
   const cab = new TextEncoder().encode(JSON.stringify(lista.map(f => ({nombre: f.nombre, tam: f.datos.length}))));
