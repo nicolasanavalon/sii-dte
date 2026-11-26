@@ -258,6 +258,8 @@ details.resumen summary{cursor:pointer; list-style:none} details.resumen summary
 .compose .adjuntar label.btn{display:inline-flex; flex-direction:row; color:var(--ink); font-size:14px; cursor:pointer}
 .adj-chip{display:inline-flex; align-items:center; gap:6px; border:1px solid var(--line); border-radius:999px; padding:4px 6px 4px 11px; font-size:13px; max-width:100%; overflow-wrap:anywhere}
 .adj-chip button{border:0; background:var(--soft); border-radius:50%; width:22px; height:22px; cursor:pointer; color:var(--muted)}
+.adj-chip button.adj-ver{width:auto; height:auto; border-radius:6px; background:none; color:var(--ink); min-width:0; max-width:320px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+.cc-link{align-self:flex-start; border:0; background:none; color:var(--accent); font:inherit; font-size:13.5px; cursor:pointer; padding:0}
 .compose-top{display:none}
 .seguir-escribiendo{position:sticky; bottom:12px; align-self:center; box-shadow:0 6px 18px rgba(20,26,40,.25)}
 /* Celular: al responder, el editor ocupa toda la pantalla y el mensaje usa todo el espacio libre. */
@@ -1210,7 +1212,7 @@ function redactor(){
     <h3>${titulo}${b.ocupado ? " · " + esc(b.ocupado) : ""}</h3>
     ${CUENTAS.length > 1 ? `<label>De <select id="rDe" ${b.modo === "nuevo" ? "" : "disabled"}>${CUENTAS.map(c => `<option value="${esc(c)}" ${c === b.cuenta ? "selected" : ""}>${esc(etiqueta(c))} — ${esc(c)}</option>`).join("")}</select></label>` : ""}
     <label>Para ${campoDest("rPara", b.para, "Escribe un nombre o correo…")}</label>
-    <label>Cc ${campoDest("rCc", b.cc, "(opcional)")}</label>
+    ${b.cc || b.verCc ? `<label>Cc ${campoDest("rCc", b.cc, "(opcional)")}</label>` : '<button type="button" class="cc-link" data-r="vercc">+ Agregar Cc</button>'}
     <label>Asunto <input id="rAsunto" value="${esc(b.asunto)}" autocomplete="off" autocorrect="on" autocapitalize="sentences" spellcheck="true"></label>
     ${b.modo === "reenviar" && (MSGS.find(x => x.id === b.id) || {archivos: []}).archivos.length ? `<label class="check"><input type="checkbox" id="rAdj" ${b.con_adjuntos ? "checked" : ""}> Incluir los adjuntos originales (${MSGS.find(x => x.id === b.id).archivos.length})</label>` : ""}
     ${b.modo !== "nuevo" ? `<p class="small muted" style="margin:0">${b.modo === "reenviar" ? "↪ Debajo de tu nota va el correo original completo, con su historial." : "↩ Debajo de tu respuesta va el historial de la conversación, como en Outlook."}</p>` : ""}
@@ -1266,7 +1268,7 @@ document.addEventListener("click", ev => {
 function leerBorrador(){
   if (!borrador || !$("#rTexto")) return;
   const dest = id => [...destDe($(id)), $(id).value.trim()].filter(Boolean).join(", ");
-  borrador.para = dest("#rPara"); borrador.cc = dest("#rCc"); borrador.asunto = $("#rAsunto").value; borrador.texto = $("#rTexto").value;
+  borrador.para = dest("#rPara"); if ($("#rCc")) borrador.cc = dest("#rCc"); borrador.asunto = $("#rAsunto").value; borrador.texto = $("#rTexto").value;
   if ($("#rDe")) borrador.cuenta = $("#rDe").value;
   if ($("#rAdj")) borrador.con_adjuntos = $("#rAdj").checked;
 }
@@ -1882,6 +1884,7 @@ document.addEventListener("click", ev => {
     setTimeout(() => { const e = modo === "reenviar" ? $("#rPara") : $("#rTexto"); if (e) { e.focus(); if (e.id === "rTexto") e.setSelectionRange(0, 0); } }, 0); return; }
   if (t.dataset.r && borrador && (m || borrador.modo === "nuevo")) {
     const a = t.dataset.r; leerBorrador();
+    if (a === "vercc") { borrador.verCc = true; pintarCorreo(); setTimeout(() => $("#rCc") && $("#rCc").focus(), 0); return; }
     if (a === "minimizar") { borrador.oculto = true; pintarCorreo(); return; }
     if (a === "seguir") { borrador.oculto = false; pintarCorreo(); setTimeout(() => $("#rTexto") && $("#rTexto").focus(), 0); return; }
     if (a === "sugerir") sugerir(m);
