@@ -264,6 +264,7 @@ details.resumen summary{cursor:pointer; list-style:none} details.resumen summary
 .btn.mic-r.grabando{background:var(--alta); color:#fff}
 .compose-top .mic-r{display:none}
 @media (max-width:860px){ .compose-top .mic-r{display:inline-block} }
+.compose.soltar{outline:3px dashed var(--accent); outline-offset:4px; background:var(--accent-soft)}
 .cc-link{align-self:flex-start; border:0; background:none; color:var(--accent); font:inherit; font-size:13.5px; cursor:pointer; padding:0}
 .compose-top{display:none}
 .seguir-escribiendo{position:sticky; bottom:12px; align-self:center; box-shadow:0 6px 18px rgba(20,26,40,.25)}
@@ -1317,13 +1318,8 @@ async function verNuevo(i){
 }
 // Pegar (Ctrl/Cmd + V) una foto o un archivo mientras escribes: queda como ADJUNTO del correo.
 // (Copiada desde una página, un pantallazo o desde el Finder/Explorador.)
-document.addEventListener("paste", async ev => {
-  if (!borrador || !ev.target.closest || !ev.target.closest(".compose")) return;
-  const dt = ev.clipboardData; if (!dt) return;
-  const archivos = [...dt.files].filter(f => f.size > 0);
-  if (!archivos.length) return;
-  const texto = dt.getData("text/plain") || "";
-  if (!texto || (texto.length < 300 && !texto.includes("\n"))) ev.preventDefault();   // solo la imagen (o el nombre del archivo)
+// Agrega archivos (pegados o arrastrados) como adjuntos del correo que estás escribiendo.
+async function agregarAdjuntos(archivos, como){
   leerBorrador(); const lista = borrador.nuevos ||= [];
   const hora = new Date().toTimeString().slice(0, 8).replace(/:/g, "");
   for (const [i, f] of archivos.entries()) {
@@ -1335,7 +1331,36 @@ document.addEventListener("paste", async ev => {
   const total = lista.reduce((t, f) => t + f.datos.length, 0);
   borrador.estado = total > MAX_ADJ ? `Los adjuntos suman ${tamTxt(total)}; el máximo es 5 MB. Quita alguno.` : ""; borrador.clase = total > MAX_ADJ ? "mal" : "";
   pintarCorreo();
-  aviso(`📎 ${archivos.length > 1 ? archivos.length + " archivos pegados" : "Imagen pegada"} como adjunto.`, "bien", 3500);
+  aviso(`📎 ${archivos.length > 1 ? archivos.length + " archivos " + como + "s" : (archivos.length === 1 && /^image\//.test(archivos[0].type) ? "Imagen " : "Archivo ") + como} como adjunto.`, "bien", 3500);
+}
+// Pegar (Ctrl/Cmd + V) una foto o un archivo mientras escribes: queda como ADJUNTO.
+document.addEventListener("paste", async ev => {
+  if (!borrador || !ev.target.closest || !ev.target.closest(".compose")) return;
+  const dt = ev.clipboardData; if (!dt) return;
+  const archivos = [...dt.files].filter(f => f.size > 0);
+  if (!archivos.length) return;
+  const texto = dt.getData("text/plain") || "";
+  if (!texto || (texto.length < 300 && !texto.includes("\n"))) ev.preventDefault();   // solo la imagen (o el nombre del archivo)
+  agregarAdjuntos(archivos, "pegado");
+});
+// Arrastrar archivos desde una carpeta (Finder / Explorador) y soltarlos sobre el correo: quedan como ADJUNTOS
+// (antes el navegador pegaba la ruta del archivo en el texto, o abría el archivo).
+const llevaArchivos = ev => ev.dataTransfer && [...(ev.dataTransfer.types || [])].includes("Files");
+let arrastres = 0;
+document.addEventListener("dragenter", ev => { if (!llevaArchivos(ev)) return; ev.preventDefault();
+  if (borrador && document.querySelector(".compose")) { arrastres++; document.querySelector(".compose").classList.add("soltar"); } });
+document.addEventListener("dragleave", ev => { if (!llevaArchivos(ev)) return;
+  if (--arrastres <= 0) { arrastres = 0; const c = document.querySelector(".compose"); if (c) c.classList.remove("soltar"); } });
+document.addEventListener("dragover", ev => { if (!llevaArchivos(ev)) return; ev.preventDefault();
+  ev.dataTransfer.dropEffect = borrador && document.querySelector(".compose") ? "copy" : "none"; });
+document.addEventListener("drop", ev => {
+  if (!llevaArchivos(ev)) return;
+  ev.preventDefault();                          // nunca dejar que el navegador abra el archivo o pegue su ruta
+  arrastres = 0; const c = document.querySelector(".compose"); if (c) c.classList.remove("soltar");
+  const archivos = [...ev.dataTransfer.files].filter(f => f.size > 0);
+  if (!archivos.length) return;
+  if (!borrador || !c) { aviso("Para adjuntar, primero aprieta Responder, Reenviar o Nuevo correo y luego suelta el archivo ahí.", "", 6000); return; }
+  agregarAdjuntos(archivos, "agregado");
 });
 // Junta los archivos en un solo paquete binario: [largo cabecera][cabecera JSON][archivo1][archivo2]…, cifrado.
 async function paqueteArchivos(lista){
