@@ -273,6 +273,16 @@ details.resumen summary{cursor:pointer; list-style:none} details.resumen summary
   body.escribiendo{overflow:hidden}
 }
 .compose textarea{min-height:190px; resize:vertical; line-height:1.5}
+.adj-ver{border:0; background:none; padding:0; font:inherit; color:inherit; cursor:pointer; display:inline-flex; align-items:center; gap:6px; text-decoration:underline dotted}
+.adj-mini{width:34px; height:34px; object-fit:cover; border-radius:5px; border:1px solid var(--line)}
+/* Historial debajo de tu respuesta (como en Gmail): solo en el celular, donde el editor tapa el correo. */
+.compose-hist{display:none}
+@media (max-width:860px){
+  .compose-hist{display:flex; flex-direction:column; gap:10px; border-top:1px solid var(--line); padding-top:12px; margin-top:6px}
+  .compose-hist .hm{border-left:3px solid var(--line); padding:2px 0 2px 10px; font-size:14px}
+  .compose-hist .hm-cab{color:var(--muted); font-size:12.5px; margin-bottom:4px}
+  .compose-hist .hm-tx{white-space:pre-wrap; word-break:break-word; color:var(--ink)}
+}
 .btn.sec{background:var(--soft); color:var(--ink); font-weight:500}
 .btn.peligro{background:var(--alta); color:#fff}
 .obs{background:var(--soft); border-radius:8px; padding:10px 12px; font-size:14px; display:flex; flex-direction:column; gap:6px}
@@ -518,6 +528,11 @@ async function abrirCaja(CAJA, clave){
 function construir(refresco = false){
   MSGS = Object.values(D.mensajes || {}).map(m => ({...m, para: m.para || [], cc: m.cc || [], archivos: m.archivos || [],
     cuenta: m.cuenta || D.cuenta || "", hilo: m.hilo || ("m" + m.id)})).sort((a, b) => b.fecha - a.fecha);
+  // Los cuerpos (HTML con su formato) que ya se bajaron se reponen: si no, al llegar datos nuevos el correo
+  // quedaba solo con el texto y "perdía el formato".
+  for (const x of MSGS) { const c = CUERPOS[x.id]; if (c && typeof c === "object") {
+    if (c.html) x.html = c.html; if (c.texto) x.texto = c.texto;
+    (c.archivos || []).forEach((t, i) => { if (t && x.archivos[i]) x.archivos[i].texto = t; }); } }
   HILOS = {};
   for (const m of MSGS) (HILOS[m.hilo] ||= []).push(m);
   for (const k in HILOS) HILOS[k].sort((a, b) => a.fecha - b.fecha);
@@ -723,6 +738,7 @@ function llaveCuerpos(){
   })();
 }
 async function cargarCuerpo(m){
+  if (CUERPOS[m.id] === "error" && Date.now() - (CUERPOS["_t" + m.id] || 0) > 20000) delete CUERPOS[m.id];   // reintentar
   if (!m.cuerpo || CUERPOS[m.id] || !D.sal_cuerpos) return;
   CUERPOS[m.id] = "cargando";
   try {
@@ -738,14 +754,14 @@ async function cargarCuerpo(m){
       (c.archivos || []).forEach((t, i) => { if (t && x.archivos[i]) x.archivos[i].texto = t; });
       indexar(x);
     }
-  } catch(e) { CUERPOS[m.id] = "error"; }
+  } catch(e) { CUERPOS[m.id] = "error"; CUERPOS["_t" + m.id] = Date.now(); }
   if (abierto === m.id) pintarCorreo();
 }
 
 function pintarCorreo(){
   requestAnimationFrame(() => document.body.classList.toggle("escribiendo", !!document.querySelector("#read .compose")));
   const m = MSGS.find(x => x.id === abierto);
-  if (m && m.cuerpo && !CUERPOS[m.id]) cargarCuerpo(m);
+  if (m && m.cuerpo && (!CUERPOS[m.id] || CUERPOS[m.id] === "error")) cargarCuerpo(m);
   const cargandoCuerpo = m && m.cuerpo && m.tiene_html && CUERPOS[m.id] === "cargando";
   if (!m && HISTORIAL.porId[abierto]) {
     const h = HISTORIAL.porId[abierto], pidiendo = pedidosTraer[h.id];
@@ -1173,6 +1189,17 @@ function nuevoBorrador(m, modo){
   const cc = modo === "todos" ? [...m.para, ...m.cc].filter(x => !yo.has(x.toLowerCase()) && !para.includes(x)) : [];
   return {...base, modo: "responder", para: para.join(", "), cc: cc.join(", "), asunto: /^\s*(re|rv)\s*:/i.test(m.asunto) ? m.asunto : "RE: " + m.asunto};
 }
+// La conversación que estás respondiendo, debajo del editor (del más nuevo al más antiguo, solo lo que escribió
+// cada uno, sin repetir las citas): así se ve el historial sin salir de lo que estás escribiendo.
+function historialRedactor(b){
+  const m = MSGS.find(x => x.id === b.id); if (!m) return "";
+  const hilo = (HILOS[m.hilo] || [m]).filter(x => x.fecha <= m.fecha).slice().reverse().slice(0, 15);
+  return `<div class="compose-hist"><strong class="small muted">Conversación (${hilo.length})</strong>${hilo.map((x, k) => {
+    // Si la conversación tiene un solo correo, va completo (con su cadena citada); si no, cada uno sin repetir las citas.
+    const tx = (hilo.length === 1 ? (x.texto || x.vista_previa || "") : (textoPropio(x) || x.vista_previa || "")).slice(0, 20000);
+    return `<div class="hm"><div class="hm-cab"><b>${esc(x.enviado ? "Tú" : (x.de_nombre || x.de))}</b> · ${fmtF(x.fecha)}${x.archivos.length ? " · 📎 " + x.archivos.length : ""}</div><div class="hm-tx">${esc(tx.trim())}</div></div>`;
+  }).join("")}</div>`;
+}
 function redactor(){
   const b = borrador, envio = D._envio && D._envio.token;
   const titulo = {responder: "Tu respuesta", reenviar: "Reenviar", nuevo: "Correo nuevo"}[b.modo];
@@ -1190,7 +1217,7 @@ function redactor(){
     <label>Mensaje <textarea id="rTexto" autocorrect="on" autocapitalize="sentences" spellcheck="true" placeholder="Escribe tu respuesta, o usa «Sugerir respuesta».">${esc(b.texto)}</textarea></label>
     <div class="adjuntar">
       <label class="btn sec">📎 Adjuntar archivos<input type="file" id="rArchivos" multiple hidden></label>
-      ${(b.nuevos || []).map((f, i) => `<span class="adj-chip">📄 ${esc(f.nombre)} <span class="muted">${tamTxt(f.datos.length)}</span><button type="button" data-quitaradj="${i}" aria-label="Quitar ${esc(f.nombre)}">✕</button></span>`).join("")}
+      ${(b.nuevos || []).map((f, i) => `<span class="adj-chip"><button type="button" class="adj-ver" data-veradj="${i}" title="Ver ${esc(f.nombre)}">${esImagen(f.nombre) ? `<img class="adj-mini" src="${urlNuevo(f)}" alt="">` : "📄"} ${esc(f.nombre)}</button> <span class="muted">${tamTxt(f.datos.length)}</span><button type="button" data-quitaradj="${i}" aria-label="Quitar ${esc(f.nombre)}">✕</button></span>`).join("")}
     </div>
     <div class="actions">
       <button class="btn sec" data-r="sugerir" ${b.ocupado ? "disabled" : ""}>${b.modo === "nuevo" ? "✨ Escribir con IA" : "✨ Sugerir respuesta"}</button>
@@ -1204,6 +1231,7 @@ function redactor(){
     ${b.confirmar ? `<div class="obs"><strong>¿Enviar ${b.modo === "responder" ? "esta respuesta" : "este correo"} desde ${esc(etiqueta(b.cuenta))} a ${esc(b.para)}${b.cc ? " (con copia a " + esc(b.cc) + ")" : ""}?</strong>
       <div class="actions"><button class="btn peligro" data-r="confirmar">Sí, enviar</button><button class="btn sec" data-r="noenviar">No, seguir editando</button></div></div>` : ""}
     ${b.estado ? `<p class="estadoEnvio ${b.clase}" style="margin:0">${esc(b.estado)}</p>` : ""}
+    ${b.modo !== "nuevo" ? historialRedactor(b) : ""}
   </section>`;
 }
 /* Destinatarios como "burbujas": al terminar una dirección (Enter, coma, espacio o elegir una sugerencia) queda fija
@@ -1266,6 +1294,17 @@ document.addEventListener("change", async ev => {
   borrador.estado = total > MAX_ADJ ? `Los adjuntos suman ${tamTxt(total)}; el máximo es 5 MB. Quita alguno.` : ""; borrador.clase = total > MAX_ADJ ? "mal" : "";
   pintarCorreo();
 });
+// Vista previa de lo que vas a adjuntar (pegado o elegido): miniatura y, al tocarlo, la vista completa.
+const esImagen = n => /\.(jpe?g|png|gif|webp|bmp|heic|heif)$/i.test(n || "");
+function urlNuevo(f){ return f.url ||= URL.createObjectURL(new Blob([f.datos], {type: tipoDe(f.nombre)})); }
+async function verNuevo(i){
+  const f = (borrador && borrador.nuevos || [])[i]; if (!f) return;
+  const blob = new Blob([f.datos], {type: tipoDe(f.nombre)});
+  visor = {ref: "nuevo-" + i, url: urlNuevo(f), tipo: blob.type, ver: true};
+  if (esPlanilla(f.nombre)) try { visor.hojas = await hojasExcel(blob, f.nombre); visor.hoja = 0; visor.zoom = zoomInicial(visor.hojas[0]); } catch(e) {}
+  if (!/^(image\/|application\/pdf|text\/)/.test(blob.type) && !visor.hojas) { descargar(visor.url, f.nombre); return; }
+  abrirPantalla(f);
+}
 // Pegar (Ctrl/Cmd + V) una foto o un archivo mientras escribes: queda como ADJUNTO del correo.
 // (Copiada desde una página, un pantallazo o desde el Finder/Explorador.)
 document.addEventListener("paste", async ev => {
@@ -1816,10 +1855,11 @@ function irA(v){
   if (v === "preguntar") { pintarCtx(); $("#qAsk").focus(); }
 }
 document.addEventListener("click", ev => {
-  const t = ev.target.closest("[data-v],[data-m],[data-f],[data-cu],[data-back],[data-more],[data-askthread],[data-noctx],[data-sug],[data-responder],[data-r],[data-adj],[data-vertexto],[data-ver],[data-bajar],[data-nuevo],[data-recuperar],[data-noleido],[data-hoja],[data-quitaradj],[data-carpeta],[data-zoomxls],[data-traer],[data-cerraravance],[data-subirod],[data-od],[data-estrella]");
+  const t = ev.target.closest("[data-v],[data-m],[data-f],[data-cu],[data-back],[data-more],[data-askthread],[data-noctx],[data-sug],[data-responder],[data-r],[data-adj],[data-vertexto],[data-ver],[data-bajar],[data-nuevo],[data-recuperar],[data-noleido],[data-hoja],[data-quitaradj],[data-veradj],[data-carpeta],[data-zoomxls],[data-traer],[data-cerraravance],[data-subirod],[data-od],[data-estrella]");
   if (!t) return;
   if (t.dataset.adj !== undefined) { const i = +t.dataset.adj; leerBorrador(); adjAbierto = adjAbierto === i ? null : i; pintarCorreo(); return; }
   if (t.dataset.ver !== undefined || t.dataset.bajar !== undefined) { const mm = MSGS.find(x => x.id === abierto); if (mm) abrirAdjunto(mm, +(t.dataset.ver ?? t.dataset.bajar), t.dataset.ver !== undefined); return; }
+  if (t.dataset.veradj !== undefined && borrador) { leerBorrador(); verNuevo(+t.dataset.veradj); return; }
   if (t.dataset.quitaradj !== undefined && borrador) { leerBorrador(); borrador.nuevos.splice(+t.dataset.quitaradj, 1); borrador.estado = ""; pintarCorreo(); return; }
   if (t.dataset.carpeta) { carpeta = t.dataset.carpeta; limite = 150; abierto = null; pintarFiltros(); pintarLista(); pintarCorreo(); if (innerWidth <= 860) scrollTo(0, 0); return; }
   if ("cerraravance" in t.dataset) { $("#panelAvance").hidden = true; return; }
