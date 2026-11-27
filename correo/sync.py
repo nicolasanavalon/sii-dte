@@ -173,6 +173,10 @@ def ref_adjunto(mid, att_id):
     return hashlib.sha1(f"{mid}:{att_id}".encode()).hexdigest()[:24]
 
 
+MAX_ADJUNTOS = 60       # adjuntos por correo (antes 10: correos con 36 PDF quedaban incompletos)
+LEER_ADJUNTOS = 15      # a cuántos se les extrae el texto (OCR incluido) para la IA y el buscador
+
+
 def leer_archivos(z, account_id, folder_id, mid):
     from extraer import texto_de
     archivos = []
@@ -181,14 +185,14 @@ def leer_archivos(z, account_id, folder_id, mid):
     except Exception as e:
         print(f"::warning::No pude listar los adjuntos de {mid}: {e}")
         return archivos
-    for a in lista[:10]:
+    for k, a in enumerate(lista[:MAX_ADJUNTOS]):
         nombre = str(a.get("attachmentName") or "archivo")
         tam = int(float(a.get("attachmentSize") or 0))
         texto, ref = "", None
         if tam <= 12 * 1024 * 1024:
             try:
                 datos = z.descargar_adjunto(account_id, folder_id, mid, a["attachmentId"])
-                texto = texto_de(nombre, datos)
+                texto = texto_de(nombre, datos) if k < LEER_ADJUNTOS else ""
                 if ADJ_DIR and datos:
                     # Se guarda el archivo CIFRADO con tu contraseña, para abrirlo y descargarlo desde la página.
                     ref = ref_adjunto(mid, a["attachmentId"])
@@ -202,9 +206,13 @@ def leer_archivos(z, account_id, folder_id, mid):
 
 
 def falta_archivo(m):
-    """El correo tiene adjuntos cuyo archivo (cifrado) todavía no está guardado para abrirlo desde la página."""
-    return bool(ADJ_DIR) and m.get("intentos_archivo", 0) < 3 and any(
-        not f.get("ref") and f.get("tamano", 0) <= 12 * 1024 * 1024 for f in m.get("archivos", []))
+    """El correo tiene adjuntos cuyo archivo (cifrado) todavía no está guardado para abrirlo desde la página,
+    o se guardó con el tope antiguo de 10 adjuntos (puede tener más)."""
+    if not ADJ_DIR or m.get("intentos_archivo", 0) >= 3:
+        return False
+    if len(m.get("archivos", [])) == 10 and not m.get("adj_todos"):
+        return True
+    return any(not f.get("ref") and f.get("tamano", 0) <= 12 * 1024 * 1024 for f in m.get("archivos", []))
 
 
 _ZOHO = {}
@@ -294,10 +302,10 @@ def construir_gmail(msg, acc, correo, carpeta, enviados_carpeta, gid, th, ms, es
     texto, html, adjuntos = G.partes(msg)
     texto = texto or html_a_texto(html)
     archivos = []
-    for i, (nombre, datos) in enumerate(adjuntos[:10]):
+    for i, (nombre, datos) in enumerate(adjuntos[:MAX_ADJUNTOS]):
         ref = None
         try:
-            contenido = texto_de(nombre, datos) if len(datos) <= 12 * 1024 * 1024 else ""
+            contenido = texto_de(nombre, datos) if len(datos) <= 12 * 1024 * 1024 and i < LEER_ADJUNTOS else ""
             if ADJ_DIR and datos and len(datos) <= 12 * 1024 * 1024:
                 ref = ref_adjunto(mid, str(i))
                 Path(ADJ_DIR).mkdir(parents=True, exist_ok=True)
@@ -317,7 +325,7 @@ def construir_gmail(msg, acc, correo, carpeta, enviados_carpeta, gid, th, ms, es
     contacto = (contacto or "(desconocido)").lower()
     asunto = (G._dec(msg["Subject"]) or "(sin asunto)").strip()
     t = G.fecha_ms(msg, ms)
-    m = {"v": 2, "id": mid, "cuenta_id": acc, "cuenta": correo, "carpeta": carpeta, "thread_zoho": th,
+    m = {"v": 2, "adj_todos": True, "id": mid, "cuenta_id": acc, "cuenta": correo, "carpeta": carpeta, "thread_zoho": th,
          "hilo": clave_hilo(th, asunto, contacto), "fecha": t, "de": de[0][1], "de_nombre": de[0][0],
          "para": para, "cc": cc, "asunto": asunto, "vista_previa": re.sub(r"\s+", " ", texto)[:200].strip(),
          "texto": texto[:MAX_TEXTO_GUARDADO],
@@ -479,7 +487,7 @@ def construir_zoho(z, account_id, direccion, carpeta, enviados_carpeta, t, m, es
     asunto = (m.get("subject") or "(sin asunto)").strip()
     previo = estado["mensajes"].get(mid) or {}
     msg = {
-        "v": 2, "id": mid, "cuenta_id": account_id, "cuenta": direccion, "carpeta": fid,
+        "v": 2, "adj_todos": True, "id": mid, "cuenta_id": account_id, "cuenta": direccion, "carpeta": fid,
         "carpeta_nombre": str(carpeta.get("folderName") or ""),
         "boletin": boletin,
         "thread_zoho": str(m.get("threadId") or ""),
