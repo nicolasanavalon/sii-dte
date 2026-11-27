@@ -68,7 +68,7 @@ def main():
                         z.responder(acc_id, str(p["message_id"]), principal, para, cc, asunto, texto, adjuntos)
                     else:
                         if modo == "reenviar" and p.get("con_adjuntos") and p.get("message_id") and p.get("carpeta"):
-                            for a in z.adjuntos(acc_id, str(p["carpeta"]), str(p["message_id"]))[:10]:
+                            for a in z.adjuntos(acc_id, str(p["carpeta"]), str(p["message_id"]))[:60]:
                                 datos = z.descargar_adjunto(acc_id, str(p["carpeta"]), str(p["message_id"]), a["attachmentId"])
                                 adjuntos.append(z.subir_adjunto(acc_id, str(a.get("attachmentName") or "archivo"), datos))
                         cuerpo, formato = con_historial(texto, modo, p, original)
@@ -153,7 +153,7 @@ def enviar_gmail(p, modo, para, cc, asunto, texto, adjuntos):
             t, h, adj = G.partes(orig)
             original_html = h or ("<div style=\"white-space:pre-wrap\">" + _esc(t) + "</div>" if t else "")
             if modo == "reenviar" and p.get("con_adjuntos"):
-                adjuntos += adj[:10]
+                adjuntos += adj[:60]
         cuerpo, formato = con_historial(texto, modo, p, original_html)
         responde = p.get("mid_cabecera") if modo == "responder" else None
         g.enviar(para, cc, asunto, texto + _texto_historial(modo, p), adjuntos, responde_a=responde,
